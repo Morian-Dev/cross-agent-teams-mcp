@@ -30,10 +30,23 @@ export function mountMcp(app: FastifyInstance, db: Database.Database, fanout: Ss
       onsessioninitialized: (sid: string) => {
         agentIdHolder.current = sid
         sessions.set(sid, { transport, server, sessionId: sid, agentIdHolder })
+        const sink = {
+          send(msg: Record<string, unknown>): void {
+            const payload = {
+              jsonrpc: '2.0' as const,
+              method: 'notifications/contract_event',
+              params: msg
+            }
+            void transport.send(payload).catch(() => { /* no active GET stream yet */ })
+          },
+          close(): void { /* transport.onclose handles lifecycle */ }
+        }
+        fanout.attach(sid, 'default', sink)
       }
     })
     transport.onclose = () => {
       if (transport.sessionId) {
+        fanout.detach(transport.sessionId)
         sessions.delete(transport.sessionId)
         sessionOwners.delete(transport.sessionId)
       }

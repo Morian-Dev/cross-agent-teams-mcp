@@ -89,14 +89,20 @@ export function registerBusinessTools(
     async (args: { model: string; role: string; display_name?: string; team?: string }) => {
       const sid = caller()
       if (!sid) return toText({ error: 'unknown_agent' })
-      return run(() => registerSvc.register({
-        agent_id: sid,
-        connection_id: sid,
-        model: args.model,
-        role: args.role,
-        display_name: args.display_name,
-        team: args.team
-      }))
+      return run(() => {
+        const res = registerSvc.register({
+          agent_id: sid,
+          connection_id: sid,
+          model: args.model,
+          role: args.role,
+          display_name: args.display_name,
+          team: args.team
+        })
+        if ('team' in res && fanout) {
+          try { fanout.rebind(sid, res.team) } catch { /* best-effort */ }
+        }
+        return res
+      })
     }
   )
 

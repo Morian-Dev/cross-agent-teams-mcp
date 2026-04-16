@@ -14,9 +14,19 @@ export class SseFanout {
     this.sessions.set(agent_id, { agent_id, team, sink })
   }
 
+  rebind(agent_id: string, team: string): void {
+    const s = this.sessions.get(agent_id)
+    if (!s) return
+    this.sessions.set(agent_id, { agent_id, team, sink: s.sink })
+  }
+
   detach(agent_id: string): void {
     const s = this.sessions.get(agent_id)
     if (s) { try { s.sink.close() } catch { /* ignore */ } this.sessions.delete(agent_id) }
+  }
+
+  peek(): Array<{ agent_id: string; team: string }> {
+    return Array.from(this.sessions.values()).map(s => ({ agent_id: s.agent_id, team: s.team }))
   }
 
   emitContractEvent(
