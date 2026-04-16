@@ -30,6 +30,19 @@ const DDL = [
     subject TEXT,
     body TEXT NOT NULL,
     sent_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS tasks (
+    id TEXT PRIMARY KEY,
+    team TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    status TEXT NOT NULL CHECK(status IN ('pending','in_progress','completed')),
+    depends_on TEXT NOT NULL,
+    claimed_by TEXT,
+    claimed_at TEXT,
+    completed_at TEXT,
+    result TEXT,
+    created_at TEXT NOT NULL
   )`
 ]
 
