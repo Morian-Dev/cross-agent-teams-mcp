@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import { openDb } from '../storage/db.js'
 import { applySchema } from '../storage/schema.js'
 import { makeAuthHook } from './auth.js'
+import { mountMcp } from '../mcp/transport.js'
 
 export interface ServerOpts { dbPath: string; token?: string }
 export interface StartOpts extends ServerOpts { port: number; host?: string }
@@ -13,12 +14,8 @@ export async function buildServer(opts: ServerOpts): Promise<FastifyInstance> {
   const startedAt = Date.now()
   const version = '0.1.0'
   app.addHook('onRequest', makeAuthHook(opts.token))
-  app.get('/health', async () => ({
-    ok: true,
-    version,
-    uptime_seconds: Math.floor((Date.now() - startedAt) / 1000)
-  }))
-  app.post('/mcp', async () => ({ jsonrpc: '2.0', id: 1, result: { ok: true } }))
+  app.get('/health', async () => ({ ok: true, version, uptime_seconds: Math.floor((Date.now() - startedAt) / 1000) }))
+  mountMcp(app)
   app.addHook('onClose', async () => { db.close() })
   return app
 }
