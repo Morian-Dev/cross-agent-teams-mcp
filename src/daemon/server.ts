@@ -16,7 +16,7 @@ export async function buildServer(opts: ServerOpts): Promise<FastifyInstance> {
   const version = '0.1.0'
   app.addHook('onRequest', makeAuthHook(opts.token))
   app.get('/health', async () => ({ ok: true, version, uptime_seconds: Math.floor((Date.now() - startedAt) / 1000) }))
-  mountMcp(app)
+  mountMcp(app, db)
 
   const cleanupIntervalMs = opts.cleanupIntervalMs
     ?? Number(process.env.CLEANUP_INTERVAL_MS ?? 60 * 60 * 1000)

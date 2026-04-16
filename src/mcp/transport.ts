@@ -1,30 +1,36 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
+import type Database from 'better-sqlite3'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { randomUUID } from 'node:crypto'
 import { echoSchema, echoHandler } from './echo.js'
+import { registerBusinessTools, type AgentIdHolder } from './tools.js'
 
 interface Session {
   transport: StreamableHTTPServerTransport
   server: McpServer
   sessionId: string
+  agentIdHolder: AgentIdHolder
 }
 
-export function mountMcp(app: FastifyInstance): void {
+export function mountMcp(app: FastifyInstance, db: Database.Database): void {
   const sessions = new Map<string, Session>()
 
   function createSession(): Session {
     const server = new McpServer({ name: 'agent-teams-mcp', version: '0.1.0' })
+    const agentIdHolder: AgentIdHolder = { current: undefined }
     server.registerTool('echo', { title: 'Echo', description: 'Return the input', inputSchema: echoSchema }, echoHandler as any)
+    registerBusinessTools(server, db, () => agentIdHolder.current)
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sid: string) => {
-        sessions.set(sid, { transport, server, sessionId: sid })
+        agentIdHolder.current = sid
+        sessions.set(sid, { transport, server, sessionId: sid, agentIdHolder })
       }
     })
     transport.onclose = () => { if (transport.sessionId) sessions.delete(transport.sessionId) }
     server.connect(transport)
-    return { transport, server, sessionId: '' }
+    return { transport, server, sessionId: '', agentIdHolder }
   }
 
   app.post('/mcp', async (req: FastifyRequest, reply: FastifyReply) => {
