@@ -43,6 +43,18 @@ const DDL = [
     completed_at TEXT,
     result TEXT,
     created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS contracts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team TEXT NOT NULL,
+    name TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    format TEXT NOT NULL CHECK(format='jsonschema'),
+    schema TEXT NOT NULL,
+    note TEXT,
+    registered_by TEXT NOT NULL,
+    registered_at TEXT NOT NULL,
+    UNIQUE(team, name, version)
   )`
 ]
 
