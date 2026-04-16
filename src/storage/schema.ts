@@ -19,6 +19,17 @@ const DDL = [
     registered_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
     last_processed_event_id INTEGER NOT NULL DEFAULT 0
+  )`,
+  `CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    event_id INTEGER NOT NULL REFERENCES events(event_id),
+    team TEXT NOT NULL,
+    from_agent_id TEXT NOT NULL,
+    to_agent_id TEXT,
+    to_role TEXT,
+    subject TEXT,
+    body TEXT NOT NULL,
+    sent_at TEXT NOT NULL
   )`
 ]
 
