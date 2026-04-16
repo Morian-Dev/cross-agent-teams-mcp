@@ -16,6 +16,9 @@ interface Session {
 
 export function mountMcp(app: FastifyInstance, db: Database.Database, fanout: SseFanout): void {
   const sessions = new Map<string, Session>()
+  // Once register_agent succeeds for a session id, pin the owning socket token.
+  // A later register_agent from a different socket token triggers HTTP 409.
+  const sessionOwners = new Map<string, symbol>()
 
   function createSession(): Session {
     const server = new McpServer({ name: 'agent-teams-mcp', version: '0.1.0' })
@@ -29,17 +32,56 @@ export function mountMcp(app: FastifyInstance, db: Database.Database, fanout: Ss
         sessions.set(sid, { transport, server, sessionId: sid, agentIdHolder })
       }
     })
-    transport.onclose = () => { if (transport.sessionId) sessions.delete(transport.sessionId) }
+    transport.onclose = () => {
+      if (transport.sessionId) {
+        sessions.delete(transport.sessionId)
+        sessionOwners.delete(transport.sessionId)
+      }
+    }
     server.connect(transport)
     return { transport, server, sessionId: '', agentIdHolder }
   }
 
+  // Attach a per-TCP-socket token so we can detect cross-connection session-id reuse.
+  const SOCKET_TOKEN = Symbol('atm.socket.token')
+  function tokenFor(req: FastifyRequest): symbol {
+    const socket = req.raw.socket as unknown as Record<symbol, symbol>
+    if (!socket[SOCKET_TOKEN]) socket[SOCKET_TOKEN] = Symbol('atm.conn')
+    return socket[SOCKET_TOKEN]
+  }
+
+  interface ToolsCallBody {
+    method?: string
+    params?: { name?: string; arguments?: Record<string, unknown> }
+  }
+
   app.post('/mcp', async (req: FastifyRequest, reply: FastifyReply) => {
     const sid = req.headers['mcp-session-id'] as string | undefined
-    const body = req.body as { method?: string } | undefined
+    const body = req.body as ToolsCallBody | undefined
     const isInit = body?.method === 'initialize'
     let session = sid ? sessions.get(sid) : undefined
     if (!session && !isInit) { return reply.code(400).send({ error: 'unknown_session' }) }
+
+    const connToken = tokenFor(req)
+
+    // register_agent from a different TCP socket than the one that first claimed
+    // this session id -> agent_id_collision (HTTP 409).
+    if (session && body?.method === 'tools/call' && body.params?.name === 'register_agent') {
+      const owner = sessionOwners.get(session.sessionId)
+      if (owner && owner !== connToken) {
+        return reply.code(409).send({ error: 'agent_id_collision' })
+      }
+      if (!owner) sessionOwners.set(session.sessionId, connToken)
+    }
+
+    // Spoofed from_agent_id on tools/call -> 403
+    if (session && body?.method === 'tools/call') {
+      const claimed = body.params?.arguments?.from_agent_id
+      if (typeof claimed === 'string' && claimed !== session.sessionId) {
+        return reply.code(403).send({ error: 'identity_mismatch' })
+      }
+    }
+
     if (!session) { session = createSession() }
     await session.transport.handleRequest(req.raw, reply.raw, body)
     return reply
