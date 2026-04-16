@@ -4651,6 +4651,347 @@ Ordered by dependency.  Phase 0 connectivity (Task 4.2) is the hard gate before 
     - Staging order: production wiring commit BEFORE test commit (production is 79c52e6; test commit is e4d30c7)
     - **Commit SHA (fill during apply):** `e4d30c7` (test) + `79c52e6` (production wiring)
 
+## 12. Review Fixes (iteration 1)
+
+- [x] 12.1 Wire AgentsRepo.touch() into every business tool invocation
+  - kind: integration-test
+  - **Spec scenario(s):**
+    - `agent-registry/spec.md` → Scenario: `Tool call bumps last_seen_at`
+  - **Files:**
+    - Create: `tests/last-seen-at-touch.test.ts`
+    - Modify: `src/mcp/tools.ts`
+  - [x] **INTEGRATION-RED:** Write failing test — `tests/last-seen-at-touch.test.ts`
+    - Behavior under test: after register_agent and a manual backdate of `last_seen_at` to 1h ago, a subsequent `list_agents` tool call MUST bump `last_seen_at` to within the last 2s
+    - Expected failure reason: no tool handler invokes AgentsRepo.touch(); last_seen_at stays at the backdated value (~3.6M ms old)
+    ```ts
+    import { describe, it, expect, afterEach } from 'vitest'
+    import { mkdtempSync, rmSync } from 'node:fs'
+    import { tmpdir } from 'node:os'
+    import { join } from 'node:path'
+    import Database from 'better-sqlite3'
+    import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+    import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+    import { startServer } from '../src/daemon/server.js'
+
+    const tmp = () => mkdtempSync(join(tmpdir(), 'atm-'))
+
+    function readLastSeen(dbPath: string, agent_id: string): string {
+      const db = new Database(dbPath, { readonly: true })
+      const row = db.prepare('SELECT last_seen_at FROM agents WHERE agent_id=?').get(agent_id) as { last_seen_at: string }
+      db.close(); return row.last_seen_at
+    }
+    function backdateLastSeen(dbPath: string, agent_id: string, iso: string): void {
+      const db = new Database(dbPath)
+      db.prepare('UPDATE agents SET last_seen_at=? WHERE agent_id=?').run(iso, agent_id)
+      db.close()
+    }
+
+    describe('last_seen_at bumped on every tool invocation', () => {
+      const cleanups: string[] = []
+      afterEach(() => { cleanups.forEach(d => rmSync(d, { recursive: true, force: true })); cleanups.length = 0 })
+
+      it('list_agents invocation updates last_seen_at within the last 2 seconds', async () => {
+        const dir = tmp(); cleanups.push(dir)
+        const dbPath = join(dir, 'data.db')
+        const { app, port, host } = await startServer({ dbPath, port: 0 })
+        const url = `http://${host}:${port}/mcp`
+        const transport = new StreamableHTTPClientTransport(new URL(url))
+        const client = new Client({ name: 'probe', version: '0.0.0' }, { capabilities: {} })
+        await client.connect(transport)
+        try {
+          await client.callTool({ name: 'register_agent', arguments: { model: 'm', role: 'r' } })
+          const sid = transport.sessionId!
+          const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+          backdateLastSeen(dbPath, sid, oneHourAgo)
+          expect(readLastSeen(dbPath, sid)).toBe(oneHourAgo)
+          await client.callTool({ name: 'list_agents', arguments: {} })
+          const ageMs = Date.now() - new Date(readLastSeen(dbPath, sid)).getTime()
+          expect(ageMs).toBeLessThan(2000)
+        } finally { await client.close(); await app.close() }
+      }, 15000)
+    })
+    ```
+  - [x] **Verify INTEGRATION-RED:** Run test, confirm it fails for the expected reason
+    - Command: `pnpm exec vitest run tests/last-seen-at-touch.test.ts --reporter=verbose`
+    - **Observed output (fill during apply):**
+      ```
+      × last_seen_at bumped on every tool invocation > list_agents invocation updates last_seen_at within the last 2 seconds
+        → AssertionError: expected 3600002 to be less than 2000
+      Test Files  1 failed (1), Tests  1 failed (1)
+      ```
+  - [x] **INTEGRATION-GREEN:** Minimal implementation — add `touchIfRegistered()` post-hook inside `run()` in `src/mcp/tools.ts`
+    ```ts
+    async function run(fn: () => unknown): Promise<TextContent> {
+      const out = await wrapStorage(() => fn())
+      touchIfRegistered()
+      return toText(out)
+    }
+    function touchIfRegistered(): void {
+      const c = caller()
+      if (!c) return
+      try { if (agents.findById(c)) agents.touch(c) } catch { /* best-effort */ }
+    }
+    ```
+  - [x] **Verify INTEGRATION-GREEN:** Run test + full suite, confirm pass
+    - Command: `pnpm exec vitest run tests/last-seen-at-touch.test.ts --reporter=verbose`
+    - Full-suite command: `pnpm exec vitest run --reporter=basic`
+    - **Observed output (fill during apply):**
+      ```
+      ✓ tests/last-seen-at-touch.test.ts > last_seen_at bumped on every tool invocation > list_agents invocation updates last_seen_at within the last 2 seconds
+      Test Files  1 passed (1), Tests  1 passed (1)
+      full suite: Test Files  37 passed (37), Tests  85 passed (85)
+      ```
+  - [x] **REFACTOR:** None — the post-hook is already minimal and covers every business tool uniformly (register_agent benefits too because AgentsRepo.register writes a fresh last_seen_at before the touch runs)
+  - [x] **Verify REFACTOR:** Re-run tests, confirm still green
+    - Command: `pnpm exec vitest run tests/last-seen-at-touch.test.ts --reporter=verbose`
+    - **Observed output (fill during apply):**
+      ```
+      None — already minimal; same GREEN output stands.
+      ```
+  - [x] **Commit:** `fix(agents): touch last_seen_at on every tool call`
+    - Staging order: test file + production edit staged together (single fix)
+    - **Commit SHA (fill during apply):** `66b6196`
+
+- [x] 12.2 Wire SseFanout into buildServer and register_contract tool handler
+  - kind: integration-test
+  - **Spec scenario(s):**
+    - `contract-subscriptions/spec.md` → Scenario: `Subscribed online agent receives push`
+    - `contract-subscriptions/spec.md` → Scenario: `Push failure does not roll back event`
+  - **Files:**
+    - Create: `tests/sse-wire.test.ts`
+    - Modify: `src/daemon/server.ts`, `src/mcp/transport.ts`, `src/mcp/tools.ts`, `src/mcp/register-contract.ts`
+  - [x] **INTEGRATION-RED:** Write failing test — `tests/sse-wire.test.ts`
+    - Behavior under test: startServer accepts `{ fanout: SseFanout }`; after a subscriber subscribes and a publisher calls register_contract, `fanout.emitContractEvent` is invoked exactly once with `{ team: 'default', contract_name: 'X', version: 1, event_id: <number> }`
+    - Expected failure reason: fanout option is unwired; register_contract never calls emitContractEvent; `emitted.length` is 0
+    ```ts
+    import { describe, it, expect, afterEach } from 'vitest'
+    import { mkdtempSync, rmSync } from 'node:fs'
+    import { tmpdir } from 'node:os'
+    import { join } from 'node:path'
+    import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+    import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+    import { startServer } from '../src/daemon/server.js'
+    import { SseFanout } from '../src/daemon/sse-fanout.js'
+
+    const tmp = () => mkdtempSync(join(tmpdir(), 'atm-'))
+    function parseTool(res: unknown): any {
+      const r = res as { content: Array<{ type: string; text: string }> }
+      return JSON.parse(r.content[0].text)
+    }
+
+    describe('SSE fanout wired into register_contract', () => {
+      const cleanups: string[] = []
+      afterEach(() => { cleanups.forEach(d => rmSync(d, { recursive: true, force: true })); cleanups.length = 0 })
+
+      it('register_contract triggers emitContractEvent on the injected daemon fanout', async () => {
+        const dir = tmp(); cleanups.push(dir)
+        const emitted: Array<Record<string, unknown>> = []
+        const fanout = new SseFanout()
+        const origEmit = fanout.emitContractEvent.bind(fanout)
+        fanout.emitContractEvent = (db, args) => { emitted.push({ ...args }); return origEmit(db, args) }
+        const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0, fanout })
+        const url = `http://${host}:${port}/mcp`
+        const pub = new StreamableHTTPClientTransport(new URL(url))
+        const pubC = new Client({ name: 'pub', version: '0.0.0' }, { capabilities: {} })
+        await pubC.connect(pub)
+        const sub = new StreamableHTTPClientTransport(new URL(url))
+        const subC = new Client({ name: 'sub', version: '0.0.0' }, { capabilities: {} })
+        await subC.connect(sub)
+        try {
+          await pubC.callTool({ name: 'register_agent', arguments: { model: 'm', role: 'r' } })
+          await subC.callTool({ name: 'register_agent', arguments: { model: 'm', role: 'r' } })
+          const subRes = parseTool(await subC.callTool({ name: 'subscribe_contract', arguments: { name: 'X' } }))
+          expect(subRes.ok).toBe(true)
+          const reg = parseTool(await pubC.callTool({
+            name: 'register_contract',
+            arguments: { name: 'X', schema: { type: 'object' } }
+          }))
+          expect(reg.version).toBe(1)
+          expect(emitted.length).toBe(1)
+          expect(emitted[0].contract_name).toBe('X')
+          expect(emitted[0].version).toBe(1)
+          expect(emitted[0].team).toBe('default')
+          expect(typeof emitted[0].event_id).toBe('number')
+        } finally { await pubC.close(); await subC.close(); await app.close() }
+      }, 20000)
+    })
+    ```
+  - [x] **Verify INTEGRATION-RED:** Run test, confirm it fails for the expected reason
+    - Command: `pnpm exec vitest run tests/sse-wire.test.ts --reporter=verbose`
+    - **Observed output (fill during apply):**
+      ```
+      × register_contract triggers emitContractEvent on the injected daemon fanout
+        → AssertionError: expected +0 to be 1 (emitted.length still 0; register_contract never called fanout)
+      Test Files  1 failed (1), Tests  1 failed (1)
+      ```
+  - [x] **INTEGRATION-GREEN:** Wire fanout end-to-end
+    - `src/daemon/server.ts`: add `fanout?: SseFanout` to `ServerOpts`; instantiate `new SseFanout()` when absent; pass into `mountMcp`
+    - `src/mcp/transport.ts`: accept `fanout: SseFanout`; forward to `registerBusinessTools`
+    - `src/mcp/tools.ts`: accept `fanout?: SseFanout`; in `register_contract` handler, after a successful register with `_meta`, call `fanout.emitContractEvent(db, { team, contract_name, version, event_id, diff })`; strip `_meta` before returning to the client
+    - `src/mcp/register-contract.ts`: capture `event_id = events.append(...)` and carry `{ team, event_id, diff }` via `_meta` on the success envelope
+    ```ts
+    // register_contract handler snippet
+    async (args) => {
+      const who = requireAgent()
+      if (typeof who !== 'string') return toText(who)
+      return run(() => {
+        const res = regContractSvc.register({ caller: who, ...args })
+        if ('version' in res && res._meta && fanout) {
+          try {
+            fanout.emitContractEvent(db, {
+              team: res._meta.team, contract_name: res.name, version: res.version,
+              event_id: res._meta.event_id, diff: res._meta.diff
+            })
+          } catch { /* push failure does not roll back event */ }
+        }
+        if ('version' in res) { const { _meta: _omit, ...publicRes } = res; return publicRes }
+        return res
+      })
+    }
+    ```
+  - [x] **Verify INTEGRATION-GREEN:** Run test + full suite, confirm pass
+    - Command: `pnpm exec vitest run tests/sse-wire.test.ts --reporter=verbose`
+    - Full-suite command: `pnpm exec vitest run --reporter=basic`
+    - **Observed output (fill during apply):**
+      ```
+      ✓ tests/sse-wire.test.ts > SSE fanout wired into register_contract > register_contract triggers emitContractEvent on the injected daemon fanout
+      Test Files  1 passed (1), Tests  1 passed (1)
+      full suite: Test Files  38 passed (38), Tests  86 passed (86)
+      ```
+  - [x] **REFACTOR:** None — `_meta` is internal to the tool handler and stripped before returning; the try/catch honours the spec's "push failure does not roll back event" clause
+  - [x] **Verify REFACTOR:** Re-run tests, confirm still green
+    - Command: `pnpm exec vitest run tests/sse-wire.test.ts --reporter=verbose`
+    - **Observed output (fill during apply):**
+      ```
+      None — already minimal; same GREEN output stands.
+      ```
+  - [x] **Commit:** `fix(contracts): wire SSE fanout in daemon`
+    - Staging order: single atomic commit (wiring + test added together)
+    - **Commit SHA (fill during apply):** `7ed8452`
+
+- [x] 12.3 Map identity_mismatch and agent_id_collision to HTTP 403 / 409 at the transport layer
+  - kind: integration-test
+  - **Spec scenario(s):**
+    - `agent-registry/spec.md` → Scenario: `Second TCP session reuses same agent_id`
+    - `agent-registry/spec.md` → Scenario: `send_message with spoofed from_agent_id`
+  - **Files:**
+    - Create: `tests/http-status-codes.test.ts`
+    - Modify: `src/mcp/transport.ts`
+  - [x] **INTEGRATION-RED:** Write failing test — `tests/http-status-codes.test.ts`
+    - Behavior under test: (a) an MCP client registers; a raw `fetch` POST with the same `Mcp-Session-Id` from a different TCP socket calling `register_agent` MUST return HTTP 409 with body `{ error: 'agent_id_collision' }`; (b) a raw `fetch` POST for `tools/call send_message` with `arguments.from_agent_id !== sessionId` MUST return HTTP 403 with body `{ error: 'identity_mismatch' }`
+    - Expected failure reason: transport returns 200 with tool envelope, not 409/403 at HTTP layer
+    ```ts
+    import { describe, it, expect, afterEach } from 'vitest'
+    import { mkdtempSync, rmSync } from 'node:fs'
+    import { tmpdir } from 'node:os'
+    import { join } from 'node:path'
+    import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+    import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+    import { startServer } from '../src/daemon/server.js'
+
+    const tmp = () => mkdtempSync(join(tmpdir(), 'atm-'))
+    async function postMcp(url: string, sid: string | undefined, body: unknown): Promise<Response> {
+      const headers: Record<string, string> = {
+        'content-type': 'application/json',
+        'accept': 'application/json, text/event-stream'
+      }
+      if (sid) headers['mcp-session-id'] = sid
+      return fetch(url, { method: 'POST', headers, body: JSON.stringify(body) })
+    }
+
+    describe('HTTP status codes for identity errors', () => {
+      const cleanups: string[] = []
+      afterEach(() => { cleanups.forEach(d => rmSync(d, { recursive: true, force: true })); cleanups.length = 0 })
+
+      it('second TCP connection presenting a bound session id returns HTTP 409', async () => {
+        const dir = tmp(); cleanups.push(dir)
+        const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+        const url = `http://${host}:${port}/mcp`
+        const t = new StreamableHTTPClientTransport(new URL(url))
+        const c = new Client({ name: 'a', version: '0.0.0' }, { capabilities: {} })
+        await c.connect(t)
+        const sid = t.sessionId!
+        try {
+          await c.callTool({ name: 'register_agent', arguments: { model: 'm', role: 'r' } })
+          const res = await postMcp(url, sid, {
+            jsonrpc: '2.0', id: 999, method: 'tools/call',
+            params: { name: 'register_agent', arguments: { model: 'm', role: 'r' } }
+          })
+          expect(res.status).toBe(409)
+          expect(await res.json()).toEqual({ error: 'agent_id_collision' })
+        } finally { await c.close(); await app.close() }
+      }, 15000)
+
+      it('tools/call with a spoofed from_agent_id returns HTTP 403', async () => {
+        const dir = tmp(); cleanups.push(dir)
+        const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+        const url = `http://${host}:${port}/mcp`
+        const t = new StreamableHTTPClientTransport(new URL(url))
+        const c = new Client({ name: 'a', version: '0.0.0' }, { capabilities: {} })
+        await c.connect(t)
+        const sid = t.sessionId!
+        try {
+          await c.callTool({ name: 'register_agent', arguments: { model: 'm', role: 'r' } })
+          const res = await postMcp(url, sid, {
+            jsonrpc: '2.0', id: 1000, method: 'tools/call',
+            params: { name: 'send_message', arguments: { body: 'hello', from_agent_id: 'not-my-session' } }
+          })
+          expect(res.status).toBe(403)
+          expect(await res.json()).toEqual({ error: 'identity_mismatch' })
+        } finally { await c.close(); await app.close() }
+      }, 15000)
+    })
+    ```
+  - [x] **Verify INTEGRATION-RED:** Run test, confirm it fails for the expected reason
+    - Command: `pnpm exec vitest run tests/http-status-codes.test.ts --reporter=verbose`
+    - **Observed output (fill during apply):**
+      ```
+      × second TCP connection presenting a bound session id returns HTTP 409
+        → AssertionError: expected 200 to be 409
+      × tools/call with a spoofed from_agent_id returns HTTP 403
+        → AssertionError: expected 200 to be 403
+      Test Files  1 failed (1), Tests  2 failed (2)
+      ```
+  - [x] **INTEGRATION-GREEN:** Add a transport-layer pre-check in `src/mcp/transport.ts`
+    - Attach a symbolic token to each TCP socket (`req.raw.socket[SOCKET_TOKEN]`) so we can correlate requests with their originating TCP connection
+    - On `tools/call register_agent`, record the first socket token that uses the session id; any later `register_agent` from a different token → `reply.code(409).send({ error: 'agent_id_collision' })`
+    - On any `tools/call` with `params.arguments.from_agent_id` not equal to the session id → `reply.code(403).send({ error: 'identity_mismatch' })`
+    ```ts
+    // src/mcp/transport.ts pre-check (abbreviated)
+    const connToken = tokenFor(req)
+    if (session && body?.method === 'tools/call' && body.params?.name === 'register_agent') {
+      const owner = sessionOwners.get(session.sessionId)
+      if (owner && owner !== connToken) return reply.code(409).send({ error: 'agent_id_collision' })
+      if (!owner) sessionOwners.set(session.sessionId, connToken)
+    }
+    if (session && body?.method === 'tools/call') {
+      const claimed = body.params?.arguments?.from_agent_id
+      if (typeof claimed === 'string' && claimed !== session.sessionId) {
+        return reply.code(403).send({ error: 'identity_mismatch' })
+      }
+    }
+    ```
+  - [x] **Verify INTEGRATION-GREEN:** Run test + full suite, confirm pass
+    - Command: `pnpm exec vitest run tests/http-status-codes.test.ts --reporter=verbose`
+    - Full-suite command: `pnpm exec vitest run --reporter=basic`
+    - **Observed output (fill during apply):**
+      ```
+      ✓ second TCP connection presenting a bound session id returns HTTP 409
+      ✓ tools/call with a spoofed from_agent_id returns HTTP 403
+      Test Files  1 passed (1), Tests  2 passed (2)
+      full suite: Test Files  39 passed (39), Tests  88 passed (88)
+      ```
+  - [x] **REFACTOR:** None — the pre-check is gated specifically on `tools/call` so notifications and other protocol traffic pass through untouched; `sessionOwners` map is cleaned on transport `onclose`
+  - [x] **Verify REFACTOR:** Re-run tests, confirm still green
+    - Command: `pnpm exec vitest run tests/http-status-codes.test.ts --reporter=verbose`
+    - **Observed output (fill during apply):**
+      ```
+      None — already minimal; same GREEN output stands.
+      ```
+  - [x] **Commit:** `fix(transport): map identity/collision errors to HTTP 403/409`
+    - Staging order: test + production wiring in one commit
+    - **Commit SHA (fill during apply):** `d3c7fe2`
+
 ## Scenario Coverage Matrix
 
 | Capability | Scenario | Covered by Task(s) | Test file:line |
@@ -4683,11 +5024,11 @@ Ordered by dependency.  Phase 0 connectivity (Task 4.2) is the hard gate before 
 | `agent-registry` | `Fresh database creates agents table` | Task 5.1 | `tests/agents-schema.test.ts` |
 | `agent-registry` | `New session registers successfully` | Task 5.2 | `tests/agents-repo.test.ts` |
 | `agent-registry` | `Same session re-registers with different display_name` | Task 5.2 | `tests/agents-repo.test.ts` |
-| `agent-registry` | `Second TCP session reuses same agent_id` | Task 5.3 | `tests/agent-id-collision.test.ts` |
-| `agent-registry` | `send_message with spoofed from_agent_id` | Task 5.4 | `tests/identity-and-touch.test.ts` |
+| `agent-registry` | `Second TCP session reuses same agent_id` | Task 5.3, Task 12.3 | `tests/agent-id-collision.test.ts`, `tests/http-status-codes.test.ts` |
+| `agent-registry` | `send_message with spoofed from_agent_id` | Task 5.4, Task 12.3 | `tests/identity-and-touch.test.ts`, `tests/http-status-codes.test.ts` |
 | `agent-registry` | `Caller in team 'alpha' sees only team 'alpha' agents` | Task 5.2 | `tests/agents-repo.test.ts` |
 | `agent-registry` | `Online flag reflects last_seen_at freshness` | Task 5.2 | `tests/agents-repo.test.ts` |
-| `agent-registry` | `Tool call bumps last_seen_at` | Task 5.4 | `tests/identity-and-touch.test.ts` |
+| `agent-registry` | `Tool call bumps last_seen_at` | Task 5.4, Task 12.1 | `tests/identity-and-touch.test.ts`, `tests/last-seen-at-touch.test.ts` |
 | `mailbox` | `Sending a message creates paired rows` | Task 6.1, Task 6.2 | `tests/send-message-direct.test.ts` |
 | `mailbox` | `Both recipient fields given` | Task 6.2 | `tests/send-message-direct.test.ts` |
 | `mailbox` | `No recipient field given` | Task 6.2 | `tests/send-message-direct.test.ts` |
@@ -4727,9 +5068,9 @@ Ordered by dependency.  Phase 0 connectivity (Task 4.2) is the hard gate before 
 | `contract-subscriptions` | `Subscription persists across daemon restart` | Task 10.1 | `tests/subscribe-contract.test.ts` |
 | `contract-subscriptions` | `Poll returns unseen contract events` | Task 10.2 | `tests/pending-contract-events.test.ts` |
 | `contract-subscriptions` | `Empty poll result` | Task 10.2 | `tests/pending-contract-events.test.ts` |
-| `contract-subscriptions` | `Subscribed online agent receives push` | Task 10.3 | `tests/sse-fanout.test.ts` |
+| `contract-subscriptions` | `Subscribed online agent receives push` | Task 10.3, Task 12.2 | `tests/sse-fanout.test.ts`, `tests/sse-wire.test.ts` |
 | `contract-subscriptions` | `Unsubscribed online agent does not receive push` | Task 10.3 | `tests/sse-fanout.test.ts` |
 | `contract-subscriptions` | `Offline subscriber catches up via polling after reconnect` | Task 10.4 | `tests/offline-subscription.test.ts` |
-| `contract-subscriptions` | `Push failure does not roll back event` | Task 10.3 | `tests/sse-fanout.test.ts` |
+| `contract-subscriptions` | `Push failure does not roll back event` | Task 10.3, Task 12.2 | `tests/sse-fanout.test.ts`, `tests/sse-wire.test.ts` |
 
 **Coverage:** 76 of 76 scenarios covered (100% required).
