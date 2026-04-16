@@ -3,8 +3,9 @@ import { openDb } from '../storage/db.js'
 import { applySchema } from '../storage/schema.js'
 import { makeAuthHook } from './auth.js'
 import { mountMcp } from '../mcp/transport.js'
+import { runCleanup } from './cleanup.js'
 
-export interface ServerOpts { dbPath: string; token?: string }
+export interface ServerOpts { dbPath: string; token?: string; cleanupIntervalMs?: number }
 export interface StartOpts extends ServerOpts { port: number; host?: string }
 
 export async function buildServer(opts: ServerOpts): Promise<FastifyInstance> {
@@ -16,7 +17,18 @@ export async function buildServer(opts: ServerOpts): Promise<FastifyInstance> {
   app.addHook('onRequest', makeAuthHook(opts.token))
   app.get('/health', async () => ({ ok: true, version, uptime_seconds: Math.floor((Date.now() - startedAt) / 1000) }))
   mountMcp(app)
-  app.addHook('onClose', async () => { db.close() })
+
+  const cleanupIntervalMs = opts.cleanupIntervalMs
+    ?? Number(process.env.CLEANUP_INTERVAL_MS ?? 60 * 60 * 1000)
+  const interval = setInterval(() => {
+    try { runCleanup(db) } catch { /* best-effort */ }
+  }, cleanupIntervalMs)
+  if (typeof interval.unref === 'function') interval.unref()
+
+  app.addHook('onClose', async () => {
+    clearInterval(interval)
+    db.close()
+  })
   return app
 }
 
