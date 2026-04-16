@@ -3,8 +3,14 @@ import type { AgentsRepo } from '../storage/agents-repo.js'
 import type { EventsOutbox } from '../storage/events-outbox.js'
 import { diffSchema, type ContractDiff } from '../lib/schema-diff.js'
 
+export interface RegisterContractMeta {
+  team: string
+  event_id: number
+  diff: ContractDiff | null
+}
+
 export type RegisterContractResult =
-  | { name: string; version: number; diff?: ContractDiff }
+  | { name: string; version: number; diff?: ContractDiff; _meta?: RegisterContractMeta }
   | { error: 'unknown_agent' | 'invalid_format' }
 
 export class RegisterContractService {
@@ -37,13 +43,16 @@ export class RegisterContractService {
       ).run(caller.team, args.name, version, format, JSON.stringify(args.schema), args.note ?? null, args.caller, now)
       let diff: ContractDiff | undefined
       if (prev) diff = diffSchema(JSON.parse(prev.schema), args.schema as any)
-      this.events.append({
+      const event_id = this.events.append({
         team: caller.team,
         event_type: 'contract_registered',
         actor_agent_id: args.caller,
         payload: { name: args.name, version, diff: diff ?? null }
       })
-      return prev ? { name: args.name, version, diff: diff! } : { name: args.name, version }
+      const meta: RegisterContractMeta = { team: caller.team, event_id, diff: diff ?? null }
+      return prev
+        ? { name: args.name, version, diff: diff!, _meta: meta }
+        : { name: args.name, version, _meta: meta }
     })
     return txFn.immediate()
   }

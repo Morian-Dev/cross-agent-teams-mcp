@@ -17,6 +17,7 @@ import { GetContractService } from './get-contract.js'
 import { DiffContractsService } from './diff-contracts.js'
 import { PendingContractEventsService } from './pending-contract-events.js'
 import { wrapStorage } from '../daemon/errors.js'
+import type { SseFanout } from '../daemon/sse-fanout.js'
 
 export interface AgentIdHolder { current: string | undefined }
 
@@ -29,7 +30,8 @@ function toText(value: unknown): TextContent {
 export function registerBusinessTools(
   server: McpServer,
   db: Database.Database,
-  getCallerAgentId: () => string | undefined
+  getCallerAgentId: () => string | undefined,
+  fanout?: SseFanout
 ): void {
   const agents = new AgentsRepo(db)
   const events = new EventsOutbox(db)
@@ -255,7 +257,25 @@ export function registerBusinessTools(
     async (args: { name: string; schema: Record<string, unknown>; format?: 'jsonschema'; note?: string }) => {
       const who = requireAgent()
       if (typeof who !== 'string') return toText(who)
-      return run(() => regContractSvc.register({ caller: who, ...args }))
+      return run(() => {
+        const res = regContractSvc.register({ caller: who, ...args })
+        if ('version' in res && res._meta && fanout) {
+          try {
+            fanout.emitContractEvent(db, {
+              team: res._meta.team,
+              contract_name: res.name,
+              version: res.version,
+              event_id: res._meta.event_id,
+              diff: res._meta.diff
+            })
+          } catch { /* push failure does not roll back event */ }
+        }
+        if ('version' in res) {
+          const { _meta: _omit, ...publicRes } = res
+          return publicRes
+        }
+        return res
+      })
     }
   )
 

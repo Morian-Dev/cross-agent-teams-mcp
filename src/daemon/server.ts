@@ -4,8 +4,9 @@ import { applySchema } from '../storage/schema.js'
 import { makeAuthHook } from './auth.js'
 import { mountMcp } from '../mcp/transport.js'
 import { runCleanup } from './cleanup.js'
+import { SseFanout } from './sse-fanout.js'
 
-export interface ServerOpts { dbPath: string; token?: string; cleanupIntervalMs?: number }
+export interface ServerOpts { dbPath: string; token?: string; cleanupIntervalMs?: number; fanout?: SseFanout }
 export interface StartOpts extends ServerOpts { port: number; host?: string }
 
 export async function buildServer(opts: ServerOpts): Promise<FastifyInstance> {
@@ -14,9 +15,10 @@ export async function buildServer(opts: ServerOpts): Promise<FastifyInstance> {
   applySchema(db)
   const startedAt = Date.now()
   const version = '0.1.0'
+  const fanout = opts.fanout ?? new SseFanout()
   app.addHook('onRequest', makeAuthHook(opts.token))
   app.get('/health', async () => ({ ok: true, version, uptime_seconds: Math.floor((Date.now() - startedAt) / 1000) }))
-  mountMcp(app, db)
+  mountMcp(app, db, fanout)
 
   const cleanupIntervalMs = opts.cleanupIntervalMs
     ?? Number(process.env.CLEANUP_INTERVAL_MS ?? 60 * 60 * 1000)

@@ -5,6 +5,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { randomUUID } from 'node:crypto'
 import { echoSchema, echoHandler } from './echo.js'
 import { registerBusinessTools, type AgentIdHolder } from './tools.js'
+import type { SseFanout } from '../daemon/sse-fanout.js'
 
 interface Session {
   transport: StreamableHTTPServerTransport
@@ -13,14 +14,14 @@ interface Session {
   agentIdHolder: AgentIdHolder
 }
 
-export function mountMcp(app: FastifyInstance, db: Database.Database): void {
+export function mountMcp(app: FastifyInstance, db: Database.Database, fanout: SseFanout): void {
   const sessions = new Map<string, Session>()
 
   function createSession(): Session {
     const server = new McpServer({ name: 'agent-teams-mcp', version: '0.1.0' })
     const agentIdHolder: AgentIdHolder = { current: undefined }
     server.registerTool('echo', { title: 'Echo', description: 'Return the input', inputSchema: echoSchema }, echoHandler as any)
-    registerBusinessTools(server, db, () => agentIdHolder.current)
+    registerBusinessTools(server, db, () => agentIdHolder.current, fanout)
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sid: string) => {
