@@ -55,6 +55,13 @@ const DDL = [
     registered_by TEXT NOT NULL,
     registered_at TEXT NOT NULL,
     UNIQUE(team, name, version)
+  )`,
+  `CREATE TABLE IF NOT EXISTS contract_subscriptions (
+    agent_id TEXT NOT NULL,
+    team TEXT NOT NULL,
+    contract_name TEXT NOT NULL,
+    subscribed_at TEXT NOT NULL,
+    PRIMARY KEY (agent_id, team, contract_name)
   )`
 ]
 
