@@ -51,7 +51,16 @@ export function registerBusinessTools(
 
   async function run(fn: () => unknown): Promise<TextContent> {
     const out = await wrapStorage(() => fn())
+    touchIfRegistered()
     return toText(out)
+  }
+
+  function touchIfRegistered(): void {
+    const c = caller()
+    if (!c) return
+    try {
+      if (agents.findById(c)) agents.touch(c)
+    } catch { /* best-effort */ }
   }
 
   function requireAgent(): string | { error: 'unknown_agent' } {
