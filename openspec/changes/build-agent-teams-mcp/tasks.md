@@ -4992,6 +4992,217 @@ Ordered by dependency.  Phase 0 connectivity (Task 4.2) is the hard gate before 
     - Staging order: test + production wiring in one commit
     - **Commit SHA (fill during apply):** `d3c7fe2`
 
+## 13. Review Fixes (iteration 2)
+
+- [x] 13.1 Attach MCP transport sessions to `SseFanout` on initialization
+  - kind: integration-test
+  - **Spec scenario(s):**
+    - `contract-subscriptions/spec.md` → Scenario: `Subscribed online agent receives push`
+  - **Files:**
+    - Create: `tests/sse-attach-wiring.test.ts`
+    - Modify: `src/daemon/sse-fanout.ts`, `src/mcp/transport.ts`, `src/mcp/tools.ts`
+  - [x] **INTEGRATION-RED:** Write failing test — `tests/sse-attach-wiring.test.ts`
+    - Behavior under test: (a) `SseFanout.peek()` after `client.connect(transport)` contains exactly one entry `{ agent_id: sid, team: 'default' }`, (b) after `register_agent({ team: 'alpha' })` the same entry rebinds to team `alpha`, (c) after `transport.terminateSession()` the entry is gone
+    - Expected failure reason: `fanout.peek is not a function` (peek method does not exist; attach path never called in production)
+    ```ts
+    import { describe, it, expect, afterEach } from 'vitest'
+    import { mkdtempSync, rmSync } from 'node:fs'
+    import { tmpdir } from 'node:os'
+    import { join } from 'node:path'
+    import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+    import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+    import { startServer } from '../src/daemon/server.js'
+    import { SseFanout } from '../src/daemon/sse-fanout.js'
+
+    const tmp = () => mkdtempSync(join(tmpdir(), 'atm-'))
+
+    describe('SSE fanout attach/rebind/detach wiring into MCP sessions', () => {
+      const cleanups: string[] = []
+      afterEach(() => { cleanups.forEach(d => rmSync(d, { recursive: true, force: true })); cleanups.length = 0 })
+
+      it('attaches session on init, rebinds team on register_agent, detaches on close', async () => {
+        const dir = tmp(); cleanups.push(dir)
+        const fanout = new SseFanout()
+        const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0, fanout })
+        const url = `http://${host}:${port}/mcp`
+        const transport = new StreamableHTTPClientTransport(new URL(url))
+        const client = new Client({ name: 'a', version: '0.0.0' }, { capabilities: {} })
+        await client.connect(transport)
+        const sid = transport.sessionId!
+        try {
+          const afterInit = fanout.peek()
+          expect(afterInit.length).toBe(1)
+          expect(afterInit[0]).toEqual({ agent_id: sid, team: 'default' })
+          await client.callTool({ name: 'register_agent', arguments: { model: 'm', role: 'r', team: 'alpha' } })
+          const afterRegister = fanout.peek()
+          expect(afterRegister.length).toBe(1)
+          expect(afterRegister[0]).toEqual({ agent_id: sid, team: 'alpha' })
+        } finally {
+          await transport.terminateSession()
+          await client.close()
+        }
+        await new Promise(r => setTimeout(r, 50))
+        expect(fanout.peek().length).toBe(0)
+        await app.close()
+      }, 15000)
+    })
+    ```
+  - [x] **Verify INTEGRATION-RED:** Run test, confirm it fails for the expected reason
+    - Command: `pnpm exec vitest run tests/sse-attach-wiring.test.ts --reporter=verbose`
+    - **Observed output (fill during apply):**
+      ```
+      × tests/sse-attach-wiring.test.ts > SSE fanout attach/rebind/detach wiring into MCP sessions > attaches session on init, rebinds team on register_agent, detaches on close
+        → fanout.peek is not a function
+      Test Files  1 failed (1), Tests  1 failed (1)
+      ```
+  - [x] **INTEGRATION-GREEN:** Wire attach/rebind/detach into transport; add `peek()` and `rebind()` to `SseFanout`
+    - `src/daemon/sse-fanout.ts`: add `rebind(agent_id, team)` that updates an already-attached session record, and `peek()` returning `{ agent_id, team }[]`
+    - `src/mcp/transport.ts`: inside `onsessioninitialized`, build an `SseSink` adapter whose `send(msg)` calls `transport.send({ jsonrpc: '2.0', method: 'notifications/contract_event', params: msg })` (swallowing errors for the "no GET SSE stream yet" window); call `fanout.attach(sid, 'default', sink)`. On `transport.onclose`, call `fanout.detach(sid)`.
+    - `src/mcp/tools.ts`: after a successful `registerSvc.register`, call `fanout.rebind(sid, res.team)` so the fan-out team scope matches the registered team.
+    ```ts
+    // transport.ts snippet
+    onsessioninitialized: (sid: string) => {
+      agentIdHolder.current = sid
+      sessions.set(sid, { transport, server, sessionId: sid, agentIdHolder })
+      const sink = {
+        send(msg) {
+          void transport.send({ jsonrpc: '2.0', method: 'notifications/contract_event', params: msg })
+            .catch(() => { /* no active GET SSE stream yet */ })
+        },
+        close() {}
+      }
+      fanout.attach(sid, 'default', sink)
+    }
+    ```
+  - [x] **Verify INTEGRATION-GREEN:** Run test + full suite, confirm pass
+    - Command: `pnpm exec vitest run tests/sse-attach-wiring.test.ts --reporter=verbose`
+    - Full-suite command: `pnpm exec vitest run --reporter=basic`
+    - **Observed output (fill during apply):**
+      ```
+      ✓ tests/sse-attach-wiring.test.ts > SSE fanout attach/rebind/detach wiring into MCP sessions > attaches session on init, rebinds team on register_agent, detaches on close
+      Test Files  1 passed (1), Tests  1 passed (1)
+      full suite: Test Files  40 passed (40), Tests  89 passed (89)
+      ```
+  - [x] **REFACTOR:** None — attach/rebind/detach are already single-line operations and the sink adapter is the minimal translation between `SseFanout.send(msg)` and the SDK's `transport.send(JSONRPCMessage)` notification envelope; errors are swallowed only because the SDK auto-opens the GET SSE channel AFTER `notifications/initialized`, which may arrive after `onsessioninitialized` fires.
+  - [x] **Verify REFACTOR:** Re-run tests, confirm still green
+    - Command: `pnpm exec vitest run tests/sse-attach-wiring.test.ts --reporter=verbose`
+    - **Observed output (fill during apply):**
+      ```
+      None — already minimal; same GREEN output stands.
+      ```
+  - [x] **Commit:** `fix(daemon): attach MCP sessions to SSE fanout on init`
+    - Staging order: test file + production edits (sse-fanout.ts + transport.ts + tools.ts) staged together (single fix)
+    - **Commit SHA (fill during apply):** `a775352`
+
+- [x] 13.2 End-to-end SSE push received by a real MCP SDK client
+  - kind: integration-test
+  - **Spec scenario(s):**
+    - `contract-subscriptions/spec.md` → Scenario: `Subscribed online agent receives push`
+    - `contract-subscriptions/spec.md` → Scenario: `Unsubscribed online agent does not receive push`
+  - **Files:**
+    - Create: `tests/sse-e2e.test.ts`
+    - Modify: none — infrastructure for this test is supplied by 13.1
+  - [x] **INTEGRATION-RED:** Write failing test — `tests/sse-e2e.test.ts`
+    - Behavior under test: three MCP SDK `Client`s A / B / C; A and C open standalone GET SSE (auto-opened by the SDK after `notifications/initialized`); A subscribes to contract `X`; B publishes `register_contract("X", {...})`; A's notification handler MUST receive exactly one `notifications/contract_event` with `contract_name="X"`, `version=1`; C MUST receive zero.
+    - Expected failure reason (against pre-13.1 production): `fanout.attach` never fires in production, so the server's `SseFanout.sessions` map is empty; `emitContractEvent` iterates zero sessions; A's handler is never invoked; `expected +0 to be 1`.
+    ```ts
+    import { describe, it, expect, afterEach } from 'vitest'
+    import { mkdtempSync, rmSync } from 'node:fs'
+    import { tmpdir } from 'node:os'
+    import { join } from 'node:path'
+    import { z } from 'zod'
+    import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+    import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+    import { startServer } from '../src/daemon/server.js'
+
+    const tmp = () => mkdtempSync(join(tmpdir(), 'atm-'))
+    function parseTool(res: unknown): any {
+      const r = res as { content: Array<{ type: string; text: string }> }
+      return JSON.parse(r.content[0].text)
+    }
+    const ContractEventNotificationSchema = z.object({
+      method: z.literal('notifications/contract_event'),
+      params: z.object({
+        type: z.literal('contract_event'),
+        event_id: z.number(),
+        contract_name: z.string(),
+        version: z.number(),
+        diff: z.unknown().nullable()
+      }).passthrough()
+    })
+
+    describe('end-to-end SSE contract_event push', () => {
+      const cleanups: string[] = []
+      afterEach(() => { cleanups.forEach(d => rmSync(d, { recursive: true, force: true })); cleanups.length = 0 })
+
+      it('subscribed client receives contract_event notification and unsubscribed does not', async () => {
+        const dir = tmp(); cleanups.push(dir)
+        const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+        const url = `http://${host}:${port}/mcp`
+        const tA = new StreamableHTTPClientTransport(new URL(url)); const cA = new Client({ name: 'A', version: '0.0.0' }, { capabilities: {} })
+        const tB = new StreamableHTTPClientTransport(new URL(url)); const cB = new Client({ name: 'B', version: '0.0.0' }, { capabilities: {} })
+        const tC = new StreamableHTTPClientTransport(new URL(url)); const cC = new Client({ name: 'C', version: '0.0.0' }, { capabilities: {} })
+        const recvA: any[] = []; const recvC: any[] = []
+        cA.setNotificationHandler(ContractEventNotificationSchema, (n) => { recvA.push(n) })
+        cC.setNotificationHandler(ContractEventNotificationSchema, (n) => { recvC.push(n) })
+        await cA.connect(tA); await cB.connect(tB); await cC.connect(tC)
+        try {
+          await cA.callTool({ name: 'register_agent', arguments: { model: 'm', role: 'r' } })
+          await cB.callTool({ name: 'register_agent', arguments: { model: 'm', role: 'r' } })
+          await cC.callTool({ name: 'register_agent', arguments: { model: 'm', role: 'r' } })
+          const subA = parseTool(await cA.callTool({ name: 'subscribe_contract', arguments: { name: 'X' } }))
+          expect(subA.ok).toBe(true)
+          await new Promise(r => setTimeout(r, 100))
+          const reg = parseTool(await cB.callTool({
+            name: 'register_contract', arguments: { name: 'X', schema: { type: 'object' } }
+          }))
+          expect(reg.version).toBe(1)
+          const deadline = Date.now() + 2000
+          while (recvA.length === 0 && Date.now() < deadline) { await new Promise(r => setTimeout(r, 50)) }
+          expect(recvA.length).toBe(1)
+          expect(recvA[0].params.contract_name).toBe('X')
+          expect(recvA[0].params.version).toBe(1)
+          expect(recvA[0].params.type).toBe('contract_event')
+          expect(typeof recvA[0].params.event_id).toBe('number')
+          expect(recvC.length).toBe(0)
+        } finally {
+          try { await tA.terminateSession() } catch {}
+          try { await tB.terminateSession() } catch {}
+          try { await tC.terminateSession() } catch {}
+          await cA.close(); await cB.close(); await cC.close(); await app.close()
+        }
+      }, 20000)
+    })
+    ```
+  - [x] **Verify INTEGRATION-RED:** Run test on pre-13.1 baseline, confirm failure
+    - Command: `pnpm exec vitest run tests/sse-e2e.test.ts --reporter=verbose` (with production files reverted to HEAD~1 of 13.1)
+    - **Observed output (fill during apply):**
+      ```
+      × tests/sse-e2e.test.ts > end-to-end SSE contract_event push > subscribed client receives contract_event notification and unsubscribed does not
+        → expected +0 to be 1 // Object.is equality (recvA stayed empty because SseFanout.sessions was empty in production)
+      Test Files  1 failed (1), Tests  1 failed (1)
+      ```
+  - [x] **INTEGRATION-GREEN:** No new production change required — 13.1's attach/rebind/detach wiring combined with the producer-side `emitContractEvent` plumbing from 12.2 makes the SDK client receive the push end-to-end. The sink adapter in 13.1 translates `SseFanout.send(msg)` into `transport.send({ jsonrpc:'2.0', method:'notifications/contract_event', params: msg })`, which the SDK routes over the standalone GET SSE stream auto-opened after `notifications/initialized`.
+  - [x] **Verify INTEGRATION-GREEN:** Run test + full suite, confirm pass
+    - Command: `pnpm exec vitest run tests/sse-e2e.test.ts --reporter=verbose`
+    - Full-suite command: `pnpm exec vitest run --reporter=basic`
+    - **Observed output (fill during apply):**
+      ```
+      ✓ tests/sse-e2e.test.ts > end-to-end SSE contract_event push > subscribed client receives contract_event notification and unsubscribed does not
+      Test Files  1 passed (1), Tests  1 passed (1)
+      full suite: Test Files  41 passed (41), Tests  90 passed (90)
+      ```
+  - [x] **REFACTOR:** None — the test uses the SDK's public `setNotificationHandler` API with a Zod schema for `notifications/contract_event`; no production change.
+  - [x] **Verify REFACTOR:** Re-run tests, confirm still green
+    - Command: `pnpm exec vitest run tests/sse-e2e.test.ts --reporter=verbose`
+    - **Observed output (fill during apply):**
+      ```
+      None — already minimal; same GREEN output stands.
+      ```
+  - [x] **Commit:** `test(contracts): sse end-to-end notification push`
+    - Staging order: test file only (no production change in this commit)
+    - **Commit SHA (fill during apply):** `56206f4`
+
 ## Scenario Coverage Matrix
 
 | Capability | Scenario | Covered by Task(s) | Test file:line |
@@ -5068,8 +5279,8 @@ Ordered by dependency.  Phase 0 connectivity (Task 4.2) is the hard gate before 
 | `contract-subscriptions` | `Subscription persists across daemon restart` | Task 10.1 | `tests/subscribe-contract.test.ts` |
 | `contract-subscriptions` | `Poll returns unseen contract events` | Task 10.2 | `tests/pending-contract-events.test.ts` |
 | `contract-subscriptions` | `Empty poll result` | Task 10.2 | `tests/pending-contract-events.test.ts` |
-| `contract-subscriptions` | `Subscribed online agent receives push` | Task 10.3, Task 12.2 | `tests/sse-fanout.test.ts`, `tests/sse-wire.test.ts` |
-| `contract-subscriptions` | `Unsubscribed online agent does not receive push` | Task 10.3 | `tests/sse-fanout.test.ts` |
+| `contract-subscriptions` | `Subscribed online agent receives push` | Task 10.3, Task 12.2, Task 13.1, Task 13.2 | `tests/sse-fanout.test.ts`, `tests/sse-wire.test.ts`, `tests/sse-attach-wiring.test.ts`, `tests/sse-e2e.test.ts` |
+| `contract-subscriptions` | `Unsubscribed online agent does not receive push` | Task 10.3, Task 13.2 | `tests/sse-fanout.test.ts`, `tests/sse-e2e.test.ts` |
 | `contract-subscriptions` | `Offline subscriber catches up via polling after reconnect` | Task 10.4 | `tests/offline-subscription.test.ts` |
 | `contract-subscriptions` | `Push failure does not roll back event` | Task 10.3, Task 12.2 | `tests/sse-fanout.test.ts`, `tests/sse-wire.test.ts` |
 
