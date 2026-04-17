@@ -68,4 +68,12 @@ const DDL = [
 
 export function applySchema(db: Database.Database): void {
   for (const sql of DDL) db.exec(sql)
+  ensureAgentsHasTmuxPaneId(db)
+}
+
+function ensureAgentsHasTmuxPaneId(db: Database.Database): void {
+  const cols = db.pragma('table_info(agents)') as Array<{ name: string }>
+  if (!cols.some(c => c.name === 'tmux_pane_id')) {
+    db.exec(`ALTER TABLE agents ADD COLUMN tmux_pane_id TEXT`)
+  }
 }
