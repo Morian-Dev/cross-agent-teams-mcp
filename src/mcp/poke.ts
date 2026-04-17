@@ -28,6 +28,8 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
     .get(input.target_agent_id) as TargetRow | undefined
   if (!target) return { error: 'unknown_target' }
 
+  if (target.agent_id === deps.callerAgentId) return { error: 'self_poke_denied' }
+
   if (!target.tmux_pane_id) return { error: 'tmux_pane_not_set' }
 
   return { error: 'tmux_cmd_failed' }

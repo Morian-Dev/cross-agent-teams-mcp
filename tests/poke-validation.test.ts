@@ -66,6 +66,21 @@ describe('poke validation', () => {
     await app.close()
   })
 
+  it('returns self_poke_denied when caller pokes itself', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+    const { c, t } = await connectClient(host, port)
+    const selfId = await register(c, { tmux_pane_id: '%1' })
+
+    const resp = await c.callTool({ name: 'poke', arguments: { target_agent_id: selfId, prompt: 'p' } })
+    const obj = await parseTool(resp)
+    expect(obj).toEqual({ error: 'self_poke_denied' })
+
+    await t.terminateSession()
+    await c.close()
+    await app.close()
+  })
+
   it('returns tmux_pane_not_set when target has no tmux_pane_id', async () => {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
