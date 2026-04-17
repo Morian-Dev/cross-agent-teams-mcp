@@ -106,4 +106,16 @@ describe('AgentsRepo tmux_pane_id', () => {
     expect(row.tmux_pane_id).toBe('%42')
     db.close()
   })
+
+  it('list returns tmux_pane_id for every agent (null when unset)', () => {
+    const { db, repo } = freshRepo()
+    repo.register({ agent_id: 'sess-A', model: 'opus-4-7', role: 'frontend', tmux_pane_id: '%42' })
+    repo.register({ agent_id: 'sess-B', model: 'gpt-5', role: 'reviewer' })
+    const rows = repo.list({ team: 'default' })
+    const a = rows.find(r => r.agent_id === 'sess-A')
+    const b = rows.find(r => r.agent_id === 'sess-B')
+    expect(a?.tmux_pane_id).toBe('%42')
+    expect(b?.tmux_pane_id).toBeNull()
+    db.close()
+  })
 })
