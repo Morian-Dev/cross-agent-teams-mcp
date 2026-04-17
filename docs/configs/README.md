@@ -15,3 +15,13 @@ Manual scenario (broadcast replaces human relay):
 6. From Codex CLI, `task_list` to confirm completed state.
 
 Record stdout transcripts per agent as evidence.
+
+## Cross-agent poke scenario (Change `add-poke-mcp-tool`)
+
+After both agents have registered with `tmux_pane_id`:
+
+1. Agent A calls `poke({ target_agent_id: "<B>", prompt: "new events waiting, please check" })`
+2. Daemon captures B's pane tail, injects the prompt via bracketed paste, sends Enter, captures again
+3. A receives `{ ok, pane_id, pane_tail_before, pane_tail_after }` and inspects the diff to decide whether B acknowledged
+4. If no visible change, A may call `poke` again (soft limit: 3 times per short window)
+5. If still silent, fall back to `send_message` (mailbox persistence) or escalate to the human
