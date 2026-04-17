@@ -118,4 +118,13 @@ describe('AgentsRepo tmux_pane_id', () => {
     expect(b?.tmux_pane_id).toBeNull()
     db.close()
   })
+
+  it('stores non-tmux opaque strings verbatim', () => {
+    const { db, repo } = freshRepo()
+    repo.register({ agent_id: 'sess-C', model: 'custom', role: 'exec', tmux_pane_id: 'custom-pane-token-xyz' })
+    const rows = repo.list({ team: 'default' })
+    const c = rows.find(r => r.agent_id === 'sess-C')
+    expect(c?.tmux_pane_id).toBe('custom-pane-token-xyz')
+    db.close()
+  })
 })
