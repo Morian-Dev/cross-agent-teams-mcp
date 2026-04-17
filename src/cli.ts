@@ -13,12 +13,12 @@ function parseArg(name: string, def?: string): string | undefined {
 
 async function main(): Promise<void> {
   const cmd = process.argv[2]
-  if (cmd !== 'daemon') { console.error('usage: agent-teams-mcp daemon [options]'); process.exit(2) }
-  const home = process.env.AGENT_TEAMS_HOME ?? join(homedir(), '.agent-teams')
+  if (cmd !== 'daemon') { console.error('usage: ts-agent-teams daemon [options]'); process.exit(2) }
+  const home = process.env.TS_AGENT_TEAMS_HOME ?? join(homedir(), '.ts-agent-teams')
   const pidPath = parseArg('--pid-file', join(home, 'daemon.pid'))!
   const dbPath = parseArg('--db', join(home, 'data.db'))!
   const token = parseArg('--token')
-  const requested = Number(parseArg('--port', '9099'))
+  const requested = Number(parseArg('--port', '9100'))
   const port = requested === 0 ? 0 : await selectPort([requested, requested + 1, requested + 2])
   const r = acquirePidFile(pidPath, port || requested)
   if (!r.ok) { console.error('daemon already running pid=' + r.pid); process.exit(1) }

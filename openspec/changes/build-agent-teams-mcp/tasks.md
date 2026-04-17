@@ -19,11 +19,11 @@ Ordered by dependency.  Phase 0 connectivity (Task 4.2) is the hard gate before 
     `package.json`:
     ```json
     {
-      "name": "agent-teams-mcp",
+      "name": "ts-agent-teams",
       "version": "0.1.0",
       "description": "MCP daemon for cross-agent collaboration",
       "type": "module",
-      "bin": { "agent-teams-mcp": "./dist/cli.js" },
+      "bin": { "ts-agent-teams": "./dist/cli.js" },
       "scripts": {
         "build": "tsup",
         "test": "vitest run",
@@ -100,7 +100,7 @@ Ordered by dependency.  Phase 0 connectivity (Task 4.2) is the hard gate before 
     node_modules/
     dist/
     *.log
-    .agent-teams-test/
+    .ts-agent-teams-test/
     coverage/
     ```
 
@@ -483,11 +483,11 @@ Ordered by dependency.  Phase 0 connectivity (Task 4.2) is the hard gate before 
       it('fresh acquire writes pid and port', () => {
         const dir = tmp(); cleanups.push(dir)
         const path = join(dir, 'daemon.pid')
-        const r = acquirePidFile(path, 9099)
+        const r = acquirePidFile(path, 9100)
         expect(r.ok).toBe(true)
         const parsed = JSON.parse(readFileSync(path, 'utf8'))
         expect(parsed.pid).toBe(process.pid)
-        expect(parsed.port).toBe(9099)
+        expect(parsed.port).toBe(9100)
         releasePidFile(path)
       })
 
@@ -495,7 +495,7 @@ Ordered by dependency.  Phase 0 connectivity (Task 4.2) is the hard gate before 
         const dir = tmp(); cleanups.push(dir)
         const path = join(dir, 'daemon.pid')
         writeFileSync(path, JSON.stringify({ pid: 999999, port: 1 }))
-        const r = acquirePidFile(path, 9099)
+        const r = acquirePidFile(path, 9100)
         expect(r.ok).toBe(true)
         expect(JSON.parse(readFileSync(path, 'utf8')).pid).toBe(process.pid)
         releasePidFile(path)
@@ -505,7 +505,7 @@ Ordered by dependency.  Phase 0 connectivity (Task 4.2) is the hard gate before 
         const dir = tmp(); cleanups.push(dir)
         const path = join(dir, 'daemon.pid')
         writeFileSync(path, JSON.stringify({ pid: process.pid, port: 1 }))
-        const r = acquirePidFile(path, 9099)
+        const r = acquirePidFile(path, 9100)
         expect(r.ok).toBe(false)
         expect(r.reason).toBe('already_running')
       })
@@ -513,7 +513,7 @@ Ordered by dependency.  Phase 0 connectivity (Task 4.2) is the hard gate before 
       it('releasePidFile removes the file', () => {
         const dir = tmp(); cleanups.push(dir)
         const path = join(dir, 'daemon.pid')
-        acquirePidFile(path, 9099)
+        acquirePidFile(path, 9100)
         releasePidFile(path)
         expect(existsSync(path)).toBe(false)
       })
@@ -584,7 +584,7 @@ Ordered by dependency.  Phase 0 connectivity (Task 4.2) is the hard gate before 
     - Staging order: test file BEFORE production file
     - **Commit SHA (fill during apply):** `2f76e25`
 
-- [x] 3.3 Select a free port with fallback 9099 → 9100 → 9101 and exit after three failures
+- [x] 3.3 Select a free port with fallback 9100 → 9101 → 9102 and exit after three failures
   - kind: integration-test
   - **Spec scenario(s):**
     - `daemon-core/spec.md` → Scenario: `First port free`
@@ -830,7 +830,7 @@ Ordered by dependency.  Phase 0 connectivity (Task 4.2) is the hard gate before 
     - **Observed output (fill during apply):**
       ```
       FAIL tests/graceful-shutdown.test.ts — child process exited early with code 2
-      (cli.ts had no daemon command, exited with "usage: agent-teams-mcp daemon [options]")
+      (cli.ts had no daemon command, exited with "usage: ts-agent-teams daemon [options]")
       Test Files  1 failed (1), Tests  1 failed (1)
       ```
   - [x] **INTEGRATION-GREEN:** Write minimal implementation — `src/daemon/shutdown.ts` + `src/cli.ts`
@@ -868,12 +868,12 @@ Ordered by dependency.  Phase 0 connectivity (Task 4.2) is the hard gate before 
 
     async function main() {
       const cmd = process.argv[2]
-      if (cmd !== 'daemon') { console.error('usage: agent-teams-mcp daemon [options]'); process.exit(2) }
-      const home = process.env.AGENT_TEAMS_HOME ?? join(homedir(), '.agent-teams')
+      if (cmd !== 'daemon') { console.error('usage: ts-agent-teams daemon [options]'); process.exit(2) }
+      const home = process.env.TS_AGENT_TEAMS_HOME ?? join(homedir(), '.ts-agent-teams')
       const pidPath = parseArg('--pid-file', join(home, 'daemon.pid'))!
       const dbPath = parseArg('--db', join(home, 'data.db'))!
       const token = parseArg('--token')
-      const requested = Number(parseArg('--port', '9099'))
+      const requested = Number(parseArg('--port', '9100'))
       const port = requested === 0 ? 0 : await selectPort([requested, requested + 1, requested + 2])
       const r = acquirePidFile(pidPath, port || requested)
       if (!r.ok) { console.error('daemon already running pid=' + r.pid); process.exit(1) }
@@ -1306,7 +1306,7 @@ Ordered by dependency.  Phase 0 connectivity (Task 4.2) is the hard gate before 
       const sessions = new Map<string, Session>()
 
       function createSession(): Session {
-        const server = new McpServer({ name: 'agent-teams-mcp', version: '0.1.0' })
+        const server = new McpServer({ name: 'ts-agent-teams', version: '0.1.0' })
         server.registerTool('echo', { title: 'Echo', description: 'Return the input', inputSchema: echoSchema }, echoHandler)
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),

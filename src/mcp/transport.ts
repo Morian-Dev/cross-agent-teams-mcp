@@ -21,7 +21,7 @@ export function mountMcp(app: FastifyInstance, db: Database.Database, fanout: Ss
   const sessionOwners = new Map<string, symbol>()
 
   function createSession(): Session {
-    const server = new McpServer({ name: 'agent-teams-mcp', version: '0.1.0' })
+    const server = new McpServer({ name: 'ts-agent-teams', version: '0.1.0' })
     const agentIdHolder: AgentIdHolder = { current: undefined }
     server.registerTool('echo', { title: 'Echo', description: 'Return the input', inputSchema: echoSchema }, echoHandler as any)
     registerBusinessTools(server, db, () => agentIdHolder.current, fanout)

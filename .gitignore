@@ -59,7 +59,7 @@ Thumbs.db
 # Testing
 coverage/
 .nyc_output/
-.agent-teams-test/
+.ts-agent-teams-test/
 
 # Temporary files
 *.tmp

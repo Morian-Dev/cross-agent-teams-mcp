@@ -13,11 +13,11 @@ describe('pid file', () => {
   it('fresh acquire writes pid and port', () => {
     const dir = tmp(); cleanups.push(dir)
     const path = join(dir, 'daemon.pid')
-    const r = acquirePidFile(path, 9099)
+    const r = acquirePidFile(path, 9100)
     expect(r.ok).toBe(true)
     const parsed = JSON.parse(readFileSync(path, 'utf8'))
     expect(parsed.pid).toBe(process.pid)
-    expect(parsed.port).toBe(9099)
+    expect(parsed.port).toBe(9100)
     releasePidFile(path)
   })
 
@@ -25,7 +25,7 @@ describe('pid file', () => {
     const dir = tmp(); cleanups.push(dir)
     const path = join(dir, 'daemon.pid')
     writeFileSync(path, JSON.stringify({ pid: 999999, port: 1 }))
-    const r = acquirePidFile(path, 9099)
+    const r = acquirePidFile(path, 9100)
     expect(r.ok).toBe(true)
     expect(JSON.parse(readFileSync(path, 'utf8')).pid).toBe(process.pid)
     releasePidFile(path)
@@ -36,7 +36,7 @@ describe('pid file', () => {
     const path = join(dir, 'daemon.pid')
     // Use a different pid: fork a child or use a known-alive pid. Since process.pid is this same pid, use pid 1 (init) which is always alive on unix.
     writeFileSync(path, JSON.stringify({ pid: 1, port: 1 }))
-    const r = acquirePidFile(path, 9099)
+    const r = acquirePidFile(path, 9100)
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.reason).toBe('already_running')
   })
@@ -44,7 +44,7 @@ describe('pid file', () => {
   it('releasePidFile removes the file', () => {
     const dir = tmp(); cleanups.push(dir)
     const path = join(dir, 'daemon.pid')
-    acquirePidFile(path, 9099)
+    acquirePidFile(path, 9100)
     releasePidFile(path)
     expect(existsSync(path)).toBe(false)
   })

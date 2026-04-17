@@ -1,9 +1,9 @@
 # Multi-agent Phase 2 walkthrough
 
 Prerequisites:
-1. Start the daemon: `npx agent-teams-mcp daemon --port 9099`.
-2. Confirm `curl http://127.0.0.1:9099/health` returns `{ "ok": true, ... }`.
-3. Configure each agent per `opencode.md`, `claude-code.md`, `codex-cli.md`.
+1. Start the daemon: `npx ts-agent-teams daemon --port 9100`.
+2. Confirm `curl http://127.0.0.1:9100/health` returns `{ "ok": true, ... }`.
+3. Configure each agent per `opencode.md`, `claude-code.md`, `codex-cli.md` (MCP server name: `ts-agent-teams`).
 
 Manual scenario (broadcast replaces human relay):
 1. In each of opencode, Claude Code, Codex CLI, call `register_agent` with a distinct `role`.
