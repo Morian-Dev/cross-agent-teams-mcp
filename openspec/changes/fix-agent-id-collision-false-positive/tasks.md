@@ -280,8 +280,85 @@ Ordered by dependency: core collision-detection change (1) → scenario-specific
 
 | Spec scenario | Test file | Task |
 |---|---|---|
-| `Different Authorization credentials on same session id in token mode` | `tests/agent-id-collision-auth-hash.test.ts` + `tests/agent-id-collision.test.ts` | 1.1, 2.1 |
+| `Different Authorization credentials on same session id` | `tests/agent-id-collision-auth-hash.test.ts` + `tests/agent-id-collision.test.ts` | 1.1, 2.1 |
 | `Same Authorization across different TCP sockets accepted` | `tests/agent-id-collision-auth-hash.test.ts` | 1.1 |
-| `No-token mode never triggers agent_id_collision` | `tests/agent-id-collision-auth-hash.test.ts` | 1.1 |
+| `Request without Authorization header never triggers agent_id_collision` | `tests/agent-id-collision-auth-hash.test.ts` | 1.1 |
 
 Total unique spec scenarios: 3.  Total top-level tasks: 2.  Every scenario has at least one task-level test assertion.
+
+## 3. Fix — spec/impl coherence (iteration 2)
+
+Iteration-2 verify produced two CRITICAL findings: (a) `coherence-spec-does-not-match-implementation` — spec GIVEN clauses referenced daemon-boot `--token` mode, but `src/mcp/transport.ts:81-90` gates on per-request `Authorization` header presence; (b) `correctness-requirement-not-implemented` — scenario 3's "regardless of its value" clause was not implemented.  Fix strategy per driver prompt: **align the spec to what the code truly delivers** (minimum-scope change), not expand the implementation.  Rationale: the code's per-request Authorization gating is a clean, header-centric semantic with parity across all boot modes, while threading `--token` into collision branch would add surface area and coupling for no behavioral win.
+
+- [x] 3.1 Rewrite `specs/agent-registry/spec.md` MODIFIED Requirement body + 3 scenarios to describe per-request Authorization semantics (not daemon-boot mode)
+  - kind: integration-test
+  - **Spec scenario(s):**
+    - `agent-registry/spec.md` → Scenario: `Different Authorization credentials on same session id`
+    - `agent-registry/spec.md` → Scenario: `Same Authorization across different TCP sockets accepted`
+    - `agent-registry/spec.md` → Scenario: `Request without Authorization header never triggers agent_id_collision`
+  - **Files:**
+    - Edit: `openspec/changes/fix-agent-id-collision-false-positive/specs/agent-registry/spec.md`
+  - [x] **INTEGRATION-RED:** The failure being addressed is "spec text is inconsistent with implementation" — not a vitest failure (vitest was already green at 118/118).  The concrete inconsistencies recorded by iteration-1 verify:
+    1. Spec Requirement body referenced `daemon launched with --token` / `launched without --token`, but `src/mcp/transport.ts:81-90` never inspects daemon boot config.
+    2. Scenario 3 said "regardless of whether an `Authorization` header is present, regardless of its value" — but the impl returns 409 on no-token daemon + mismatched Authorization headers.
+    3. Test file 2 (`tests/agent-id-collision-auth-hash.test.ts:126-142`) labeled "token mode" boots the server with `bootServer({})` (NO token) — a giveaway that the spec wording was never what the tests really exercised.
+    - Command: `pnpm exec vitest run tests/agent-id-collision-auth-hash.test.ts --reporter=verbose`
+    - **Observed output (pre-edit, spec mismatch present in file but vitest does not fail):**
+      ```
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ✓ tests/agent-id-collision-auth-hash.test.ts > agent_id_collision auth-hash semantics > same Authorization across two TCP sockets with same sessionId does not 409 (regression)
+       ✓ tests/agent-id-collision-auth-hash.test.ts > agent_id_collision auth-hash semantics > different Authorization on same sessionId returns 409 in token mode
+       ✓ tests/agent-id-collision-auth-hash.test.ts > agent_id_collision auth-hash semantics > no Authorization header never triggers collision across sockets
+
+       Test Files  1 passed (1)
+            Tests  3 passed (3)
+         Duration  285ms
+
+      Spec/impl coherence RED is recorded in .ff-verify-report.md critical_details[0-1]: spec scenarios describe daemon-boot --token mode, implementation gates on per-request Authorization header presence.  The RED condition is textual not behavioral; fix is a spec edit.
+      ```
+  - [x] **INTEGRATION-GREEN:** Rewrite the MODIFIED Requirement body to:
+    > When a `register_agent` tool call carries an `Authorization` request header, the daemon MUST bind that session id to the sha256 hash of the (trimmed) header value on first binding, and MUST return `{ error: 'agent_id_collision' }` with HTTP status 409 on any subsequent `register_agent` for the same session id presenting a different `Authorization` value.  When the request carries no `Authorization` header (or an empty one after trim), the daemon MUST NOT enforce collision detection against prior bindings for that session id; it trusts the `Mcp-Session-Id` header and allows the `register_agent` call.  In all modes, merely arriving on a different TCP socket (e.g. after HTTP keep-alive expiry) MUST NOT by itself trigger a collision.
+
+    Rewrite the 3 scenarios so GIVEN clauses describe request-level conditions (which `Authorization` value was first bound to the session id; whether a subsequent request carries the header or not), not daemon-boot mode.  Renamed scenario 3 from `No-token mode never triggers agent_id_collision` to `Request without Authorization header never triggers agent_id_collision`.  Scenario 1 renamed from `Different Authorization credentials on same session id in token mode` to `Different Authorization credentials on same session id` — "in token mode" was the false qualifier.  Scenario 2 kept identical wording except the GIVEN no longer mentions `--token`.
+  - [x] **Verify INTEGRATION-GREEN:** Re-run the target test file to confirm the existing tests remain green under the rewritten spec wording (no test changes required; the tests already exercise the per-request Authorization semantics)
+    - Command: `pnpm exec vitest run tests/agent-id-collision-auth-hash.test.ts --reporter=verbose`
+    - **Observed output:**
+      ```
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ✓ tests/agent-id-collision-auth-hash.test.ts > agent_id_collision auth-hash semantics > same Authorization across two TCP sockets with same sessionId does not 409 (regression)
+       ✓ tests/agent-id-collision-auth-hash.test.ts > agent_id_collision auth-hash semantics > different Authorization on same sessionId returns 409 in token mode
+       ✓ tests/agent-id-collision-auth-hash.test.ts > agent_id_collision auth-hash semantics > no Authorization header never triggers collision across sockets
+
+       Test Files  1 passed (1)
+            Tests  3 passed (3)
+         Duration  285ms
+      ```
+  - [x] **REFACTOR:** None — spec rewrite is a wording change, not production code.
+  - [x] **Verify REFACTOR:**
+    - Command: `pnpm exec vitest run tests/agent-id-collision-auth-hash.test.ts --reporter=verbose`
+    - **Observed output:**
+      ```
+      None — no refactor applied (spec text only).
+      ```
+  - [x] **Commit:** `docs(specs): align agent-registry spec with per-request Authorization semantics`
+    - **Commit SHA:** `3bb4fd3`
+
+- [x] 3.2 Confirm the spec alignment did not require any implementation amendment: full `pnpm exec vitest run` stays at 118/118 green and `pnpm exec tsc --noEmit` stays exit 0
+  - kind: build-check
+  - **Files:** (none — verification only)
+  - [x] **BUILD-CHECK:**
+    - Command: `pnpm exec vitest run 2>&1 | tail -6 && echo '---' && pnpm exec tsc --noEmit && echo TSC_OK_EXIT_0`
+    - **Observed output:**
+      ```
+       Test Files  50 passed (50)
+            Tests  118 passed (118)
+         Start at  03:29:08
+         Duration  3.51s (transform 149ms, setup 0ms, collect 412ms, tests 2.95s, environment 0ms, prepare 24ms)
+
+      ---
+      TSC_OK_EXIT_0
+      ```
+  - [x] **Commit:** (rolled into 3.1's spec-alignment commit — no separate artefact to ship)
+    - **Commit SHA:** `3bb4fd3`
