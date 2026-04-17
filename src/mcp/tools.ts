@@ -146,7 +146,15 @@ export function registerBusinessTools(
     'send_message',
     {
       title: 'Send message',
-      description: 'Send a direct or role-broadcast message',
+      description: [
+        'Send a direct or role-broadcast message.  The message is persisted to the mailbox',
+        'and delivered asynchronously — the recipient will see it on their next natural turn',
+        'via `get_inbox`.  If you want the recipient to process this message immediately, you',
+        'MAY follow up with a call to `poke({ target_agent_id, prompt: "<brief nudge>" })` to',
+        'inject a wake-up prompt into their tmux pane (requires the recipient to have registered',
+        'with `tmux_pane_id`).  Reserve `poke` for genuinely urgent messages; for routine updates,',
+        'letting the recipient pull on their next turn avoids noise.'
+      ].join(' '),
       inputSchema: {
         to_agent_id: z.string().optional(),
         to_role: z.string().optional(),
@@ -166,7 +174,14 @@ export function registerBusinessTools(
     'broadcast',
     {
       title: 'Broadcast message',
-      description: 'Broadcast to all agents in the team except caller',
+      description: [
+        'Broadcast to all agents in the team except caller.  The message is persisted to each',
+        "recipient's mailbox and delivered asynchronously — they will see it on their next natural",
+        'turn via `get_inbox`.  If you want immediate attention, call `poke` per-recipient (iterate',
+        'each target agent_id with your wake-up prompt); `broadcast` itself does NOT poke anyone,',
+        'since a mass-poke on routine updates would spam every pane.  Default to non-poke unless',
+        'the broadcast is genuinely urgent for all.'
+      ].join(' '),
       inputSchema: {
         subject: z.string().optional(),
         body: z.string()
@@ -202,7 +217,13 @@ export function registerBusinessTools(
     'task_add',
     {
       title: 'Add task',
-      description: 'Add a new task to the team\'s task list',
+      description: [
+        "Add a new task to the team's task list.  Any team member can claim it via `task_claim`",
+        'on their next turn.  If you want a specific agent to pick it up soon, follow up with',
+        '`poke({ target_agent_id, prompt: "new task <id> — please task_claim" })`; otherwise the',
+        'task will sit in the pending queue until someone pulls `task_list`.  `task_add` itself',
+        'does NOT poke anyone, since broadcast-poking every agent on every new task would be noisy.'
+      ].join(' '),
       inputSchema: {
         title: z.string(),
         description: z.string().optional(),
