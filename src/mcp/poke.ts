@@ -20,8 +20,15 @@ interface TargetRow {
   tmux_pane_id: string | null
 }
 
+export const PROMPT_MAX_BYTES = 8192
+
 export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult> {
   if (!deps.callerAgentId) return { error: 'unknown_agent' }
+
+  const promptLen = Buffer.byteLength(input.prompt, 'utf8')
+  if (promptLen > PROMPT_MAX_BYTES) {
+    return { error: 'prompt_too_long', detail: { max: PROMPT_MAX_BYTES, got: promptLen } }
+  }
 
   const target = deps.db
     .prepare(`SELECT agent_id, team, tmux_pane_id FROM agents WHERE agent_id = ?`)

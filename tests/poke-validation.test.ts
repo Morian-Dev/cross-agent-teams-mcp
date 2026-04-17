@@ -98,6 +98,24 @@ describe('poke validation', () => {
     await app.close()
   })
 
+  it('returns prompt_too_long when prompt byte length exceeds 8192', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+    const A = await connectClient(host, port)
+    const B = await connectClient(host, port)
+    await register(A.c, { role: 'caller' })
+    const targetId = await register(B.c, { role: 'target', tmux_pane_id: '%9' })
+
+    const longPrompt = 'a'.repeat(10240)
+    const resp = await A.c.callTool({ name: 'poke', arguments: { target_agent_id: targetId, prompt: longPrompt } })
+    const obj = await parseTool(resp)
+    expect(obj).toEqual({ error: 'prompt_too_long', detail: { max: 8192, got: 10240 } })
+
+    await A.t.terminateSession(); await B.t.terminateSession()
+    await A.c.close(); await B.c.close()
+    await app.close()
+  })
+
   it('returns cross_team_denied when caller and target are in different teams', async () => {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
