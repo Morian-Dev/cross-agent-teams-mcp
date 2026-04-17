@@ -7,9 +7,9 @@ Ordered by dependency: core collision-detection change (1) → scenario-specific
 - [x] 1.1 Rewrite `sessionOwners` in `src/mcp/transport.ts` to store `sha256(Authorization)` hex string (or nothing when header is absent)
   - kind: integration-test
   - **Spec scenario(s):**
-    - `agent-registry/spec.md` → Scenario: `Different Authorization credentials on same session id in token mode`
+    - `agent-registry/spec.md` → Scenario: `Different Authorization credentials on same session id`
     - `agent-registry/spec.md` → Scenario: `Same Authorization across different TCP sockets accepted`
-    - `agent-registry/spec.md` → Scenario: `No-token mode never triggers agent_id_collision`
+    - `agent-registry/spec.md` → Scenario: `Request without Authorization header never triggers agent_id_collision`
   - **Files:**
     - Edit: `src/mcp/transport.ts` (remove `SOCKET_TOKEN` + `tokenFor`; add `authHashFor` helper; change `sessionOwners` Map value to `string`)
     - Create: `tests/agent-id-collision-auth-hash.test.ts`
@@ -213,7 +213,7 @@ Ordered by dependency: core collision-detection change (1) → scenario-specific
 - [x] 2.1 Update the pre-existing `tests/agent-id-collision.test.ts` (from Change `build-agent-teams-mcp`) so its original "different TCP connection" narrative stays aligned with the new semantics (different Authorization), keeping it green without silently masking a regression
   - kind: integration-test
   - **Spec scenario(s):**
-    - `agent-registry/spec.md` → Scenario: `Different Authorization credentials on same session id in token mode` (this task's test reinforces the same scenario from a slightly different angle)
+    - `agent-registry/spec.md` → Scenario: `Different Authorization credentials on same session id` (this task's test reinforces the same scenario from a slightly different angle)
   - **Files:**
     - Edit: `tests/agent-id-collision.test.ts`
   - [x] **INTEGRATION-RED:** Run the existing `tests/agent-id-collision.test.ts` suite AFTER task 1.1 has been applied; any test expecting "different TCP socket alone triggers 409" will fail against the new semantics.  Capture that failure.
