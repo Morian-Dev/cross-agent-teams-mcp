@@ -206,39 +206,75 @@ Ordered by dependency: core collision-detection change (1) → scenario-specific
       ```
   - [x] **Commit:** `fix(transport): base agent_id collision detection on Authorization hash, not TCP socket`
     - Staging order: test file BEFORE production file
-    - **Commit SHA (fill during apply):** `<pending>`
+    - **Commit SHA (fill during apply):** `e6f9e8f`
 
 ## 2. Regression guard against re-emergence of socket-token comparison
 
-- [ ] 2.1 Update the pre-existing `tests/agent-id-collision.test.ts` (from Change `build-agent-teams-mcp`) so its original "different TCP connection" narrative stays aligned with the new semantics (different Authorization), keeping it green without silently masking a regression
+- [x] 2.1 Update the pre-existing `tests/agent-id-collision.test.ts` (from Change `build-agent-teams-mcp`) so its original "different TCP connection" narrative stays aligned with the new semantics (different Authorization), keeping it green without silently masking a regression
   - kind: integration-test
   - **Spec scenario(s):**
     - `agent-registry/spec.md` → Scenario: `Different Authorization credentials on same session id in token mode` (this task's test reinforces the same scenario from a slightly different angle)
   - **Files:**
     - Edit: `tests/agent-id-collision.test.ts`
-  - [ ] **INTEGRATION-RED:** Run the existing `tests/agent-id-collision.test.ts` suite AFTER task 1.1 has been applied; any test expecting "different TCP socket alone triggers 409" will fail against the new semantics.  Capture that failure.
+  - [x] **INTEGRATION-RED:** Run the existing `tests/agent-id-collision.test.ts` suite AFTER task 1.1 has been applied; any test expecting "different TCP socket alone triggers 409" will fail against the new semantics.  Capture that failure.
     - Command: `pnpm exec vitest run tests/agent-id-collision.test.ts --reporter=verbose`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      Note: the pre-existing file was a unit test of RegisterAgentService using a generic
+      connection_id string (not HTTP). That layer was not touched by task 1, so its
+      assertions stayed green. The real regression surface is HTTP-level, so this
+      task rewrites the file into credential-based integration assertions. RED was
+      captured by first writing the new test with the old-semantics expectation
+      (same token across two TCP sockets -> 409) and running it:
+
+       × tests/agent-id-collision.test.ts > agent_id collision (credential-based) > same Authorization re-registering across two TCP sockets is ok
+         → expected 200 to be 409 // Object.is equality
+
+      AssertionError: expected 200 to be 409 // Object.is equality
+      - Expected
+      + Received
+      - 409
+      + 200
+       ❯ tests/agent-id-collision.test.ts:130:25
+
+       Test Files  1 failed (1)
+            Tests  1 failed | 1 passed (2)
+
+      This failure proves the new production code rejects the old-semantics
+      assertion. Fix in GREEN: change the assertion to expect 200.
       ```
-  - [ ] **INTEGRATION-GREEN:** Rework the existing tests so the collision triggers on **different Authorization header**, not on "different socket".  Add at least one assertion that two socket paths with same token do NOT collide.  Keep any scenarios that test session-id hijack semantics (now framed as credential hijack).
-  - [ ] **Verify INTEGRATION-GREEN:** Re-run target + full suite, both green
+  - [x] **INTEGRATION-GREEN:** Rework the existing tests so the collision triggers on **different Authorization header**, not on "different socket".  Add at least one assertion that two socket paths with same token do NOT collide.  Keep any scenarios that test session-id hijack semantics (now framed as credential hijack).
+  - [x] **Verify INTEGRATION-GREEN:** Re-run target + full suite, both green
     - Command: `pnpm exec vitest run tests/agent-id-collision.test.ts --reporter=verbose`
     - Full-suite command: `pnpm exec vitest run --reporter=verbose`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      Target:
+       ✓ tests/agent-id-collision.test.ts > agent_id collision (credential-based) > different Authorization header presenting same session id returns collision
+       ✓ tests/agent-id-collision.test.ts > agent_id collision (credential-based) > same Authorization re-registering across two TCP sockets is ok
+
+       Test Files  1 passed (1)
+            Tests  2 passed (2)
+
+      Full suite:
+       Test Files  50 passed (50)
+            Tests  118 passed (118)
+         Duration  3.45s
       ```
-  - [ ] **REFACTOR:** None — aligning pre-existing tests is a rewrite, not a refactor.
-  - [ ] **Verify REFACTOR:**
+  - [x] **REFACTOR:** None — aligning pre-existing tests is a rewrite, not a refactor.
+  - [x] **Verify REFACTOR:**
     - Command: `pnpm exec vitest run tests/agent-id-collision.test.ts --reporter=verbose`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      None — no refactor applied (per task description "aligning pre-existing tests is a rewrite, not a refactor").
+      Re-running target for green-after-no-change confirmation:
+       ✓ tests/agent-id-collision.test.ts > agent_id collision (credential-based) > different Authorization header presenting same session id returns collision
+       ✓ tests/agent-id-collision.test.ts > agent_id collision (credential-based) > same Authorization re-registering across two TCP sockets is ok
+       Test Files  1 passed (1)
+            Tests  2 passed (2)
       ```
-  - [ ] **Commit:** `test(transport): rewrite pre-existing collision tests to auth-hash semantics`
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+  - [x] **Commit:** `test(transport): rewrite pre-existing collision tests to auth-hash semantics`
+    - **Commit SHA (fill during apply):** `977f459`
 
 ## Scenario Coverage Matrix
 
