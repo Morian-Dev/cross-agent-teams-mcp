@@ -10,9 +10,9 @@ import { isTmuxAvailable, _resetTmuxAvailableCache } from '../src/daemon/tmux-cl
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-poke-e2e-'))
 
-async function parseTool(resp: { content: unknown }): Promise<Record<string, unknown>> {
-  const text = (resp.content as Array<{ text: string }>)[0].text
-  return JSON.parse(text)
+async function parseTool(resp: unknown): Promise<Record<string, unknown>> {
+  const r = resp as { content: Array<{ text: string }> }
+  return JSON.parse(r.content[0].text)
 }
 
 async function connectClient(host: string, port: number): Promise<{ c: Client; t: StreamableHTTPClientTransport }> {
