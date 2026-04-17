@@ -30,6 +30,12 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
 
   if (target.agent_id === deps.callerAgentId) return { error: 'self_poke_denied' }
 
+  const callerRow = deps.db
+    .prepare(`SELECT team FROM agents WHERE agent_id = ?`)
+    .get(deps.callerAgentId) as { team: string } | undefined
+  if (!callerRow) return { error: 'unknown_agent' }
+  if (callerRow.team !== target.team) return { error: 'cross_team_denied' }
+
   if (!target.tmux_pane_id) return { error: 'tmux_pane_not_set' }
 
   return { error: 'tmux_cmd_failed' }
