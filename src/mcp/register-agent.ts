@@ -8,6 +8,7 @@ export interface RegisterInput {
   role: string
   display_name?: string
   team?: string
+  tmux_pane_id?: string
 }
 
 export type RegisterResult =

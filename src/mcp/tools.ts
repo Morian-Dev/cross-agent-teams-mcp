@@ -83,10 +83,11 @@ export function registerBusinessTools(
         model: z.string(),
         role: z.string(),
         display_name: z.string().optional(),
-        team: z.string().optional()
+        team: z.string().optional(),
+        tmux_pane_id: z.string().optional()
       }
     },
-    async (args: { model: string; role: string; display_name?: string; team?: string }) => {
+    async (args: { model: string; role: string; display_name?: string; team?: string; tmux_pane_id?: string }) => {
       const sid = caller()
       if (!sid) return toText({ error: 'unknown_agent' })
       return run(() => {
@@ -96,7 +97,8 @@ export function registerBusinessTools(
           model: args.model,
           role: args.role,
           display_name: args.display_name,
-          team: args.team
+          team: args.team,
+          tmux_pane_id: args.tmux_pane_id
         })
         if ('team' in res && fanout) {
           try { fanout.rebind(sid, res.team) } catch { /* best-effort */ }
