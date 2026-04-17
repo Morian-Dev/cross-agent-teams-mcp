@@ -274,7 +274,7 @@ Ordered by dependency: core collision-detection change (1) → scenario-specific
             Tests  2 passed (2)
       ```
   - [x] **Commit:** `test(transport): rewrite pre-existing collision tests to auth-hash semantics`
-    - **Commit SHA (fill during apply):** `977f459`
+    - **Commit SHA (fill during apply):** `1aa3c4c`
 
 ## Scenario Coverage Matrix
 
