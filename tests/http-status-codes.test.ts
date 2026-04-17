@@ -8,12 +8,13 @@ import { startServer } from '../src/daemon/server.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-'))
 
-async function postMcp(url: string, sid: string | undefined, body: unknown): Promise<Response> {
+async function postMcp(url: string, sid: string | undefined, body: unknown, authHeader?: string): Promise<Response> {
   const headers: Record<string, string> = {
     'content-type': 'application/json',
     'accept': 'application/json, text/event-stream'
   }
   if (sid) headers['mcp-session-id'] = sid
+  if (authHeader) headers['authorization'] = authHeader
   return fetch(url, { method: 'POST', headers, body: JSON.stringify(body) })
 }
 
@@ -21,13 +22,15 @@ describe('HTTP status codes for identity errors', () => {
   const cleanups: string[] = []
   afterEach(() => { cleanups.forEach(d => rmSync(d, { recursive: true, force: true })); cleanups.length = 0 })
 
-  it('second TCP connection presenting a bound session id returns HTTP 409', async () => {
+  it('second call presenting a different Authorization on a bound session id returns HTTP 409', async () => {
     const dir = tmp(); cleanups.push(dir)
     const dbPath = join(dir, 'data.db')
     const { app, port, host } = await startServer({ dbPath, port: 0 })
     const url = `http://${host}:${port}/mcp`
 
-    const t = new StreamableHTTPClientTransport(new URL(url))
+    const t = new StreamableHTTPClientTransport(new URL(url), {
+      requestInit: { headers: { authorization: 'Bearer tokenX' } }
+    } as any)
     const c = new Client({ name: 'a', version: '0.0.0' }, { capabilities: {} })
     await c.connect(t)
     const sid = t.sessionId!
@@ -38,7 +41,7 @@ describe('HTTP status codes for identity errors', () => {
         id: 999,
         method: 'tools/call',
         params: { name: 'register_agent', arguments: { model: 'm', role: 'r' } }
-      })
+      }, 'Bearer tokenY')
       expect(res.status).toBe(409)
       const body = await res.json()
       expect(body).toEqual({ error: 'agent_id_collision' })

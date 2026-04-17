@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import type Database from 'better-sqlite3'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 import { echoSchema, echoHandler } from './echo.js'
 import { registerBusinessTools, type AgentIdHolder } from './tools.js'
 import type { SseFanout } from '../daemon/sse-fanout.js'
@@ -16,9 +16,9 @@ interface Session {
 
 export function mountMcp(app: FastifyInstance, db: Database.Database, fanout: SseFanout): void {
   const sessions = new Map<string, Session>()
-  // Once register_agent succeeds for a session id, pin the owning socket token.
-  // A later register_agent from a different socket token triggers HTTP 409.
-  const sessionOwners = new Map<string, symbol>()
+  // Once register_agent succeeds for a session id, pin the owning Authorization hash.
+  // A later register_agent presenting a different Authorization triggers HTTP 409.
+  const sessionOwners = new Map<string, string>()
 
   function createSession(): Session {
     const server = new McpServer({ name: 'ts-agent-teams', version: '0.1.0' })
@@ -55,12 +55,12 @@ export function mountMcp(app: FastifyInstance, db: Database.Database, fanout: Ss
     return { transport, server, sessionId: '', agentIdHolder }
   }
 
-  // Attach a per-TCP-socket token so we can detect cross-connection session-id reuse.
-  const SOCKET_TOKEN = Symbol('atm.socket.token')
-  function tokenFor(req: FastifyRequest): symbol {
-    const socket = req.raw.socket as unknown as Record<symbol, symbol>
-    if (!socket[SOCKET_TOKEN]) socket[SOCKET_TOKEN] = Symbol('atm.conn')
-    return socket[SOCKET_TOKEN]
+  function authHashFor(req: FastifyRequest): string | null {
+    const raw = req.headers['authorization']
+    if (typeof raw !== 'string') return null
+    const trimmed = raw.trim()
+    if (trimmed.length === 0) return null
+    return createHash('sha256').update(trimmed).digest('hex')
   }
 
   interface ToolsCallBody {
@@ -75,16 +75,18 @@ export function mountMcp(app: FastifyInstance, db: Database.Database, fanout: Ss
     let session = sid ? sessions.get(sid) : undefined
     if (!session && !isInit) { return reply.code(400).send({ error: 'unknown_session' }) }
 
-    const connToken = tokenFor(req)
-
-    // register_agent from a different TCP socket than the one that first claimed
-    // this session id -> agent_id_collision (HTTP 409).
+    // register_agent presenting a different Authorization header than the one that
+    // first claimed this session id -> agent_id_collision (HTTP 409). Absence of
+    // an Authorization header disables collision enforcement per spec.
     if (session && body?.method === 'tools/call' && body.params?.name === 'register_agent') {
-      const owner = sessionOwners.get(session.sessionId)
-      if (owner && owner !== connToken) {
-        return reply.code(409).send({ error: 'agent_id_collision' })
+      const authHash = authHashFor(req)
+      if (authHash !== null) {
+        const owner = sessionOwners.get(session.sessionId)
+        if (owner && owner !== authHash) {
+          return reply.code(409).send({ error: 'agent_id_collision' })
+        }
+        if (!owner) sessionOwners.set(session.sessionId, authHash)
       }
-      if (!owner) sessionOwners.set(session.sessionId, connToken)
     }
 
     // Spoofed from_agent_id on tools/call -> 403
