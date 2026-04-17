@@ -25,3 +25,16 @@ After both agents have registered with `tmux_pane_id`:
 3. A receives `{ ok, pane_id, pane_tail_before, pane_tail_after }` and inspects the diff to decide whether B acknowledged
 4. If no visible change, A may call `poke` again (soft limit: 3 times per short window)
 5. If still silent, fall back to `send_message` (mailbox persistence) or escalate to the human
+
+## send + poke idiom (urgent messages)
+
+`send_message`, `broadcast`, and `task_add` do NOT auto-poke the recipient(s) — they only persist to the mailbox / task list, and the recipient sees the new item on their next natural turn via `get_inbox` / `task_list`.
+
+If a message is genuinely urgent, chain a `poke` after the send:
+
+```
+send_message({ to_agent_id: "<B>", body: "<content>" })
+poke({ target_agent_id: "<B>", prompt: "inbox has <short nudge>, please get_inbox" })
+```
+
+For `broadcast` the convention is **per-recipient poke**: iterate each target agent_id from `list_agents` and `poke` them individually.  A mass-poke protocol would spam every pane on routine updates and is deliberately NOT provided.  The tool descriptions for `send_message` / `broadcast` / `task_add` each remind the caller of this pattern at registration time.
