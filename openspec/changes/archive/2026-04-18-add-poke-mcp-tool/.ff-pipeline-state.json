@@ -1,0 +1,15 @@
+{
+  "change": "add-poke-mcp-tool",
+  "phase": "done",
+  "iteration": 1,
+  "max_iterations": 3,
+  "last_critical_types": [],
+  "history": [
+    { "iteration": 1, "phase": "apply", "status": "partial", "reason": "manual-verify 5.1 deferred: subagent harness lacks AskUserQuestion", "at": "2026-04-18T02:20:00Z" },
+    { "iteration": 1, "phase": "apply-fixup", "status": "ok", "reason": "driver-level AskUserQuestion resolved 5.1 (user accepted docs wording, committed as cf24d1e)", "at": "2026-04-18T02:30:00Z" },
+    { "iteration": 1, "phase": "review", "status": "pass", "reason": "all 3 stages pass; 0 CRITICAL / 0 WARN", "at": "2026-04-18T02:40:00Z" },
+    { "iteration": 1, "phase": "verify", "status": "pass", "reason": "all 6 dimensions pass; 0 critical; 1 non-blocking nit (task-count slip in matrix)", "at": "2026-04-18T02:50:00Z" },
+    { "iteration": 1, "phase": "sync", "status": "ok", "reason": "no-op for openspec ≥0.14 (sync+archive combined; auto_archive=false so stop at done)", "at": "2026-04-18T02:50:30Z" }
+  ],
+  "updated_at": "2026-04-18T02:50:30Z"
+}

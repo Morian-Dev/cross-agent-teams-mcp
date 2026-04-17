@@ -1,0 +1,19 @@
+{
+  "change": "build-agent-teams-mcp",
+  "phase": "done",
+  "iteration": 2,
+  "max_iterations": 3,
+  "last_critical_types": [],
+  "history": [
+    { "iteration": 1, "phase": "apply", "status": "partial", "reason": "manual-verify deferred", "at": "2026-04-16T11:20:00Z" },
+    { "iteration": 1, "phase": "stop", "status": "stop", "reason": "apply:partial", "at": "2026-04-16T11:20:00Z" },
+    { "iteration": 1, "phase": "apply-fixup", "status": "ok", "reason": "user promoted manual-verify to e2e integration-test", "at": "2026-04-16T12:05:00Z" },
+    { "iteration": 1, "phase": "review", "status": "critical", "reason": "3 review criticals", "at": "2026-04-16T12:15:00Z" },
+    { "iteration": 1, "phase": "auto-fix-apply", "status": "ok", "reason": "fixes 12.1-12.3 green", "at": "2026-04-16T12:45:00Z" },
+    { "iteration": 1, "phase": "verify", "status": "critical", "reason": "SSE consumer attach missing", "at": "2026-04-16T13:05:00Z" },
+    { "iteration": 2, "phase": "auto-fix-apply", "status": "ok", "reason": "fixes 13.1-13.2 green; 90/90 passing", "at": "2026-04-16T13:30:00Z" },
+    { "iteration": 2, "phase": "verify", "status": "pass", "reason": "all 6 dimensions pass; no recurrence", "at": "2026-04-16T13:45:00Z" },
+    { "iteration": 2, "phase": "sync", "status": "ok", "reason": "no-op for openspec 1.2.0 (sync+archive combined; auto_archive=false so stop at done)", "at": "2026-04-16T13:46:00Z" }
+  ],
+  "updated_at": "2026-04-16T13:46:00Z"
+}

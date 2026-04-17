@@ -1,0 +1,19 @@
+{
+  "change": "fix-agent-id-collision-false-positive",
+  "phase": "archive",
+  "iteration": 3,
+  "max_iterations": 3,
+  "last_critical_types": ["coherence-design-deviation"],
+  "auto_archive": true,
+  "history": [
+    { "iteration": 1, "phase": "apply", "status": "ok", "reason": "2/2 tasks green; 115→118 tests; tsc clean; SHAs e6f9e8f, 1aa3c4c, d4e0141", "at": "2026-04-18T03:10:00Z" },
+    { "iteration": 1, "phase": "review", "status": "warn", "reason": "2 WARN: SC-01/INT-01 spec-impl wording mismatch, non-blocking at review level", "at": "2026-04-18T03:20:00Z" },
+    { "iteration": 1, "phase": "verify", "status": "critical", "reason": "2 CRITICAL: coherence-spec-does-not-match-implementation + correctness-requirement-not-implemented (spec GIVEN uses daemon --token but impl gates on per-request Authorization header)", "at": "2026-04-18T03:30:00Z" },
+    { "iteration": 2, "phase": "auto-fix-apply", "status": "ok", "reason": "spec aligned to per-request Authorization semantics; no impl change; SHAs 3bb4fd3, 99fb333", "at": "2026-04-18T03:40:00Z" },
+    { "iteration": 2, "phase": "verify", "status": "critical", "reason": "1 CRITICAL new type: coherence-design-deviation (proposal/design/tasks still frame rule as daemon --token; no overlap with iter 1 criticals, so not recurrence)", "at": "2026-04-18T03:50:00Z" },
+    { "iteration": 3, "phase": "auto-fix-apply", "status": "ok", "reason": "driver-level coherence fix (subagent scope forbids editing proposal/design, so driver propagated per-request Authorization wording into proposal + design + tasks inline scenario refs); commit b5b3f1e", "at": "2026-04-18T04:00:00Z" },
+    { "iteration": 3, "phase": "verify", "status": "pass", "reason": "all 6 dimensions pass; coherence converged; critical_types empty; no recurrence", "at": "2026-04-18T04:10:00Z" },
+    { "iteration": 3, "phase": "sync", "status": "ok", "reason": "no-op for openspec ≥0.14 (sync+archive combined; auto_archive=true so proceed to archive)", "at": "2026-04-18T04:10:30Z" }
+  ],
+  "updated_at": "2026-04-18T04:10:30Z"
+}

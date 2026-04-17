@@ -1,0 +1,15 @@
+{
+  "change": "add-agent-tmux-pane-id",
+  "phase": "done",
+  "iteration": 1,
+  "max_iterations": 3,
+  "last_critical_types": [],
+  "history": [
+    { "iteration": 1, "phase": "apply", "status": "partial", "reason": "manual-verify 4.1 deferred: subagent harness lacks AskUserQuestion", "at": "2026-04-18T01:20:00Z" },
+    { "iteration": 1, "phase": "apply-fixup", "status": "ok", "reason": "driver-level AskUserQuestion resolved 4.1 (user accepted docs wording)", "at": "2026-04-18T01:30:00Z" },
+    { "iteration": 1, "phase": "review", "status": "warn", "reason": "1 WARN: INT-01 design.md missing ## Runtime Assumptions section (doc gap, non-blocking)", "at": "2026-04-18T01:35:00Z" },
+    { "iteration": 1, "phase": "verify", "status": "pass", "reason": "all 6 dimensions pass; no recurrence", "at": "2026-04-18T01:40:00Z" },
+    { "iteration": 1, "phase": "sync", "status": "ok", "reason": "no-op for openspec ≥0.14 (sync+archive combined; auto_archive=false so stop at done)", "at": "2026-04-18T01:40:30Z" }
+  ],
+  "updated_at": "2026-04-18T01:40:30Z"
+}
