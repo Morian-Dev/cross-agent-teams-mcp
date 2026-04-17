@@ -88,4 +88,13 @@ describe('AgentsRepo tmux_pane_id', () => {
     expect(row.tmux_pane_id).toBeNull()
     db.close()
   })
+
+  it('upserts tmux_pane_id when the same session re-registers', () => {
+    const { db, repo } = freshRepo()
+    repo.register({ agent_id: 'sess-A', model: 'opus-4-7', role: 'frontend', tmux_pane_id: '%42' })
+    repo.register({ agent_id: 'sess-A', model: 'opus-4-7', role: 'frontend', tmux_pane_id: '%99' })
+    const row = db.prepare(`SELECT tmux_pane_id FROM agents WHERE agent_id='sess-A'`).get() as { tmux_pane_id: string }
+    expect(row.tmux_pane_id).toBe('%99')
+    db.close()
+  })
 })
