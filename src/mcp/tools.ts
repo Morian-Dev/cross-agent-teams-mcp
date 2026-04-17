@@ -79,7 +79,14 @@ export function registerBusinessTools(
     'register_agent',
     {
       title: 'Register agent',
-      description: 'Register this session as an agent in a team',
+      description: [
+        'Register this session as an agent in a team.',
+        'If you are running inside a tmux pane, you SHOULD first invoke your shell tool',
+        "with `tmux display-message -p '#{pane_id}'` (which prints something like `%42`)",
+        'and pass that result as `tmux_pane_id` so the `poke` tool can wake you across sessions.',
+        'When you omit `tmux_pane_id`, the response will include a `hint` field reminding you to',
+        're-register with the pane id so cross-agent interrupt features work.'
+      ].join(' '),
       inputSchema: {
         model: z.string(),
         role: z.string(),
@@ -101,8 +108,17 @@ export function registerBusinessTools(
           team: args.team,
           tmux_pane_id: args.tmux_pane_id
         })
-        if ('team' in res && fanout) {
-          try { fanout.rebind(sid, res.team) } catch { /* best-effort */ }
+        if ('team' in res) {
+          if (fanout) {
+            try { fanout.rebind(sid, res.team) } catch { /* best-effort */ }
+          }
+          const provided = typeof args.tmux_pane_id === 'string' && args.tmux_pane_id.trim().length > 0
+          if (!provided) {
+            return {
+              ...res,
+              hint: "tmux_pane_id not set. If running inside tmux, call your shell with `tmux display-message -p '#{pane_id}'` and re-register with tmux_pane_id=<result> to enable cross-agent poke delivery."
+            }
+          }
         }
         return res
       })
