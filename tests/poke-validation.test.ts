@@ -13,6 +13,23 @@ async function parseTool(resp: { content: unknown }): Promise<Record<string, unk
   return JSON.parse(text)
 }
 
+async function connectClient(host: string, port: number): Promise<{ c: Client; t: StreamableHTTPClientTransport }> {
+  const url = new URL(`http://${host}:${port}/mcp`)
+  const t = new StreamableHTTPClientTransport(url)
+  const c = new Client({ name: 'test', version: '0.0.0' })
+  await c.connect(t)
+  return { c, t }
+}
+
+async function register(c: Client, args: { role?: string; team?: string; tmux_pane_id?: string } = {}): Promise<string> {
+  const resp = await c.callTool({
+    name: 'register_agent',
+    arguments: { model: 'opus-4-7', role: args.role ?? 'dev', team: args.team, tmux_pane_id: args.tmux_pane_id }
+  })
+  const obj = await parseTool(resp)
+  return obj.agent_id as string
+}
+
 describe('poke validation', () => {
   const cleanups: string[] = []
   afterEach(() => {
@@ -23,14 +40,26 @@ describe('poke validation', () => {
   it('returns unknown_agent if caller has not registered', async () => {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
-    const url = new URL(`http://${host}:${port}/mcp`)
-    const t = new StreamableHTTPClientTransport(url)
-    const c = new Client({ name: 'test', version: '0.0.0' })
-    await c.connect(t)
+    const { c, t } = await connectClient(host, port)
 
     const resp = await c.callTool({ name: 'poke', arguments: { target_agent_id: 'any', prompt: 'p' } })
     const obj = await parseTool(resp)
     expect(obj).toEqual({ error: 'unknown_agent' })
+
+    await t.terminateSession()
+    await c.close()
+    await app.close()
+  })
+
+  it('returns unknown_target when target_agent_id does not exist', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+    const { c, t } = await connectClient(host, port)
+    await register(c)
+
+    const resp = await c.callTool({ name: 'poke', arguments: { target_agent_id: 'ghost-xyz', prompt: 'p' } })
+    const obj = await parseTool(resp)
+    expect(obj).toEqual({ error: 'unknown_target' })
 
     await t.terminateSession()
     await c.close()
