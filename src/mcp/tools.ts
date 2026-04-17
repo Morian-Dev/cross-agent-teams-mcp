@@ -16,6 +16,7 @@ import { SubscribeContractService } from './subscribe-contract.js'
 import { GetContractService } from './get-contract.js'
 import { DiffContractsService } from './diff-contracts.js'
 import { PendingContractEventsService } from './pending-contract-events.js'
+import { poke } from './poke.js'
 import { wrapStorage } from '../daemon/errors.js'
 import type { SseFanout } from '../daemon/sse-fanout.js'
 
@@ -336,6 +337,26 @@ export function registerBusinessTools(
       const who = requireAgent()
       if (typeof who !== 'string') return toText(who)
       return run(() => diffContractsSvc.diff({ caller: who, ...args }))
+    }
+  )
+
+  // poke
+  server.registerTool(
+    'poke',
+    {
+      title: 'Poke agent',
+      description: 'Wake another agent in the same team by injecting prompt into its tmux pane. Returns pre/post pane capture tails. Soft recommendation: retry at most 3 times per target per short window.',
+      inputSchema: {
+        target_agent_id: z.string(),
+        prompt: z.string()
+      }
+    },
+    async (args: { target_agent_id: string; prompt: string }) => {
+      const who = requireAgent()
+      const callerAgentId = typeof who === 'string' ? who : null
+      const result = await poke({ db, callerAgentId }, args)
+      touchIfRegistered()
+      return toText(result)
     }
   )
 
