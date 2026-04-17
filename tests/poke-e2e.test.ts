@@ -40,6 +40,41 @@ describe('poke e2e (real tmux)', () => {
     _resetTmuxAvailableCache()
   })
 
+  it('returns pane_dead when target pane was killed after registration', async () => {
+    _resetTmuxAvailableCache()
+    if (!(await isTmuxAvailable())) {
+      console.warn('[poke-e2e] tmux unavailable; skipping pane_dead test')
+      return
+    }
+    const session = `atm-test-dead-${process.pid}`
+    execFileSync('tmux', ['new-session', '-d', '-s', session, 'cat'])
+    let paneId = ''
+    try {
+      paneId = execFileSync('tmux', ['list-panes', '-t', session, '-F', '#{pane_id}']).toString().trim()
+    } catch (e) {
+      try { execFileSync('tmux', ['kill-session', '-t', session]) } catch { /* best-effort */ }
+      throw e
+    }
+
+    const dir = tmp(); cleanups.push(dir)
+    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+    const A = await connectClient(host, port)
+    const B = await connectClient(host, port)
+    await register(A.c, { role: 'caller' })
+    const targetId = await register(B.c, { role: 'target', tmux_pane_id: paneId })
+
+    execFileSync('tmux', ['kill-session', '-t', session])
+
+    const resp = await A.c.callTool({ name: 'poke', arguments: { target_agent_id: targetId, prompt: 'p' } })
+    const obj = await parseTool(resp)
+    expect(obj.error).toBe('pane_dead')
+    expect(typeof obj.detail).toBe('string')
+
+    await A.t.terminateSession(); await B.t.terminateSession()
+    await A.c.close(); await B.c.close()
+    await app.close()
+  }, 20_000)
+
   it('happy path: poke returns before/after tails for live pane', async () => {
     _resetTmuxAvailableCache()
     if (!(await isTmuxAvailable())) {
