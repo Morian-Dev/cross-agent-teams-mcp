@@ -80,4 +80,12 @@ describe('AgentsRepo tmux_pane_id', () => {
     expect(row.tmux_pane_id).toBe('%42')
     db.close()
   })
+
+  it('stores NULL when tmux_pane_id is omitted', () => {
+    const { db, repo } = freshRepo()
+    repo.register({ agent_id: 'sess-B', model: 'gpt-5', role: 'reviewer' })
+    const row = db.prepare(`SELECT tmux_pane_id FROM agents WHERE agent_id='sess-B'`).get() as { tmux_pane_id: string | null }
+    expect(row.tmux_pane_id).toBeNull()
+    db.close()
+  })
 })
