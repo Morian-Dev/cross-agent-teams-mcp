@@ -44,4 +44,28 @@ describe('register_agent tmux_pane_id integration', () => {
     await client.close()
     await app.close()
   })
+
+  it('list_agents returns tmux_pane_id: string for one agent and null for another', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+    const url = new URL(`http://${host}:${port}/mcp`)
+    const makeClient = async () => {
+      const t = new StreamableHTTPClientTransport(url)
+      const c = new Client({ name: 'test', version: '0.0.0' })
+      await c.connect(t)
+      return { c, t }
+    }
+    const A = await makeClient()
+    const B = await makeClient()
+    const regA = JSON.parse(((await A.c.callTool({ name: 'register_agent', arguments: { model: 'opus-4-7', role: 'frontend', tmux_pane_id: '%42' } })).content as Array<{ text: string }>)[0].text) as { agent_id: string }
+    const regB = JSON.parse(((await B.c.callTool({ name: 'register_agent', arguments: { model: 'gpt-5', role: 'reviewer' } })).content as Array<{ text: string }>)[0].text) as { agent_id: string }
+    const list = JSON.parse(((await A.c.callTool({ name: 'list_agents', arguments: {} })).content as Array<{ text: string }>)[0].text) as { agents: Array<{ agent_id: string; tmux_pane_id: string | null }> }
+    const a = list.agents.find(x => x.agent_id === regA.agent_id)
+    const b = list.agents.find(x => x.agent_id === regB.agent_id)
+    expect(a?.tmux_pane_id).toBe('%42')
+    expect(b?.tmux_pane_id).toBeNull()
+    await A.t.terminateSession(); await B.t.terminateSession()
+    await A.c.close(); await B.c.close()
+    await app.close()
+  })
 })
