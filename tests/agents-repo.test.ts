@@ -61,3 +61,23 @@ describe('agents repo', () => {
     expect(staleRow.online).toBe(false)
   })
 })
+
+describe('AgentsRepo tmux_pane_id', () => {
+  const cleanups: string[] = []
+  afterEach(() => { cleanups.forEach(d => rmSync(d, { recursive: true, force: true })); cleanups.length = 0 })
+
+  function freshRepo() {
+    const dir = tmp(); cleanups.push(dir)
+    const db = openDb(join(dir, 'data.db'))
+    applySchema(db)
+    return { db, repo: new AgentsRepo(db) }
+  }
+
+  it('persists tmux_pane_id when provided', () => {
+    const { db, repo } = freshRepo()
+    repo.register({ agent_id: 'sess-A', model: 'opus-4-7', role: 'frontend', tmux_pane_id: '%42' })
+    const row = db.prepare(`SELECT tmux_pane_id FROM agents WHERE agent_id='sess-A'`).get() as { tmux_pane_id: string }
+    expect(row.tmux_pane_id).toBe('%42')
+    db.close()
+  })
+})

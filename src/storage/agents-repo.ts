@@ -6,6 +6,7 @@ export interface RegisterInput {
   role: string
   display_name?: string
   team?: string
+  tmux_pane_id?: string
 }
 
 export interface AgentListRow {
@@ -26,15 +27,16 @@ export class AgentsRepo {
     const team = input.team ?? 'default'
     const now = new Date().toISOString()
     this.db.prepare(
-      `INSERT INTO agents (agent_id, team, role, display_name, model, registered_at, last_seen_at)
-       VALUES (?,?,?,?,?,?,?)
+      `INSERT INTO agents (agent_id, team, role, display_name, model, registered_at, last_seen_at, tmux_pane_id)
+       VALUES (?,?,?,?,?,?,?,?)
        ON CONFLICT(agent_id) DO UPDATE SET
          team=excluded.team,
          role=excluded.role,
          display_name=excluded.display_name,
          model=excluded.model,
-         last_seen_at=excluded.last_seen_at`
-    ).run(input.agent_id, team, input.role, input.display_name ?? null, input.model, now, now)
+         last_seen_at=excluded.last_seen_at,
+         tmux_pane_id=COALESCE(excluded.tmux_pane_id, agents.tmux_pane_id)`
+    ).run(input.agent_id, team, input.role, input.display_name ?? null, input.model, now, now, input.tmux_pane_id ?? null)
     return { agent_id: input.agent_id, team }
   }
 
