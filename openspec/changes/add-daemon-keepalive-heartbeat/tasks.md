@@ -423,7 +423,7 @@ Ordered by dependency: HTTP keep-alive config (1) → SSE heartbeat infrastructu
 
 ## 3. Docs: daemon tuning section
 
-- [ ] 3.1 Update `docs/configs/README.md` with "Daemon keep-alive tuning" section (default values, ENV overrides, honest disclaimer about codex)
+- [x] 3.1 Update `docs/configs/README.md` with "Daemon keep-alive tuning" section (default values, ENV overrides, honest disclaimer about codex)
   - kind: manual-verify
   - **Spec scenario(s):** n/a (documentation-only)
   - **Files:**
@@ -442,12 +442,12 @@ Ordered by dependency: HTTP keep-alive config (1) → SSE heartbeat infrastructu
 
     **Honest limitation**: these mitigations widen the window but do NOT fully fix the codex rmcp idle-transport collapse ("error decoding response body"). The root cause is in codex's HTTP connection pool lacking retry-on-decode-error; it's outside this daemon's control. If codex still crashes after `KEEP_ALIVE_TIMEOUT_MS` seconds of idle, restart codex and re-register.
     ```
-  - [ ] **MANUAL-VERIFY:** user reads the new section and confirms wording + placement
+  - [x] **MANUAL-VERIFY:** user reads the new section and confirms wording + placement
     - Record evidence via AskUserQuestion at driver scope (subagent harness lacks it; apply-fixup pattern)
     - **Evidence (fill during apply):**
       ```
-      pending — apply-fixup pattern per task design. The subagent harness executing this task does not expose AskUserQuestion; the docs change has been written and committed, and the driver/human is expected to read docs/configs/README.md "Daemon keep-alive tuning" section and confirm wording + placement. ts-apply returns STATUS: partial to surface this gate, exactly as the task-author anticipated with the "apply-fixup pattern" marker.
-      Section appended at docs/configs/README.md (lines 41-55), documents KEEP_ALIVE_TIMEOUT_MS=120000 default, HEARTBEAT_INTERVAL_MS=30000 default, override example, and the honest codex-rmcp caveat.
+      Confirmed by user at driver scope 2026-04-18. User reviewed the appended "Daemon keep-alive tuning" section in docs/configs/README.md and approved wording + placement ("OK") without requested changes.
+      Section content: KEEP_ALIVE_TIMEOUT_MS=120000 default, HEARTBEAT_INTERVAL_MS=30000 default, override example, and the honest codex-rmcp caveat.
       ```
   - [x] **Commit:** `docs(configs): document keep-alive + heartbeat env tuning with honest codex caveat`
     - **Commit SHA (fill during apply):** `20d7f98`

@@ -23,6 +23,7 @@ function makeSink(): SseSink & { received: unknown[]; broken: boolean } {
       if (broken) throw new Error('broken')
       received.push(msg)
     },
+    sendHeartbeat() {},
     close() {}
   }
 }
