@@ -1,5 +1,6 @@
 import { runQuietGuard } from './poke-guard.js'
 import { isTmuxAvailable } from '../daemon/tmux-cli.js'
+import { scheduleRetry as defaultScheduleRetry, type RetryAgentLookup, type RetryContext } from './poke-retry.js'
 
 export type AutoPokeSkipReason = 'no_pane' | 'guard_failed' | 'tmux_unavailable' | 'self'
 
@@ -23,9 +24,17 @@ export interface FanoutDeps {
   tmuxAvailable?: () => Promise<boolean>
 }
 
+export interface RetryScheduleCtx {
+  messageId: string
+  sentAt: string
+  lookupAgentFn: (agentId: string) => RetryAgentLookup | undefined
+  scheduleRetryFn?: (ctx: RetryContext) => void
+}
+
 export interface FanoutResult {
   poked: boolean
   skipReasons: Array<{ agent_id: string; reason: AutoPokeSkipReason }>
+  retryScheduledCount: number
 }
 
 export async function fanoutAutoPoke(args: {
@@ -34,6 +43,7 @@ export async function fanoutAutoPoke(args: {
   recipients: AutoPokeRecipient[]
   body: string
   deps: FanoutDeps
+  retry?: RetryScheduleCtx
 }): Promise<FanoutResult> {
   const pokeFn = args.deps.poke
   const tmuxAvail = args.deps.tmuxAvailable ?? isTmuxAvailable
@@ -41,20 +51,20 @@ export async function fanoutAutoPoke(args: {
   const results = await Promise.all(args.recipients.map(async (r) => {
     try {
       if (r.agent_id === args.fromAgentId) {
-        return { agent_id: r.agent_id, poked: false, reason: 'self' as AutoPokeSkipReason }
+        return { agent_id: r.agent_id, poked: false, reason: 'self' as AutoPokeSkipReason, paneId: null as string | null }
       }
       if (!r.tmux_pane_id) {
-        return { agent_id: r.agent_id, poked: false, reason: 'no_pane' as AutoPokeSkipReason }
+        return { agent_id: r.agent_id, poked: false, reason: 'no_pane' as AutoPokeSkipReason, paneId: null }
       }
       if (!(await tmuxAvail())) {
-        return { agent_id: r.agent_id, poked: false, reason: 'tmux_unavailable' as AutoPokeSkipReason }
+        return { agent_id: r.agent_id, poked: false, reason: 'tmux_unavailable' as AutoPokeSkipReason, paneId: r.tmux_pane_id }
       }
       if (!pokeFn) {
-        return { agent_id: r.agent_id, poked: false, reason: 'tmux_unavailable' as AutoPokeSkipReason }
+        return { agent_id: r.agent_id, poked: false, reason: 'tmux_unavailable' as AutoPokeSkipReason, paneId: r.tmux_pane_id }
       }
       const guard = await runQuietGuard(r.tmux_pane_id)
       if (guard === 'fail') {
-        return { agent_id: r.agent_id, poked: false, reason: 'guard_failed' as AutoPokeSkipReason }
+        return { agent_id: r.agent_id, poked: false, reason: 'guard_failed' as AutoPokeSkipReason, paneId: r.tmux_pane_id }
       }
       const out = await pokeFn({
         team: args.team,
@@ -63,16 +73,38 @@ export async function fanoutAutoPoke(args: {
         paneId: r.tmux_pane_id,
         body: args.body
       })
-      if (out.ok) return { agent_id: r.agent_id, poked: true, reason: undefined }
-      return { agent_id: r.agent_id, poked: false, reason: (out.reason ?? 'guard_failed') as AutoPokeSkipReason }
+      if (out.ok) return { agent_id: r.agent_id, poked: true, reason: undefined, paneId: r.tmux_pane_id }
+      return { agent_id: r.agent_id, poked: false, reason: (out.reason ?? 'guard_failed') as AutoPokeSkipReason, paneId: r.tmux_pane_id }
     } catch {
-      return { agent_id: r.agent_id, poked: false, reason: 'guard_failed' as AutoPokeSkipReason }
+      return { agent_id: r.agent_id, poked: false, reason: 'guard_failed' as AutoPokeSkipReason, paneId: r.tmux_pane_id }
     }
   }))
+
+  let retryScheduledCount = 0
+  if (args.retry && pokeFn) {
+    const scheduleFn = args.retry.scheduleRetryFn ?? defaultScheduleRetry
+    for (const res of results) {
+      if (!res.poked && res.reason === 'guard_failed' && res.paneId) {
+        scheduleFn({
+          agentId: res.agent_id,
+          messageId: args.retry.messageId,
+          fromAgentId: args.fromAgentId,
+          body: args.body,
+          team: args.team,
+          sentAt: args.retry.sentAt,
+          paneId: res.paneId,
+          paneGuardFn: runQuietGuard,
+          pokeFn: async (pokeArgs) => { await pokeFn(pokeArgs) },
+          lookupAgentFn: args.retry.lookupAgentFn
+        })
+        retryScheduledCount += 1
+      }
+    }
+  }
 
   const poked = results.some(x => x.poked)
   const skipReasons = results
     .filter(x => !x.poked && x.reason !== undefined)
     .map(x => ({ agent_id: x.agent_id, reason: x.reason as AutoPokeSkipReason }))
-  return { poked, skipReasons }
+  return { poked, skipReasons, retryScheduledCount }
 }
