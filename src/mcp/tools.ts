@@ -37,8 +37,23 @@ export function registerBusinessTools(
   const agents = new AgentsRepo(db)
   const events = new EventsOutbox(db)
   const registerSvc = new RegisterAgentService(db)
-  const sendSvc = new SendMessageService(db, agents, events)
-  const broadcastSvc = new BroadcastService(db, agents, sendSvc)
+
+  const autoPokeImpl: import('./auto-poke-fanout.js').AutoPokeFn = async (args) => {
+    const res = await poke(
+      { db, callerAgentId: args.fromAgentId },
+      { target_agent_id: args.targetAgentId, prompt: args.body }
+    )
+    if ('ok' in res && res.ok) return { ok: true }
+    // Classify downstream poke errors into skip reasons
+    const err = (res as { error?: string }).error
+    if (err === 'tmux_unavailable') return { ok: false, reason: 'tmux_unavailable' }
+    if (err === 'tmux_pane_not_set') return { ok: false, reason: 'no_pane' }
+    if (err === 'self_poke_denied') return { ok: false, reason: 'self' }
+    return { ok: false, reason: 'guard_failed' }
+  }
+
+  const sendSvc = new SendMessageService(db, agents, events, { poke: autoPokeImpl })
+  const broadcastSvc = new BroadcastService(db, agents, sendSvc, { poke: autoPokeImpl })
   const inboxSvc = new GetInboxService(db, agents)
   const taskAddSvc = new TaskAddService(db, agents, events)
   const taskClaimSvc = new TaskClaimService(db, agents, events)
@@ -155,22 +170,23 @@ export function registerBusinessTools(
     {
       title: 'Send message',
       description: [
-        'Send a direct or role-broadcast message.  The message is persisted to the mailbox',
-        'and delivered asynchronously — the recipient will see it on their next natural turn',
-        'via `get_inbox`.  If you want the recipient to process this message immediately, you',
-        'MAY follow up with a call to `poke({ target_agent_id, prompt: "<brief nudge>" })` to',
-        'inject a wake-up prompt into their tmux pane (requires the recipient to have registered',
-        'with `tmux_pane_id`).  Reserve `poke` for genuinely urgent messages; for routine updates,',
-        'letting the recipient pull on their next turn avoids noise.'
+        'Sends a direct or role-broadcast message.  By default the tool also wakes the recipient\'s',
+        'tmux pane via a quiet-guard poke (auto_poke=true): it watches the pane tail for ~2s, and',
+        'only fires the poke when the pane has been idle; if the pane is active, the message is',
+        'still persisted to the mailbox and the skip is reported.  Pass auto_poke:false if the',
+        'recipient should only see it on their next `get_inbox`.  The response reports',
+        'poked:true/false and, when applicable, poke_skip_reasons per recipient (reasons include',
+        'no_pane, guard_failed, tmux_unavailable, self).'
       ].join(' '),
       inputSchema: {
         to_agent_id: z.string().optional(),
         to_role: z.string().optional(),
         subject: z.string().optional(),
-        body: z.string()
+        body: z.string(),
+        auto_poke: z.boolean().optional()
       }
     },
-    async (args: { to_agent_id?: string; to_role?: string; subject?: string; body: string }) => {
+    async (args: { to_agent_id?: string; to_role?: string; subject?: string; body: string; auto_poke?: boolean }) => {
       const who = requireAgent()
       if (typeof who !== 'string') return toText(who)
       return run(() => sendSvc.send({ from: who, ...args }))
@@ -183,19 +199,20 @@ export function registerBusinessTools(
     {
       title: 'Broadcast message',
       description: [
-        'Broadcast to all agents in the team except caller.  The message is persisted to each',
-        "recipient's mailbox and delivered asynchronously — they will see it on their next natural",
-        'turn via `get_inbox`.  If you want immediate attention, call `poke` per-recipient (iterate',
-        'each target agent_id with your wake-up prompt); `broadcast` itself does NOT poke anyone,',
-        'since a mass-poke on routine updates would spam every pane.  Default to non-poke unless',
-        'the broadcast is genuinely urgent for all.'
+        'Broadcasts to all other agents in the team.  Does NOT auto-poke by default (pass',
+        'auto_poke:true to poke every eligible pane after a per-pane quiet-guard); the default',
+        'keeps team-wide messages quiet.  When auto_poke is enabled, each recipient\'s pane is',
+        'checked for idleness in parallel and only idle panes are poked; the message is always',
+        'persisted to every recipient\'s mailbox regardless.  Response includes poked and',
+        'poke_skip_reasons (reasons: no_pane, guard_failed, tmux_unavailable, self).'
       ].join(' '),
       inputSchema: {
         subject: z.string().optional(),
-        body: z.string()
+        body: z.string(),
+        auto_poke: z.boolean().optional()
       }
     },
-    async (args: { subject?: string; body: string }) => {
+    async (args: { subject?: string; body: string; auto_poke?: boolean }) => {
       const who = requireAgent()
       if (typeof who !== 'string') return toText(who)
       return run(() => broadcastSvc.broadcast({ from: who, ...args }))

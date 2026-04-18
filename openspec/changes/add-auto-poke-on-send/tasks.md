@@ -205,43 +205,62 @@ Ordered by dependency: guard module (1) → send_message integration (2) → bro
       ```
   - [x] **Commit:** `feat(mcp): broadcast auto_poke opt-in with shared guard fan-out`
     - Staging order: test file BEFORE production file
-    - **Commit SHA (fill during apply):** `<pending>`
+    - **Commit SHA (fill during apply):** `d0e3ad7`
 
 ## 4. Tools wire-up & descriptions
 
-- [ ] 4.1 Expose `auto_poke` in `send_message` / `broadcast` tool schemas; update their descriptions; add regression assertions.
+- [x] 4.1 Expose `auto_poke` in `send_message` / `broadcast` tool schemas; update their descriptions; add regression assertions.
   - kind: integration-test
   - **Spec scenario(s):** (tool-layer; no new spec scenarios; delegates to requirements already covered by tasks 2 & 3)
   - **Files:**
     - Edit: `src/mcp/tools.ts` (inputSchema + description rewrite)
     - Edit: `tests/tool-descriptions-poke-hint.test.ts` (update existing `send_message`/`broadcast` description assertions to reflect new defaults; add assertions for `auto_poke` schema presence)
-  - [ ] **INTEGRATION-RED:** Rewrite two existing test cases to expect the new description language ("by default this tool pokes the recipient after a quiet-guard", "broadcast does NOT auto-poke unless auto_poke:true"); add one new case asserting the tool input schema contains an `auto_poke` field of type boolean.
-  - [ ] **Verify INTEGRATION-RED:**
+  - [x] **INTEGRATION-RED:** Rewrite two existing test cases to expect the new description language ("by default this tool pokes the recipient after a quiet-guard", "broadcast does NOT auto-poke unless auto_poke:true"); add one new case asserting the tool input schema contains an `auto_poke` field of type boolean.
+  - [x] **Verify INTEGRATION-RED:**
     - Command: `pnpm exec vitest run tests/tool-descriptions-poke-hint.test.ts --reporter=verbose`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      FAIL  send_message description mentions auto-poke default + quiet-guard
+        expected description to match /by default|default/i (old text still there)
+      FAIL  broadcast description states does NOT auto-poke by default
+        expected description to match /not auto-poke|.../ (old description lacks new wording)
+      FAIL  send_message and broadcast tool schemas expose auto_poke as optional boolean
+        expected undefined to be 'boolean' (schema missing auto_poke prop)
+      Test Files  1 failed (1)
+      Tests  3 failed | 6 passed (9)
       ```
-  - [ ] **INTEGRATION-GREEN:** Update `src/mcp/tools.ts`:
+  - [x] **INTEGRATION-GREEN:** Update `src/mcp/tools.ts`:
     - `send_message` inputSchema: `auto_poke: z.boolean().optional()`.  Description becomes: "Sends a direct or role-broadcast message.  By default the tool also wakes the recipient's tmux pane via a quiet-guard poke (auto_poke=true); pass auto_poke:false if the recipient should only see it on their next get_inbox.  The response reports poked:true/false and, when applicable, poke_skip_reasons per recipient."
     - `broadcast` inputSchema: `auto_poke: z.boolean().optional()`.  Description becomes: "Broadcasts to all other agents in the team.  Does NOT auto-poke by default (use auto_poke:true to poke every eligible pane after a per-pane quiet-guard).  Response includes poked and poke_skip_reasons."
-  - [ ] **Verify INTEGRATION-GREEN:**
+    - Also wired a real `AutoPokeFn` (calling existing `poke()`) into both services via constructor deps, mapping downstream poke errors to skip reasons (`tmux_unavailable`, `tmux_pane_not_set` → `no_pane`, `self_poke_denied` → `self`, else `guard_failed`).
+  - [x] **Verify INTEGRATION-GREEN:**
     - Command: `pnpm exec vitest run tests/tool-descriptions-poke-hint.test.ts --reporter=verbose`
     - Full-suite command: `pnpm exec vitest run --reporter=verbose`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      tests/tool-descriptions-poke-hint.test.ts (9 tests) 120ms
+        ✓ send_message description mentions auto-poke default + quiet-guard
+        ✓ broadcast description states does NOT auto-poke by default and explains opt-in
+        ✓ send_message and broadcast tool schemas expose auto_poke as optional boolean
+        ✓ task_add description mentions poke for nudging a specific agent
+        ✓ get_inbox description does NOT recommend poke
+        ✓ poke tool description remains (sanity)
+        ✓ register_agent description demands a pre-call tmux check (imperative)
+        ✓ register_agent description prefers $TMUX_PANE over tmux display-message
+        ✓ register_agent description instructs how to handle both branches
+
+      Full suite (POKE_QUIET_MS=100): Test Files  59 passed (59), Tests  153 passed (153), Duration 5.05s
       ```
-  - [ ] **REFACTOR:** None.
-  - [ ] **Verify REFACTOR:**
+  - [x] **REFACTOR:** None.
+  - [x] **Verify REFACTOR:**
     - Command: `pnpm exec vitest run tests/tool-descriptions-poke-hint.test.ts --reporter=verbose`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      No refactor applied; 9/9 pass unchanged.
       ```
-  - [ ] **Commit:** `feat(mcp): wire auto_poke into send_message + broadcast tool schemas`
+  - [x] **Commit:** `feat(mcp): wire auto_poke into send_message + broadcast tool schemas`
     - Staging order: test file BEFORE production file
-    - **Commit SHA (fill during apply):** `<fill>`
+    - **Commit SHA (fill during apply):** `<pending>`
 
 ## 5. Docs: Auto-poke on send
 

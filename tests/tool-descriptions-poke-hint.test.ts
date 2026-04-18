@@ -24,20 +24,44 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     return resp.tools
   }
 
-  it('send_message description mentions poke for immediate wake-up', async () => {
+  it('send_message description mentions auto-poke default + quiet-guard', async () => {
     const tools = await listTools()
     const tool = tools.find(t => t.name === 'send_message')
     expect(tool).toBeDefined()
-    expect(tool!.description).toMatch(/poke/i)
-    expect(tool!.description).toMatch(/wake|immediate|immediately|interrupt/i)
+    const d = tool!.description!
+    expect(d).toMatch(/poke/i)
+    expect(d).toMatch(/by default|default/i)
+    expect(d).toMatch(/quiet-guard|guard/i)
+    expect(d).toMatch(/auto_poke/)
+    expect(d).toMatch(/poked/)
+    expect(d).toMatch(/poke_skip_reasons/)
   })
 
-  it('broadcast description mentions per-recipient poke for immediate wake-up', async () => {
+  it('broadcast description states does NOT auto-poke by default and explains opt-in', async () => {
     const tools = await listTools()
     const tool = tools.find(t => t.name === 'broadcast')
     expect(tool).toBeDefined()
-    expect(tool!.description).toMatch(/poke/i)
-    expect(tool!.description).toMatch(/per-recipient|each recipient|each target/i)
+    const d = tool!.description!
+    expect(d).toMatch(/poke/i)
+    expect(d).toMatch(/not auto-poke|does NOT auto-poke|does not auto-poke/i)
+    expect(d).toMatch(/auto_poke/)
+    expect(d).toMatch(/quiet-guard|guard/i)
+    expect(d).toMatch(/poked/)
+    expect(d).toMatch(/poke_skip_reasons/)
+  })
+
+  it('send_message and broadcast tool schemas expose auto_poke as optional boolean', async () => {
+    const tools = await listTools()
+    const sm = tools.find(t => t.name === 'send_message')
+    const bc = tools.find(t => t.name === 'broadcast')
+    expect(sm).toBeDefined()
+    expect(bc).toBeDefined()
+    const smSchema = sm!.inputSchema as { properties?: Record<string, { type?: string }>; required?: string[] }
+    const bcSchema = bc!.inputSchema as { properties?: Record<string, { type?: string }>; required?: string[] }
+    expect(smSchema.properties?.auto_poke?.type).toBe('boolean')
+    expect(bcSchema.properties?.auto_poke?.type).toBe('boolean')
+    expect(smSchema.required ?? []).not.toContain('auto_poke')
+    expect(bcSchema.required ?? []).not.toContain('auto_poke')
   })
 
   it('task_add description mentions poke for nudging a specific agent', async () => {
