@@ -4,7 +4,7 @@ Ordered by dependency: guard module (1) → send_message integration (2) → bro
 
 ## 1. Poke quiet-guard module
 
-- [ ] 1.1 Add `src/mcp/poke-guard.ts` exposing `runQuietGuard(paneId, quietMs): Promise<'pass' | 'fail'>`; resolve env `POKE_QUIET_MS` (positive int → override, else default 2000ms).
+- [x] 1.1 Add `src/mcp/poke-guard.ts` exposing `runQuietGuard(paneId, quietMs): Promise<'pass' | 'fail'>`; resolve env `POKE_QUIET_MS` (positive int → override, else default 2000ms).
   - kind: unit-test
   - **Spec scenario(s):**
     - `mailbox/spec.md` → Scenario: `Recipient's pane is active, guard fails, falls back to mailbox`
@@ -90,11 +90,11 @@ Ordered by dependency: guard module (1) → send_message integration (2) → bro
       ```
   - [x] **Commit:** `feat(mcp): add poke-guard module with 2s pane-tail idle detection`
     - Staging order: test file BEFORE production file
-    - **Commit SHA (fill during apply):** `<pending>`
+    - **Commit SHA (fill during apply):** `35f84ee`
 
 ## 2. send_message auto_poke integration
 
-- [ ] 2.1 Extend `SendMessageService.send()` to accept `auto_poke` and invoke `runQuietGuard` + `poke.ts` per recipient, in parallel; response gains `poked` and `poke_skip_reasons`.
+- [x] 2.1 Extend `SendMessageService.send()` to accept `auto_poke` and invoke `runQuietGuard` + `poke.ts` per recipient, in parallel; response gains `poked` and `poke_skip_reasons`.
   - kind: integration-test
   - **Spec scenario(s):**
     - `mailbox/spec.md` → Scenario: `Single recipient, idle pane, default triggers poke`
@@ -104,39 +104,54 @@ Ordered by dependency: guard module (1) → send_message integration (2) → bro
   - **Files:**
     - Edit: `src/mcp/send-message.ts` (add auto_poke param, async fan-out, response shape)
     - Create: `tests/send-message-auto-poke.test.ts`
-  - [ ] **INTEGRATION-RED:** Write failing test driving the service directly (bypass HTTP layer), stubbing `poke-guard` + `poke.ts` to assert:
+  - [x] **INTEGRATION-RED:** Write failing test driving the service directly (bypass HTTP layer), stubbing `poke-guard` + `poke.ts` to assert:
     - single recipient idle-pane → poked:true, no skip reasons
     - recipient without tmux_pane_id → poked:false, reason no_pane
     - auto_poke:false → poked:false, no skip reasons array
     - to_role with 2 recipients (one idle, one active) → poked:true, one guard_failed
-  - [ ] **Verify INTEGRATION-RED:** failures because service doesn't know about auto_poke
+    - plus self-target edge case → reason 'self'
+  - [x] **Verify INTEGRATION-RED:** failures because service doesn't know about auto_poke
     - Command: `pnpm exec vitest run tests/send-message-auto-poke.test.ts --reporter=verbose`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      FAIL  tests/send-message-auto-poke.test.ts (5 tests)
+      Error example: expected undefined to be false (r.poked undefined)
+      Error example: expected undefined to be true
+      Test Files  1 failed (1)
+      Tests  5 failed (5)
+      Types AutoPokeFn / AutoPokeSkipReason not exported yet; SendMessageService.send is still sync; response lacks poked/poke_skip_reasons.
       ```
-  - [ ] **INTEGRATION-GREEN:** Update `src/mcp/send-message.ts`:
+  - [x] **INTEGRATION-GREEN:** Update `src/mcp/send-message.ts`:
     - `SendInput` gains `auto_poke?: boolean`.
     - `SendResult` success variant gains `poked: boolean` + `poke_skip_reasons?: Array<...>`.
     - `send()` becomes `async`; after `insert(...)`, if `auto_poke !== false` (i.e. omitted or true), call a new private `fanoutPoke(team, from, recipients)` that maps each recipient to a Promise resolving to `{ poked: bool, skip?: { agent_id, reason } }`; `Promise.all`; aggregate.
     - `fanoutPoke` needs a ref to the caller's `PokeDeps`; pass via constructor (or new arg).  Keep it dependency-injected so tests can stub.
-  - [ ] **Verify INTEGRATION-GREEN:**
+    - Also updated dependent tests (`send-message-direct`, `send-role-broadcast`, `offline-delivery`, `get-inbox`) to `await` and pass `auto_poke:false` to preserve pre-existing semantics.
+  - [x] **Verify INTEGRATION-GREEN:**
     - Command: `pnpm exec vitest run tests/send-message-auto-poke.test.ts --reporter=verbose`
     - Full-suite command: `pnpm exec vitest run --reporter=verbose`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      tests/send-message-auto-poke.test.ts (5 tests) 249ms
+        ✓ single recipient with idle pane: poked:true, no skip_reasons
+        ✓ recipient without tmux_pane_id: poked:false, reason no_pane
+        ✓ auto_poke:false disables the behavior, no skip_reasons
+        ✓ to_role fan-out with one idle + one active: poked:true + guard_failed for active
+        ✓ self as sole recipient is marked self (defensive)
+
+      Full suite (POKE_QUIET_MS=100): Test Files  58 passed (58), Tests  150 passed (150), Duration 4.89s
       ```
-  - [ ] **REFACTOR:** Extract `fanoutPoke` helper if >30 LOC; otherwise inline.
-  - [ ] **Verify REFACTOR:**
+  - [x] **REFACTOR:** Extract `fanoutPoke` helper if >30 LOC; otherwise inline.
+      - fanoutPoke is ~38 LOC but tightly coupled to SendMessageService state; kept as a private method. Task 3 will lift to `src/mcp/auto-poke-fanout.ts` if it needs to be shared.
+  - [x] **Verify REFACTOR:**
     - Command: `pnpm exec vitest run tests/send-message-auto-poke.test.ts --reporter=verbose`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      No refactor applied in this task; 5/5 pass unchanged.
       ```
-  - [ ] **Commit:** `feat(mcp): send_message auto_poke with quiet-guard fan-out`
+  - [x] **Commit:** `feat(mcp): send_message auto_poke with quiet-guard fan-out`
     - Staging order: test file BEFORE production file
-    - **Commit SHA (fill during apply):** `<fill>`
+    - **Commit SHA (fill during apply):** `<pending>`
 
 ## 3. broadcast auto_poke opt-in integration
 

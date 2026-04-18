@@ -15,7 +15,7 @@ describe('role fan-out and broadcast', () => {
   const cleanups: string[] = []
   afterEach(() => { cleanups.forEach(d => rmSync(d, { recursive: true, force: true })); cleanups.length = 0 })
 
-  it('to_role fan-out writes one message per recipient sharing event_id', () => {
+  it('to_role fan-out writes one message per recipient sharing event_id', async () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const agents = new AgentsRepo(db)
@@ -23,7 +23,7 @@ describe('role fan-out and broadcast', () => {
     agents.register({ agent_id: 'F1', model: 'm', role: 'frontend' })
     agents.register({ agent_id: 'F2', model: 'm', role: 'frontend' })
     const svc = new SendMessageService(db, agents, new EventsOutbox(db))
-    const r = svc.send({ from: 'A', to_role: 'frontend', body: 'hi' })
+    const r = await svc.send({ from: 'A', to_role: 'frontend', body: 'hi', auto_poke: false })
     if ('error' in r) throw new Error('expected success')
     expect([...r.recipients].sort()).toEqual(['F1','F2'])
     const rows = db.prepare('SELECT event_id FROM messages ORDER BY id').all() as Array<{ event_id: number }>

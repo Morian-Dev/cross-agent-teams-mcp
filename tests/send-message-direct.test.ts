@@ -23,27 +23,27 @@ describe('send_message direct', () => {
     return { db, svc: new SendMessageService(db, agents, new EventsOutbox(db)) }
   }
 
-  it('rejects when both to_agent_id and to_role are given', () => {
+  it('rejects when both to_agent_id and to_role are given', async () => {
     const { svc } = setup()
-    const r = svc.send({ from: 'A', to_agent_id: 'B', to_role: 'frontend', body: 'x' })
+    const r = await svc.send({ from: 'A', to_agent_id: 'B', to_role: 'frontend', body: 'x' })
     expect(r).toEqual({ error: 'ambiguous_recipient' })
   })
 
-  it('rejects when neither recipient is given', () => {
+  it('rejects when neither recipient is given', async () => {
     const { svc } = setup()
-    const r = svc.send({ from: 'A', body: 'x' })
+    const r = await svc.send({ from: 'A', body: 'x' })
     expect(r).toEqual({ error: 'missing_recipient' })
   })
 
-  it('rejects when to_agent_id is unknown in caller team', () => {
+  it('rejects when to_agent_id is unknown in caller team', async () => {
     const { svc } = setup()
-    const r = svc.send({ from: 'A', to_agent_id: 'Z', body: 'x' })
+    const r = await svc.send({ from: 'A', to_agent_id: 'Z', body: 'x' })
     expect(r).toEqual({ error: 'unknown_recipient' })
   })
 
-  it('creates paired event and message rows on success', () => {
+  it('creates paired event and message rows on success', async () => {
     const { db, svc } = setup()
-    const r = svc.send({ from: 'A', to_agent_id: 'B', body: 'hi' })
+    const r = await svc.send({ from: 'A', to_agent_id: 'B', body: 'hi', auto_poke: false })
     if ('error' in r) throw new Error('expected success')
     expect(r.recipients).toEqual(['B'])
     expect(r.event_id).toBeGreaterThan(0)

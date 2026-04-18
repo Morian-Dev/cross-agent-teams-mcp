@@ -15,7 +15,7 @@ describe('offline delivery', () => {
   const cleanups: string[] = []
   afterEach(() => { cleanups.forEach(d => rmSync(d, { recursive: true, force: true })); cleanups.length = 0 })
 
-  it('recipient catches up after coming back online', () => {
+  it('recipient catches up after coming back online', async () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const agents = new AgentsRepo(db)
@@ -25,7 +25,7 @@ describe('offline delivery', () => {
     db.prepare('UPDATE agents SET last_seen_at=? WHERE agent_id=?').run(old, 'B')
 
     const send = new SendMessageService(db, agents, new EventsOutbox(db))
-    send.send({ from: 'A', to_agent_id: 'B', body: 'offline-hello' })
+    await send.send({ from: 'A', to_agent_id: 'B', body: 'offline-hello', auto_poke: false })
 
     agents.touch('B')
 
