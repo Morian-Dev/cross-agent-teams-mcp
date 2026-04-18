@@ -2,28 +2,63 @@ import type Database from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
 import type { AgentsRepo } from '../storage/agents-repo.js'
 import type { SendMessageService } from './send-message.js'
+import { fanoutAutoPoke } from './auto-poke-fanout.js'
+import type { AutoPokeSkipReason, FanoutDeps } from './auto-poke-fanout.js'
 
-export type BroadcastResult =
-  | { message_id: string; event_id: number; recipients: string[] }
-  | { error: 'unknown_recipient' }
+export type BroadcastDeps = FanoutDeps
+
+export interface BroadcastInput {
+  from: string
+  body: string
+  subject?: string
+  auto_poke?: boolean
+}
+
+interface SuccessResult {
+  message_id: string
+  event_id: number
+  recipients: string[]
+  poked: boolean
+  poke_skip_reasons?: Array<{ agent_id: string; reason: AutoPokeSkipReason }>
+}
+
+export type BroadcastResult = SuccessResult | { error: 'unknown_recipient' }
+
+interface RecipientPokeRow {
+  agent_id: string
+  tmux_pane_id: string | null
+}
 
 export class BroadcastService {
   constructor(
     private db: Database.Database,
     private agents: AgentsRepo,
-    private _send: SendMessageService
+    private _send: SendMessageService,
+    private deps: BroadcastDeps = {}
   ) {}
 
-  broadcast(args: { from: string; body: string; subject?: string }): BroadcastResult {
-    const fromRow = this.agents.findById(args.from)
+  async broadcast(input: BroadcastInput): Promise<BroadcastResult> {
+    const fromRow = this.agents.findById(input.from)
     if (!fromRow) return { error: 'unknown_recipient' }
-    const rows = this.db.prepare('SELECT agent_id FROM agents WHERE team=? AND agent_id != ?')
-      .all(fromRow.team, args.from) as Array<{ agent_id: string }>
+    const rows = this.db.prepare('SELECT agent_id, tmux_pane_id FROM agents WHERE team=? AND agent_id != ?')
+      .all(fromRow.team, input.from) as RecipientPokeRow[]
     if (rows.length === 0) return { error: 'unknown_recipient' }
     const recipients = rows.map(r => r.agent_id)
     const baseId = randomUUID()
-    const result = this.insertBroadcast(fromRow.team, args.from, recipients, args.body, args.subject, baseId)
-    return { ...result, recipients }
+    const inserted = this.insertBroadcast(fromRow.team, input.from, recipients, input.body, input.subject, baseId)
+
+    if (input.auto_poke !== true) {
+      return { ...inserted, recipients, poked: false }
+    }
+
+    const fanout = await fanoutAutoPoke({
+      team: fromRow.team,
+      fromAgentId: input.from,
+      recipients: rows,
+      body: input.body,
+      deps: this.deps
+    })
+    return { ...inserted, recipients, poked: fanout.poked, poke_skip_reasons: fanout.skipReasons }
   }
 
   private insertBroadcast(team: string, from: string, recipients: string[], body: string,

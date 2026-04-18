@@ -151,11 +151,11 @@ Ordered by dependency: guard module (1) → send_message integration (2) → bro
       ```
   - [x] **Commit:** `feat(mcp): send_message auto_poke with quiet-guard fan-out`
     - Staging order: test file BEFORE production file
-    - **Commit SHA (fill during apply):** `<pending>`
+    - **Commit SHA (fill during apply):** `83cd9ce`
 
 ## 3. broadcast auto_poke opt-in integration
 
-- [ ] 3.1 Extend `BroadcastService.broadcast()` similarly (default `false`), wiring the same fan-out helper.
+- [x] 3.1 Extend `BroadcastService.broadcast()` similarly (default `false`), wiring the same fan-out helper.
   - kind: integration-test
   - **Spec scenario(s):**
     - `mailbox/spec.md` → Scenario: `Default broadcast does not poke anyone`
@@ -163,36 +163,49 @@ Ordered by dependency: guard module (1) → send_message integration (2) → bro
   - **Files:**
     - Edit: `src/mcp/broadcast.ts`
     - Create: `tests/broadcast-auto-poke.test.ts`
-  - [ ] **INTEGRATION-RED:** Test:
+  - [x] **INTEGRATION-RED:** Test:
     - default broadcast (auto_poke omitted) → poked:false, no skip_reasons, no pane injection.
     - explicit `auto_poke: true` with 3 recipients (2 idle pane_id, 1 no pane_id) → poked:true, skip_reasons contains only the no-pane one.
-  - [ ] **Verify INTEGRATION-RED:**
+  - [x] **Verify INTEGRATION-RED:**
     - Command: `pnpm exec vitest run tests/broadcast-auto-poke.test.ts --reporter=verbose`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      FAIL  tests/broadcast-auto-poke.test.ts (2 tests)
+      AssertionError: expected undefined to be false (default case: r.poked undefined)
+      AssertionError: expected undefined to be true (opt-in case: r.poked undefined)
+      Test Files  1 failed (1)
+      Tests  2 failed (2)
+      broadcast() still sync and lacks auto_poke/poked/poke_skip_reasons.
       ```
-  - [ ] **INTEGRATION-GREEN:**
+  - [x] **INTEGRATION-GREEN:**
     - `broadcast()` signature gains `auto_poke?: boolean` (omitted → default false).
     - Response gains `poked` + `poke_skip_reasons`.
     - When `auto_poke === true`, reuse the same `fanoutPoke` helper from task 2 (may require lifting it to a shared module, e.g. `src/mcp/auto-poke-fanout.ts`).
-  - [ ] **Verify INTEGRATION-GREEN:**
+    - Lifted the helper into `src/mcp/auto-poke-fanout.ts`; both send-message and broadcast now import `fanoutAutoPoke` (see REFACTOR).
+  - [x] **Verify INTEGRATION-GREEN:**
     - Command: `pnpm exec vitest run tests/broadcast-auto-poke.test.ts --reporter=verbose`
     - Full-suite command: `pnpm exec vitest run --reporter=verbose`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      tests/broadcast-auto-poke.test.ts (2 tests) 146ms
+        ✓ default broadcast (auto_poke omitted) does not poke anyone, no skip_reasons
+        ✓ explicit auto_poke:true with mixed panes: pokes idle ones, skip_reasons lists only no_pane/guard_failed
+
+      Full suite (POKE_QUIET_MS=100): Test Files  59 passed (59), Tests  152 passed (152), Duration 5.08s
       ```
-  - [ ] **REFACTOR:** If task 2 inlined `fanoutPoke` but task 3 reuses it → lift to `src/mcp/auto-poke-fanout.ts`.
-  - [ ] **Verify REFACTOR:**
+  - [x] **REFACTOR:** If task 2 inlined `fanoutPoke` but task 3 reuses it → lift to `src/mcp/auto-poke-fanout.ts`.
+      - Lifted to `src/mcp/auto-poke-fanout.ts`. `send-message.ts` now re-exports `AutoPokeFn`/`AutoPokeSkipReason` for backward compat and delegates via `fanoutAutoPoke(...)`.
+  - [x] **Verify REFACTOR:**
     - Command: `pnpm exec vitest run tests/broadcast-auto-poke.test.ts tests/send-message-auto-poke.test.ts --reporter=verbose`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      Test Files  2 passed (2)
+      Tests  7 passed (7)
+      send-message-auto-poke 5/5 + broadcast-auto-poke 2/2; REFACTOR kept green.
       ```
-  - [ ] **Commit:** `feat(mcp): broadcast auto_poke opt-in with shared guard fan-out`
+  - [x] **Commit:** `feat(mcp): broadcast auto_poke opt-in with shared guard fan-out`
     - Staging order: test file BEFORE production file
-    - **Commit SHA (fill during apply):** `<fill>`
+    - **Commit SHA (fill during apply):** `<pending>`
 
 ## 4. Tools wire-up & descriptions
 

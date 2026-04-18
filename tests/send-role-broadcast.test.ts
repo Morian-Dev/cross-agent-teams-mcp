@@ -31,7 +31,7 @@ describe('role fan-out and broadcast', () => {
     expect(rows[0].event_id).toBe(rows[1].event_id)
   })
 
-  it('broadcast excludes sender', () => {
+  it('broadcast excludes sender', async () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const agents = new AgentsRepo(db)
@@ -40,7 +40,7 @@ describe('role fan-out and broadcast', () => {
     agents.register({ agent_id: 'C', model: 'm', role: 'r' })
     const send = new SendMessageService(db, agents, new EventsOutbox(db))
     const svc = new BroadcastService(db, agents, send)
-    const r = svc.broadcast({ from: 'A', body: 'all' })
+    const r = await svc.broadcast({ from: 'A', body: 'all' })
     if ('error' in r) throw new Error('expected success')
     expect([...r.recipients].sort()).toEqual(['B','C'])
   })

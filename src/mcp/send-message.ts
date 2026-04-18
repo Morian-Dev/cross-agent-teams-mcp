@@ -2,25 +2,12 @@ import type Database from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
 import type { AgentsRepo } from '../storage/agents-repo.js'
 import type { EventsOutbox } from '../storage/events-outbox.js'
-import { runQuietGuard } from './poke-guard.js'
-import { isTmuxAvailable } from '../daemon/tmux-cli.js'
+import { fanoutAutoPoke } from './auto-poke-fanout.js'
+import type { AutoPokeSkipReason, FanoutDeps } from './auto-poke-fanout.js'
 
-export type AutoPokeSkipReason = 'no_pane' | 'guard_failed' | 'tmux_unavailable' | 'self'
+export type { AutoPokeFn, AutoPokeSkipReason } from './auto-poke-fanout.js'
 
-export interface AutoPokeArgs {
-  team: string
-  fromAgentId: string
-  targetAgentId: string
-  paneId: string
-  body: string
-}
-
-export type AutoPokeFn = (args: AutoPokeArgs) => Promise<{ ok: true } | { ok: false; reason?: AutoPokeSkipReason }>
-
-export interface SendMessageDeps {
-  poke?: AutoPokeFn
-  tmuxAvailable?: () => Promise<boolean>
-}
+export type SendMessageDeps = FanoutDeps
 
 export interface SendInput {
   from: string
@@ -82,17 +69,17 @@ export class SendMessageService {
     const recipients = recipientRows.map(r => r.agent_id)
     const baseResult = this.insert({ team, from: input.from, recipients, to_role, input })
 
-    // Default: auto_poke is true unless explicitly false
     const autoPokeEnabled = input.auto_poke !== false
     if (!autoPokeEnabled) {
       return { ...baseResult, poked: false }
     }
 
-    const fanout = await this.fanoutPoke({
+    const fanout = await fanoutAutoPoke({
       team,
       fromAgentId: input.from,
       recipients: recipientRows,
-      body: input.body
+      body: input.body,
+      deps: this.deps
     })
     return { ...baseResult, poked: fanout.poked, poke_skip_reasons: fanout.skipReasons }
   }
@@ -121,54 +108,5 @@ export class SendMessageService {
     })
     const { message_id, event_id } = tx()
     return { message_id, event_id, recipients: args.recipients }
-  }
-
-  private async fanoutPoke(args: {
-    team: string
-    fromAgentId: string
-    recipients: RecipientPokeRow[]
-    body: string
-  }): Promise<{ poked: boolean; skipReasons: Array<{ agent_id: string; reason: AutoPokeSkipReason }> }> {
-    const pokeFn = this.deps.poke
-    const tmuxAvail = this.deps.tmuxAvailable ?? isTmuxAvailable
-
-    const results = await Promise.all(args.recipients.map(async (r): Promise<{
-      agent_id: string
-      poked: boolean
-      reason?: AutoPokeSkipReason
-    }> => {
-      if (r.agent_id === args.fromAgentId) {
-        return { agent_id: r.agent_id, poked: false, reason: 'self' }
-      }
-      if (!r.tmux_pane_id) {
-        return { agent_id: r.agent_id, poked: false, reason: 'no_pane' }
-      }
-      if (!(await tmuxAvail())) {
-        return { agent_id: r.agent_id, poked: false, reason: 'tmux_unavailable' }
-      }
-      if (!pokeFn) {
-        // No poke implementation injected; treat as tmux_unavailable defensively.
-        return { agent_id: r.agent_id, poked: false, reason: 'tmux_unavailable' }
-      }
-      const guard = await runQuietGuard(r.tmux_pane_id)
-      if (guard === 'fail') {
-        return { agent_id: r.agent_id, poked: false, reason: 'guard_failed' }
-      }
-      const out = await pokeFn({
-        team: args.team,
-        fromAgentId: args.fromAgentId,
-        targetAgentId: r.agent_id,
-        paneId: r.tmux_pane_id,
-        body: args.body
-      })
-      if (out.ok) return { agent_id: r.agent_id, poked: true }
-      return { agent_id: r.agent_id, poked: false, reason: out.reason ?? 'guard_failed' }
-    }))
-
-    const poked = results.some(x => x.poked)
-    const skipReasons = results
-      .filter(x => !x.poked && x.reason !== undefined)
-      .map(x => ({ agent_id: x.agent_id, reason: x.reason as AutoPokeSkipReason }))
-    return { poked, skipReasons }
   }
 }
