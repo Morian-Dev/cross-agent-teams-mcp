@@ -260,7 +260,7 @@ Ordered by dependency: guard module (1) → send_message integration (2) → bro
       ```
   - [x] **Commit:** `feat(mcp): wire auto_poke into send_message + broadcast tool schemas`
     - Staging order: test file BEFORE production file
-    - **Commit SHA (fill during apply):** `<pending>`
+    - **Commit SHA (fill during apply):** `55bc567`
 
 ## 5. Docs: Auto-poke on send
 
@@ -269,17 +269,19 @@ Ordered by dependency: guard module (1) → send_message integration (2) → bro
   - **Spec scenario(s):** n/a (documentation-only)
   - **Files:**
     - Edit: `docs/configs/README.md`
-  - [ ] **IMPLEMENT:** Append or integrate:
+  - [x] **IMPLEMENT:** Append or integrate:
     - New section "Auto-poke on send": default on for `to_agent_id` + `to_role`, default off for `broadcast`, guard 2s `POKE_QUIET_MS` env, response fields `poked` + `poke_skip_reasons`.
     - Edit or strike through the existing "send + poke idiom" section, replacing with a pointer to "Auto-poke on send".
   - [ ] **MANUAL-VERIFY:** user reads and confirms wording + placement
     - Record evidence via AskUserQuestion at driver scope (subagent harness lacks it; apply-fixup pattern)
     - **Evidence (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      Implementation landed in docs/configs/README.md (see commit). Replaced "send + poke idiom (urgent messages)" section with "Auto-poke on send" covering: default on for to_agent_id + to_role, default off for broadcast, POKE_QUIET_MS env (default 2000ms, invalid falls back), response fields poked + poke_skip_reasons (reasons enumerated), tuning examples, and an "obsolete — Relationship to the old send + poke idiom" subsection pointing back to the new behavior.
+
+      MANUAL-VERIFY pending: this subagent cannot reach AskUserQuestion; the driver (ts-ff-propose or the user) should read the new section and confirm wording + placement [ok|partial|fail].
       ```
-  - [ ] **Commit:** `docs(configs): document auto-poke-on-send default behavior and quiet-guard`
-    - **Commit SHA (fill during apply):** `<fill>`
+  - [x] **Commit:** `docs(configs): document auto-poke-on-send default behavior and quiet-guard`
+    - **Commit SHA (fill during apply):** `<pending>`
 
 ## Scenario Coverage Matrix
 

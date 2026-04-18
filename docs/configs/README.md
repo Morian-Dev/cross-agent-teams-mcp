@@ -26,18 +26,39 @@ After both agents have registered with `tmux_pane_id`:
 4. If no visible change, A may call `poke` again (soft limit: 3 times per short window)
 5. If still silent, fall back to `send_message` (mailbox persistence) or escalate to the human
 
-## send + poke idiom (urgent messages)
+## Auto-poke on send
 
-`send_message`, `broadcast`, and `task_add` do NOT auto-poke the recipient(s) — they only persist to the mailbox / task list, and the recipient sees the new item on their next natural turn via `get_inbox` / `task_list`.
+Since `add-auto-poke-on-send`, `send_message` **defaults to auto-poke** for both single-recipient (`to_agent_id`) and role-fanout (`to_role`) cases.  The daemon runs a quiet-guard against the recipient's tmux pane before firing poke:
 
-If a message is genuinely urgent, chain a `poke` after the send:
+1. Capture the recipient's `tmux capture-pane` tail.
+2. Wait `POKE_QUIET_MS` milliseconds (default `2000`, positive-integer env override).
+3. Re-capture and compare; only fire poke when the two captures match (pane has been idle).
+
+When the guard fails (pane is active), has no pane registered, tmux is unavailable, or the target is the caller itself, the message is **still persisted** to the mailbox and the skip is reported in the response.
+
+`broadcast` is **opt-in**: it does NOT auto-poke unless the caller passes `auto_poke: true`.  The default avoids mass-poke noise on team-wide announcements.
+
+Response fields:
+
+- `poked: boolean` — `true` iff at least one recipient received a successful poke.
+- `poke_skip_reasons?: Array<{ agent_id, reason }>` — entries for recipients that were not poked.  `reason` is one of `no_pane`, `guard_failed`, `tmux_unavailable`, `self`.  Absent when the caller passed `auto_poke: false`, or when a broadcast uses its default (`auto_poke` omitted).
+
+Tuning the guard window:
 
 ```
-send_message({ to_agent_id: "<B>", body: "<content>" })
-poke({ target_agent_id: "<B>", prompt: "inbox has <short nudge>, please get_inbox" })
+POKE_QUIET_MS=500 node dist/cli.js daemon   # shorter window for fast-moving teams
+POKE_QUIET_MS=4000 node dist/cli.js daemon  # longer window to reduce interrupts
 ```
 
-For `broadcast` the convention is **per-recipient poke**: iterate each target agent_id from `list_agents` and `poke` them individually.  A mass-poke protocol would spam every pane on routine updates and is deliberately NOT provided.  The tool descriptions for `send_message` / `broadcast` / `task_add` each remind the caller of this pattern at registration time.
+Invalid / non-positive values are ignored and fall back to the 2000ms default.
+
+### Relationship to the old send + poke idiom (obsolete)
+
+Earlier docs recommended chaining `send_message` + `poke` manually.  That pattern is obsolete: single-recipient and role-fanout `send_message` now auto-poke by default, and the `poke` tool itself remains as an **explicit** escape hatch (no guard, always fires) for the rare case where you know the target is busy but want to interrupt anyway.  You typically only need explicit `poke` when:
+
+- You hit a `guard_failed` in `poke_skip_reasons` but need to interrupt regardless.
+- You are sending a `broadcast` without `auto_poke: true` but want to poke one specific recipient.
+- `task_add` does not auto-poke (by design — prevents task-add spam); chain `poke` per the agent you want to claim it.
 
 ## Daemon keep-alive tuning
 
