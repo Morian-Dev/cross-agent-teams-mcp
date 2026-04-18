@@ -1,0 +1,16 @@
+{
+  "change": "spec-catchup-poke-idiom",
+  "phase": "archive",
+  "iteration": 1,
+  "max_iterations": 3,
+  "last_critical_types": [],
+  "auto_archive": true,
+  "history": [
+    { "iteration": 1, "phase": "apply", "status": "partial", "reason": "4.1 manual-verify deferred: subagent harness lacks AskUserQuestion", "at": "2026-04-18T04:35:00Z" },
+    { "iteration": 1, "phase": "apply-fixup", "status": "ok", "reason": "driver-level AskUserQuestion resolved 4.1 (user accepted spec delta fidelity; no edits needed)", "at": "2026-04-18T04:40:00Z" },
+    { "iteration": 1, "phase": "review", "status": "pass", "reason": "all 3 stages pass; 0 CRITICAL / 0 WARN", "at": "2026-04-18T04:50:00Z" },
+    { "iteration": 1, "phase": "verify", "status": "pass", "reason": "all 6 dimensions pass; no critical; 14 scenarios mapped to existing tests", "at": "2026-04-18T04:55:00Z" },
+    { "iteration": 1, "phase": "sync", "status": "ok", "reason": "no-op for openspec ≥0.14 (sync+archive combined)", "at": "2026-04-18T04:55:30Z" }
+  ],
+  "updated_at": "2026-04-18T04:55:30Z"
+}
