@@ -414,7 +414,16 @@ export function registerBusinessTools(
     'poke',
     {
       title: 'Poke agent',
-      description: 'Wake another agent in the same team by injecting prompt into its tmux pane. Returns pre/post pane capture tails. Soft recommendation: retry at most 3 times per target per short window.',
+      description: [
+        'Wake another agent in the same team by injecting a SHORT wake-up hint into its tmux pane.',
+        'The `prompt` is NOT a content channel — do NOT paste full messages, answers, or task payloads here.',
+        'Content belongs in `send_message` (which persists to mailbox and auto-pokes by default).',
+        'Use `poke` only when the recipient already has the content (via mailbox / task / contract event)',
+        'and you want to nudge them to act on it sooner than their next natural turn.',
+        'Good prompts are imperative one-liners, ideally < 200 characters, e.g.',
+        '"you have a new urgent message, check get_inbox" or "R2 judging ready, read mailbox and reply".',
+        'Returns pre/post pane capture tails. Soft recommendation: retry at most 3 times per target per short window.'
+      ].join(' '),
       inputSchema: {
         target_agent_id: z.string(),
         prompt: z.string()

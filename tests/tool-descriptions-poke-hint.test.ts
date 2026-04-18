@@ -98,6 +98,17 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     expect(tool!.description).toMatch(/retry/i)
   })
 
+  it('poke description forbids using prompt as a content channel (wake-up only)', async () => {
+    const tools = await listTools()
+    const tool = tools.find(t => t.name === 'poke')
+    const d = tool!.description!
+    expect(d).toMatch(/SHORT/)
+    expect(d).toMatch(/NOT a content channel|not a content channel/i)
+    expect(d).toMatch(/send_message/)
+    expect(d).toMatch(/mailbox/)
+    expect(d).toMatch(/< 200 characters|200 characters/)
+  })
+
   it('register_agent description demands a pre-call tmux check (imperative, not advisory)', async () => {
     const tools = await listTools()
     const tool = tools.find(t => t.name === 'register_agent')
