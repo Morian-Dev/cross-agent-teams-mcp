@@ -81,11 +81,14 @@ export function registerBusinessTools(
       title: 'Register agent',
       description: [
         'Register this session as an agent in a team.',
-        'If you are running inside a tmux pane, you SHOULD first invoke your shell tool',
-        "with `tmux display-message -p '#{pane_id}'` (which prints something like `%42`)",
-        'and pass that result as `tmux_pane_id` so the `poke` tool can wake you across sessions.',
-        'When you omit `tmux_pane_id`, the response will include a `hint` field reminding you to',
-        're-register with the pane id so cross-agent interrupt features work.'
+        'BEFORE calling this tool, you MUST first check whether this process is running inside tmux.',
+        "Run your shell tool with `tmux display-message -p '#{pane_id}'`.",
+        'If the command prints a pane id like `%42` (exit 0): you ARE in tmux — include that value',
+        'as `tmux_pane_id` in THIS register_agent call. Without it, `poke` cannot wake your session',
+        'across tmux panes.',
+        'If the command errors with "not a tmux client" (or similar): skip the tmux_pane_id field.',
+        'Most LLM coding agents (Claude Code, opencode, codex) run inside tmux by default, so the',
+        'first branch is usually the right one. Do not skip the check.'
       ].join(' '),
       inputSchema: {
         model: z.string(),
@@ -116,7 +119,7 @@ export function registerBusinessTools(
           if (!provided) {
             return {
               ...res,
-              hint: "tmux_pane_id not set. If running inside tmux, call your shell with `tmux display-message -p '#{pane_id}'` and re-register with tmux_pane_id=<result> to enable cross-agent poke delivery."
+              hint: "tmux_pane_id MISSING. This is almost always wrong — most coding agents run inside tmux. You MUST now run `tmux display-message -p '#{pane_id}'` in your shell tool. If it prints a pane id (e.g. %42), call register_agent AGAIN with tmux_pane_id set. Only skip this step if the command returns an error proving you are NOT inside tmux. Cross-agent poke delivery is off until you re-register with the pane id."
             }
           }
         }
