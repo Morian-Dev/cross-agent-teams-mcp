@@ -281,7 +281,7 @@ Ordered by dependency: guard module (1) → send_message integration (2) → bro
       MANUAL-VERIFY pending: this subagent cannot reach AskUserQuestion; the driver (ts-ff-propose or the user) should read the new section and confirm wording + placement [ok|partial|fail].
       ```
   - [x] **Commit:** `docs(configs): document auto-poke-on-send default behavior and quiet-guard`
-    - **Commit SHA (fill during apply):** `<pending>`
+    - **Commit SHA (fill during apply):** `7c93101`
 
 ## Scenario Coverage Matrix
 
