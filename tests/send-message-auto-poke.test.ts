@@ -122,6 +122,31 @@ describe('send_message auto_poke integration', () => {
     expect(dur).toBeLessThan(400)
   })
 
+  it('pokeFn exception is caught and falls back to guard_failed (mailbox still persisted)', async () => {
+    const dir = tmp(); cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const db = openDb(join(dir, 'data.db')); applySchema(db)
+    const agents = new AgentsRepo(db); const events = new EventsOutbox(db)
+    __setCapturePaneTail(async () => 'idle-tail')
+
+    const pokeCalls: PokeCall[] = []
+    const throwingPoke: AutoPokeFn = async ({ targetAgentId, paneId }) => {
+      pokeCalls.push({ target: targetAgentId, pane: paneId })
+      throw new Error('simulated tmux spawn failure')
+    }
+    const svc = new SendMessageService(db, agents, events, { poke: throwingPoke })
+
+    agents.register({ agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' })
+    agents.register({ agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' })
+
+    const r = await svc.send({ from: 'A', to_agent_id: 'B', body: 'hi' })
+    if ('error' in r) throw new Error('expected success, not error')
+    expect(r.poked).toBe(false)
+    expect(r.poke_skip_reasons ?? []).toContainEqual({ agent_id: 'B', reason: 'guard_failed' as AutoPokeSkipReason })
+    // message still persisted
+    const row = db.prepare('SELECT count(*) as c FROM messages WHERE to_agent_id=?').get('B') as { c: number }
+    expect(row.c).toBe(1)
+  })
+
   it('self as sole recipient is marked self (defensive; to_agent_id of caller)', async () => {
     const { svc, db, pokeCalls, cleanup } = setupService({ paneState: { '%1': 'idle' } })
     cleanups.push(cleanup)

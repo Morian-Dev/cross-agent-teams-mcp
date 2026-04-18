@@ -20,13 +20,18 @@ describe('tmux-cli wrappers', () => {
     expect(cp.execFile).toHaveBeenCalledWith('tmux', ['-V'], expect.anything())
   })
 
-  it('capturePaneTail invokes tmux capture-pane with -t/-p/-S args', async () => {
+  it('capturePaneTail invokes tmux capture-pane with -t/-p/-S args and a timeout', async () => {
     const { capturePaneTail } = await import('../src/daemon/tmux-cli.js')
-    ;(cp.execFile as unknown as ReturnType<typeof vi.fn>).mockImplementation((_cmd: string, _args: string[], cb: (e: Error | null, r: { stdout: string; stderr: string }) => void) => cb(null, { stdout: 'line1\nline2\n', stderr: '' }))
+    ;(cp.execFile as unknown as ReturnType<typeof vi.fn>).mockImplementation((..._args: unknown[]) => {
+      const cb = _args[_args.length - 1] as (e: Error | null, r: { stdout: string; stderr: string }) => void
+      cb(null, { stdout: 'line1\nline2\n', stderr: '' })
+    })
     const tail = await capturePaneTail('%42', 8)
     expect(tail).toContain('line1')
-    const args = (cp.execFile as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1]
-    expect(args).toEqual(['capture-pane', '-t', '%42', '-p', '-S', '-8'])
+    const call = (cp.execFile as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(call[1]).toEqual(['capture-pane', '-t', '%42', '-p', '-S', '-8'])
+    expect(call[2]).toMatchObject({ timeout: expect.any(Number) })
+    expect(call[2].timeout).toBeGreaterThan(0)
   })
 
   it('loadBuffer sends prompt bytes via stdin (not argv)', async () => {

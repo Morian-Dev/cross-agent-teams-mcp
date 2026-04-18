@@ -39,31 +39,35 @@ export async function fanoutAutoPoke(args: {
   const tmuxAvail = args.deps.tmuxAvailable ?? isTmuxAvailable
 
   const results = await Promise.all(args.recipients.map(async (r) => {
-    if (r.agent_id === args.fromAgentId) {
-      return { agent_id: r.agent_id, poked: false, reason: 'self' as AutoPokeSkipReason }
-    }
-    if (!r.tmux_pane_id) {
-      return { agent_id: r.agent_id, poked: false, reason: 'no_pane' as AutoPokeSkipReason }
-    }
-    if (!(await tmuxAvail())) {
-      return { agent_id: r.agent_id, poked: false, reason: 'tmux_unavailable' as AutoPokeSkipReason }
-    }
-    if (!pokeFn) {
-      return { agent_id: r.agent_id, poked: false, reason: 'tmux_unavailable' as AutoPokeSkipReason }
-    }
-    const guard = await runQuietGuard(r.tmux_pane_id)
-    if (guard === 'fail') {
+    try {
+      if (r.agent_id === args.fromAgentId) {
+        return { agent_id: r.agent_id, poked: false, reason: 'self' as AutoPokeSkipReason }
+      }
+      if (!r.tmux_pane_id) {
+        return { agent_id: r.agent_id, poked: false, reason: 'no_pane' as AutoPokeSkipReason }
+      }
+      if (!(await tmuxAvail())) {
+        return { agent_id: r.agent_id, poked: false, reason: 'tmux_unavailable' as AutoPokeSkipReason }
+      }
+      if (!pokeFn) {
+        return { agent_id: r.agent_id, poked: false, reason: 'tmux_unavailable' as AutoPokeSkipReason }
+      }
+      const guard = await runQuietGuard(r.tmux_pane_id)
+      if (guard === 'fail') {
+        return { agent_id: r.agent_id, poked: false, reason: 'guard_failed' as AutoPokeSkipReason }
+      }
+      const out = await pokeFn({
+        team: args.team,
+        fromAgentId: args.fromAgentId,
+        targetAgentId: r.agent_id,
+        paneId: r.tmux_pane_id,
+        body: args.body
+      })
+      if (out.ok) return { agent_id: r.agent_id, poked: true, reason: undefined }
+      return { agent_id: r.agent_id, poked: false, reason: (out.reason ?? 'guard_failed') as AutoPokeSkipReason }
+    } catch {
       return { agent_id: r.agent_id, poked: false, reason: 'guard_failed' as AutoPokeSkipReason }
     }
-    const out = await pokeFn({
-      team: args.team,
-      fromAgentId: args.fromAgentId,
-      targetAgentId: r.agent_id,
-      paneId: r.tmux_pane_id,
-      body: args.body
-    })
-    if (out.ok) return { agent_id: r.agent_id, poked: true, reason: undefined }
-    return { agent_id: r.agent_id, poked: false, reason: (out.reason ?? 'guard_failed') as AutoPokeSkipReason }
   }))
 
   const poked = results.some(x => x.poked)

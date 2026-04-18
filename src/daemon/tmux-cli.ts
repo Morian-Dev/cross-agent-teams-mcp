@@ -16,8 +16,14 @@ export async function isTmuxAvailable(): Promise<boolean> {
   return _isTmuxAvailable
 }
 
+const TMUX_CAPTURE_TIMEOUT_MS = 5_000
+
 export async function capturePaneTail(paneId: string, lines = 8): Promise<string> {
-  const { stdout } = await pExecFile('tmux', ['capture-pane', '-t', paneId, '-p', '-S', `-${lines}`])
+  const { stdout } = await pExecFile(
+    'tmux',
+    ['capture-pane', '-t', paneId, '-p', '-S', `-${lines}`],
+    { timeout: TMUX_CAPTURE_TIMEOUT_MS }
+  )
   return stdout
 }
 
