@@ -82,11 +82,16 @@ export function registerBusinessTools(
       description: [
         'Register this session as an agent in a team.',
         'BEFORE calling this tool, you MUST first check whether this process is running inside tmux.',
-        "Run your shell tool with `tmux display-message -p '#{pane_id}'`.",
-        'If the command prints a pane id like `%42` (exit 0): you ARE in tmux — include that value',
-        'as `tmux_pane_id` in THIS register_agent call. Without it, `poke` cannot wake your session',
-        'across tmux panes.',
-        'If the command errors with "not a tmux client" (or similar): skip the tmux_pane_id field.',
+        'Run your shell tool with `echo "$TMUX_PANE"` (this env var is set per-pane by tmux and is',
+        "the RELIABLE way to get your own pane id). Do NOT use `tmux display-message -p '#{pane_id}'`",
+        'as the primary source: it returns the tmux *focused* pane, which may be a different agent\'s',
+        "pane if multiple clients share the session. `tmux display-message` is only acceptable as a",
+        'fallback when `$TMUX_PANE` is empty.',
+        'If `echo "$TMUX_PANE"` prints a pane id like `%42` (non-empty output): you ARE in tmux —',
+        'include that value as `tmux_pane_id` in THIS register_agent call. Without it, `poke` cannot',
+        'wake your session across tmux panes.',
+        'If the variable is empty AND `tmux display-message` also errors with "not a tmux client":',
+        'skip the tmux_pane_id field.',
         'Most LLM coding agents (Claude Code, opencode, codex) run inside tmux by default, so the',
         'first branch is usually the right one. Do not skip the check.'
       ].join(' '),
@@ -119,7 +124,7 @@ export function registerBusinessTools(
           if (!provided) {
             return {
               ...res,
-              hint: "tmux_pane_id MISSING. This is almost always wrong — most coding agents run inside tmux. You MUST now run `tmux display-message -p '#{pane_id}'` in your shell tool. If it prints a pane id (e.g. %42), call register_agent AGAIN with tmux_pane_id set. Only skip this step if the command returns an error proving you are NOT inside tmux. Cross-agent poke delivery is off until you re-register with the pane id."
+              hint: "tmux_pane_id MISSING. This is almost always wrong — most coding agents run inside tmux. You MUST now run `echo \"$TMUX_PANE\"` in your shell tool (NOT `tmux display-message -p '#{pane_id}'` — that command returns the tmux focused pane, which is often a different agent's pane). If $TMUX_PANE prints a non-empty pane id (e.g. %42), call register_agent AGAIN with tmux_pane_id set to that value. If $TMUX_PANE is empty, fall back to `tmux display-message -p '#{pane_id}'` only as a last resort. Only skip re-registering if both checks prove you are NOT inside tmux. Cross-agent poke delivery is off until you re-register with the correct pane id."
             }
           }
         }

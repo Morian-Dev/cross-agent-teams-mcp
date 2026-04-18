@@ -22,11 +22,13 @@ Authorization = "Bearer YOUR_TOKEN"
 
 If you run this agent inside a tmux pane and want the `poke` MCP tool (or any future cross-agent interrupt) to target you, you SHOULD include your pane id on first `register_agent`.
 
-The agent itself can read the pane id via shell:
+The agent itself can read the pane id via shell.  Use the `$TMUX_PANE` environment variable, which tmux sets per-pane and is reliable per-process:
 
-    tmux display-message -p '#{pane_id}'
+    echo "$TMUX_PANE"
 
-This prints something like `%42`.  Pass it to `register_agent`:
+This prints something like `%42`.  Do **NOT** use `tmux display-message -p '#{pane_id}'` as the primary source — it returns the tmux *focused* pane, which may be a different agent's pane when multiple clients share the session.  `tmux display-message` is acceptable only as a fallback if `$TMUX_PANE` is empty.
+
+Pass the result to `register_agent`:
 
     register_agent({ model: "...", role: "...", team: "...", tmux_pane_id: "%42" })
 

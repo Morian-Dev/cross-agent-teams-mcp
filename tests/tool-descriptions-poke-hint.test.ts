@@ -69,9 +69,20 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     const d = tool!.description!
     expect(d).toMatch(/BEFORE calling this tool/i)
     expect(d).toMatch(/MUST/)
-    expect(d).toMatch(/tmux display-message -p/)
+    expect(d).toMatch(/TMUX_PANE/)
     expect(d).toMatch(/tmux_pane_id/)
     expect(d).toMatch(/Do not skip the check/i)
+  })
+
+  it('register_agent description prefers $TMUX_PANE over tmux display-message (per-pane reliability)', async () => {
+    const tools = await listTools()
+    const tool = tools.find(t => t.name === 'register_agent')
+    const d = tool!.description!
+    expect(d).toMatch(/\$TMUX_PANE/)
+    expect(d).toMatch(/echo "\$TMUX_PANE"/)
+    expect(d).toMatch(/Do NOT use `tmux display-message/i)
+    expect(d).toMatch(/focused/i)
+    expect(d).toMatch(/fallback/i)
   })
 
   it('register_agent description instructs how to handle both branches (in-tmux / not-in-tmux)', async () => {
