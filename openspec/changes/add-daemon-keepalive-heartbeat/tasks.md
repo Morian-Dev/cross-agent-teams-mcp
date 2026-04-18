@@ -466,3 +466,53 @@ Ordered by dependency: HTTP keep-alive config (1) → SSE heartbeat infrastructu
 | `Heartbeat does not interfere with contract_event delivery` | new `tests/sse-fanout-coexistence.test.ts` or extension of `tests/sse-e2e.test.ts` | 2.3 |
 
 Total unique spec scenarios: 8. Total top-level tasks: 4 (1.1, 2.1, 2.2, 2.3, 3.1 — 5 including docs manual-verify). Every scenario has at least one task-level test assertion.
+
+## 4. Fix-mode tasks (from ts-verify iteration 2)
+
+- [x] 4.1 Capture meaningfulness proof for task 2.3 coexistence test (RED-shows-PASS CRITICAL)
+  - kind: fix-mode-tdd-evidence
+  - **Source:** `.ff-verify-report.md` iteration 2 CRITICAL `tdd-discipline-red-shows-pass-fraud` at `tasks.md:388`.
+  - **Why:** Task 2.3's original `Verify INTEGRATION-RED` block recorded a PASS because task 2.1's production code already landed before 2.3's test. ts-verify §8.5.3 mechanically flags this. Fix mirrors task 2.2's proof-of-meaningfulness pattern: apply a surgical mutation that removes the heartbeat ticker, run 2.3's test, capture the failing output, restore, and record the failing-output evidence here. This does NOT rewrite task 2.3's existing Observed Output; it appends proof that the test is meaningful.
+  - **Files:**
+    - Mutate (temporarily): `src/daemon/sse-fanout.ts` — stub `startHeartbeat()` body to `return` (disable ticker)
+    - Test asserted: `tests/sse-fanout-coexistence.test.ts`
+  - [x] **PROOF-RED:** Mutated `src/daemon/sse-fanout.ts` by replacing the body of `private startHeartbeat()` with `return` (so attach no longer ticks). Ran the coexistence test; `heartbeatsA.length >= 1` assertion FAILED with `expected 0 to be greater than or equal to 1`. Contract event path was otherwise intact (the test stops at the heartbeat assertion before reaching the contract_event assertions), proving the test discriminates specifically on the heartbeat ticker's presence. Pre-mutation file backed up to `/tmp/sse-fanout.orig.ts`; restored immediately after capture; `git diff --stat src/daemon/sse-fanout.ts` returned clean after restore.
+    - Command: `pnpm exec vitest run tests/sse-fanout-coexistence.test.ts --reporter=verbose` (with surgical mutation applied)
+    - **Observed output:**
+      ```
+       × tests/sse-fanout-coexistence.test.ts > sse fanout heartbeat / contract_event coexistence > subscriber receives both heartbeat(s) and a contract_event without interference 412ms
+         → expected 0 to be greater than or equal to 1
+
+      ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+       FAIL  tests/sse-fanout-coexistence.test.ts > sse fanout heartbeat / contract_event coexistence > subscriber receives both heartbeat(s) and a contract_event without interference
+      AssertionError: expected 0 to be greater than or equal to 1
+       ❯ tests/sse-fanout-coexistence.test.ts:83:34
+           81|       }
+           82| 
+           83|       expect(heartbeatsA.length).toBeGreaterThanOrEqual(1)
+             |                                  ^
+           84|       expect(contractEventsA.length).toBe(1)
+           85|       expect(contractEventsA[0].params.contract_name).toBe('X')
+
+      ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+       Test Files  1 failed (1)
+            Tests  1 failed (1)
+         Duration  660ms
+      ```
+  - [x] **PROOF-GREEN (after restore):** Restored `src/daemon/sse-fanout.ts` from `/tmp/sse-fanout.orig.ts`; re-ran the coexistence test; it passed. Then ran full suite to confirm no other regressions.
+    - Command: `pnpm exec vitest run tests/sse-fanout-coexistence.test.ts --reporter=verbose` then `pnpm exec vitest run`
+    - **Observed output:**
+      ```
+       ✓ tests/sse-fanout-coexistence.test.ts > sse fanout heartbeat / contract_event coexistence > subscriber receives both heartbeat(s) and a contract_event without interference 410ms
+       Test Files  1 passed (1)
+            Tests  1 passed (1)
+         Duration  658ms
+      Full suite:
+       Test Files  56 passed (56)
+            Tests  136 passed (136)
+         Duration  4.28s
+      ```
+  - [x] **Commit:** evidence-only, no production or test source change — this task contains the proof-of-meaningfulness record. No git commit required (no tracked files changed).
+    - **Commit SHA (fill during apply):** n/a (evidence-only task; `src/daemon/sse-fanout.ts` and `tests/sse-fanout-coexistence.test.ts` are unchanged relative to pre-mutation HEAD; `git status --short src/daemon/sse-fanout.ts` returned clean after restore).
