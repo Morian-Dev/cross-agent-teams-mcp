@@ -9,8 +9,17 @@ import { SseFanout } from './sse-fanout.js'
 export interface ServerOpts { dbPath: string; token?: string; cleanupIntervalMs?: number; fanout?: SseFanout }
 export interface StartOpts extends ServerOpts { port: number; host?: string }
 
+const DEFAULT_KEEP_ALIVE_TIMEOUT_MS = 120_000
+
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  const n = Number(raw)
+  return Number.isInteger(n) && n > 0 ? n : fallback
+}
+
 export async function buildServer(opts: ServerOpts): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false })
+  const keepAliveTimeout = parsePositiveInt(process.env.KEEP_ALIVE_TIMEOUT_MS, DEFAULT_KEEP_ALIVE_TIMEOUT_MS)
+  const app = Fastify({ logger: false, keepAliveTimeout })
+  app.server.headersTimeout = keepAliveTimeout + 1000
   const db = openDb(opts.dbPath)
   applySchema(db)
   const startedAt = Date.now()
