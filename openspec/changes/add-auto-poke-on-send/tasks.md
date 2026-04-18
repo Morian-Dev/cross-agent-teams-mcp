@@ -264,7 +264,7 @@ Ordered by dependency: guard module (1) → send_message integration (2) → bro
 
 ## 5. Docs: Auto-poke on send
 
-- [ ] 5.1 Update `docs/configs/README.md` — add "Auto-poke on send" section, mark old "send + poke idiom" obsolete.
+- [x] 5.1 Update `docs/configs/README.md` — add "Auto-poke on send" section, mark old "send + poke idiom" obsolete.
   - kind: manual-verify
   - **Spec scenario(s):** n/a (documentation-only)
   - **Files:**
@@ -272,13 +272,11 @@ Ordered by dependency: guard module (1) → send_message integration (2) → bro
   - [x] **IMPLEMENT:** Append or integrate:
     - New section "Auto-poke on send": default on for `to_agent_id` + `to_role`, default off for `broadcast`, guard 2s `POKE_QUIET_MS` env, response fields `poked` + `poke_skip_reasons`.
     - Edit or strike through the existing "send + poke idiom" section, replacing with a pointer to "Auto-poke on send".
-  - [ ] **MANUAL-VERIFY:** user reads and confirms wording + placement
+  - [x] **MANUAL-VERIFY:** user reads and confirms wording + placement
     - Record evidence via AskUserQuestion at driver scope (subagent harness lacks it; apply-fixup pattern)
     - **Evidence (fill during apply):**
       ```
-      Implementation landed in docs/configs/README.md (see commit). Replaced "send + poke idiom (urgent messages)" section with "Auto-poke on send" covering: default on for to_agent_id + to_role, default off for broadcast, POKE_QUIET_MS env (default 2000ms, invalid falls back), response fields poked + poke_skip_reasons (reasons enumerated), tuning examples, and an "obsolete — Relationship to the old send + poke idiom" subsection pointing back to the new behavior.
-
-      MANUAL-VERIFY pending: this subagent cannot reach AskUserQuestion; the driver (ts-ff-propose or the user) should read the new section and confirm wording + placement [ok|partial|fail].
+      Confirmed by user at driver scope 2026-04-18. User reviewed the appended "Auto-poke on send" section in docs/configs/README.md (includes default on for to_agent_id + to_role, default off for broadcast, POKE_QUIET_MS env with fallback, response fields poked + poke_skip_reasons, tuning examples, and obsolete-idiom subsection) and approved wording + placement ("ok") without requested changes.
       ```
   - [x] **Commit:** `docs(configs): document auto-poke-on-send default behavior and quiet-guard`
     - **Commit SHA (fill during apply):** `7c93101`
