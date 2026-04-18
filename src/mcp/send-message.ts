@@ -24,7 +24,11 @@ interface SuccessResult {
   recipients: string[]
   poked: boolean
   poke_skip_reasons?: Array<{ agent_id: string; reason: AutoPokeSkipReason }>
+  retry_scheduled: boolean
+  retry_delays_s?: number[]
 }
+
+const RETRY_DELAYS_S = [30, 180, 600]
 
 export type SendResult =
   | SuccessResult
@@ -71,22 +75,40 @@ export class SendMessageService {
 
     const autoPokeEnabled = input.auto_poke !== false
     if (!autoPokeEnabled) {
-      return { ...baseResult, poked: false }
+      return { ...baseResult, poked: false, retry_scheduled: false }
     }
 
+    const db = this.db
     const fanout = await fanoutAutoPoke({
       team,
       fromAgentId: input.from,
       recipients: recipientRows,
       body: input.body,
-      deps: this.deps
+      deps: this.deps,
+      retry: {
+        messageId: baseResult.message_id,
+        sentAt: baseResult.sent_at,
+        lookupAgentFn: (agentId: string) => {
+          return db.prepare('SELECT agent_id, tmux_pane_id, last_seen_at FROM agents WHERE agent_id=?')
+            .get(agentId) as { agent_id: string; tmux_pane_id: string | null; last_seen_at: string } | undefined
+        }
+      }
     })
-    return { ...baseResult, poked: fanout.poked, poke_skip_reasons: fanout.skipReasons }
+    const retry_scheduled = fanout.retryScheduledCount > 0
+    return {
+      message_id: baseResult.message_id,
+      event_id: baseResult.event_id,
+      recipients: baseResult.recipients,
+      poked: fanout.poked,
+      poke_skip_reasons: fanout.skipReasons,
+      retry_scheduled,
+      ...(retry_scheduled ? { retry_delays_s: [...RETRY_DELAYS_S] } : {})
+    }
   }
 
   private insert(args: {
     team: string; from: string; recipients: string[]; to_role: string | null; input: SendInput
-  }): { message_id: string; event_id: number; recipients: string[] } {
+  }): { message_id: string; event_id: number; recipients: string[]; sent_at: string } {
     const tx = this.db.transaction(() => {
       const event_id = this.events.append({
         team: args.team, event_type: 'message_sent', actor_agent_id: args.from,
@@ -104,9 +126,9 @@ export class SendMessageService {
           args.recipients[i],
           args.to_role, args.input.subject ?? null, args.input.body, sent_at)
       }
-      return { message_id: baseId, event_id }
+      return { message_id: baseId, event_id, sent_at }
     })
-    const { message_id, event_id } = tx()
-    return { message_id, event_id, recipients: args.recipients }
+    const { message_id, event_id, sent_at } = tx()
+    return { message_id, event_id, recipients: args.recipients, sent_at }
   }
 }

@@ -53,7 +53,7 @@ describe('broadcast auto_poke opt-in integration', () => {
     delete process.env.POKE_QUIET_MS
   })
 
-  it('default broadcast (auto_poke omitted) does not poke anyone, no skip_reasons', async () => {
+  it('default broadcast (auto_poke omitted) does not poke anyone, no skip_reasons, retry_scheduled:false', async () => {
     const { svc, db, pokeCalls, cleanup } = setupService()
     cleanups.push(cleanup)
     const agents = new AgentsRepo(db)
@@ -69,6 +69,8 @@ describe('broadcast auto_poke opt-in integration', () => {
     expect(r.poked).toBe(false)
     expect(r.poke_skip_reasons).toBeUndefined()
     expect(pokeCalls.length).toBe(0)
+    expect(r.retry_scheduled).toBe(false)
+    expect(r.retry_delays_s).toBeUndefined()
   })
 
   it('explicit auto_poke:true with mixed panes: pokes idle ones, skip_reasons lists only no_pane/guard_failed', async () => {
@@ -91,5 +93,30 @@ describe('broadcast auto_poke opt-in integration', () => {
     const reasons = r.poke_skip_reasons ?? []
     expect(reasons).toContainEqual({ agent_id: 'D', reason: 'no_pane' as AutoPokeSkipReason })
     expect(reasons.some(x => x.reason === 'guard_failed')).toBe(false)
+    // No guard_failed → no retry
+    expect(r.retry_scheduled).toBe(false)
+    expect(r.retry_delays_s).toBeUndefined()
+  })
+
+  it('explicit auto_poke:true with active pane: guard_failed → retry_scheduled:true, delays=[30,180,600]', async () => {
+    const { svc, db, pokeCalls, cleanup } = setupService({
+      paneState: { '%2': 'active' }
+    })
+    cleanups.push(cleanup)
+    const agents = new AgentsRepo(db)
+    agents.register({ agent_id: 'A', model: 'm', role: 'lead', tmux_pane_id: '%1' })
+    agents.register({ agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' })
+
+    const r = await svc.broadcast({ from: 'A', body: 'urgent', auto_poke: true })
+    if ('error' in r) throw new Error('expected success')
+
+    expect(r.poked).toBe(false)
+    expect(pokeCalls.length).toBe(0)
+    const reasons = r.poke_skip_reasons ?? []
+    expect(reasons).toContainEqual({ agent_id: 'B', reason: 'guard_failed' as AutoPokeSkipReason })
+    expect(r.retry_scheduled).toBe(true)
+    expect(r.retry_delays_s).toEqual([30, 180, 600])
+    const { clearAllRetries } = await import('../src/mcp/poke-retry.js')
+    clearAllRetries()
   })
 })

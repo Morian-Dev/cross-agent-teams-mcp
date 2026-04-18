@@ -52,7 +52,7 @@ describe('send_message auto_poke integration', () => {
     delete process.env.POKE_QUIET_MS
   })
 
-  it('single recipient with idle pane: poked:true, no skip_reasons', async () => {
+  it('single recipient with idle pane: poked:true, no skip_reasons, retry_scheduled:false', async () => {
     const { svc, db, pokeCalls, cleanup } = setupService({ paneState: { '%2': 'idle' } })
     cleanups.push(cleanup)
     const agents = new AgentsRepo(db)
@@ -66,9 +66,11 @@ describe('send_message auto_poke integration', () => {
     expect(r.poke_skip_reasons ?? []).toEqual([])
     expect(pokeCalls.length).toBe(1)
     expect(pokeCalls[0].target).toBe('B')
+    expect(r.retry_scheduled).toBe(false)
+    expect(r.retry_delays_s).toBeUndefined()
   })
 
-  it('recipient without tmux_pane_id: poked:false, reason no_pane', async () => {
+  it('recipient without tmux_pane_id: poked:false, reason no_pane, retry_scheduled:false', async () => {
     const { svc, db, pokeCalls, cleanup } = setupService()
     cleanups.push(cleanup)
     const agents = new AgentsRepo(db)
@@ -82,6 +84,8 @@ describe('send_message auto_poke integration', () => {
     const reasons = r.poke_skip_reasons ?? []
     expect(reasons).toContainEqual({ agent_id: 'B', reason: 'no_pane' as AutoPokeSkipReason })
     expect(pokeCalls.length).toBe(0)
+    expect(r.retry_scheduled).toBe(false)
+    expect(r.retry_delays_s).toBeUndefined()
   })
 
   it('auto_poke:false disables the behavior, no skip_reasons', async () => {
@@ -99,7 +103,7 @@ describe('send_message auto_poke integration', () => {
     expect(pokeCalls.length).toBe(0)
   })
 
-  it('to_role fan-out with one idle + one active: poked:true + guard_failed for active', async () => {
+  it('to_role fan-out with one idle + one active: poked:true, guard_failed for active, retry_scheduled:true', async () => {
     const { svc, db, pokeCalls, cleanup } = setupService({
       paneState: { '%2': 'idle', '%3': 'active' }
     })
@@ -120,6 +124,32 @@ describe('send_message auto_poke integration', () => {
     expect(reasons).toContainEqual({ agent_id: 'C', reason: 'guard_failed' as AutoPokeSkipReason })
     // parallel guard: total duration should be less than 2x quiet_ms + overhead
     expect(dur).toBeLessThan(400)
+    // retry_scheduled: at least one recipient (C) had guard_failed with a pane
+    expect(r.retry_scheduled).toBe(true)
+    expect(r.retry_delays_s).toEqual([30, 180, 600])
+    // cleanup: stop any scheduled retry timers so the process exits cleanly
+    const { clearAllRetries } = await import('../src/mcp/poke-retry.js')
+    clearAllRetries()
+  })
+
+  it('single recipient with active pane: poked:false, guard_failed, retry_scheduled:true, delays=[30,180,600]', async () => {
+    const { svc, db, pokeCalls, cleanup } = setupService({ paneState: { '%2': 'active' } })
+    cleanups.push(cleanup)
+    const agents = new AgentsRepo(db)
+    agents.register({ agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' })
+    agents.register({ agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' })
+
+    const r = await svc.send({ from: 'A', to_agent_id: 'B', body: 'hi' })
+    if ('error' in r) throw new Error('expected success')
+
+    expect(r.poked).toBe(false)
+    expect(pokeCalls.length).toBe(0)
+    const reasons = r.poke_skip_reasons ?? []
+    expect(reasons).toContainEqual({ agent_id: 'B', reason: 'guard_failed' as AutoPokeSkipReason })
+    expect(r.retry_scheduled).toBe(true)
+    expect(r.retry_delays_s).toEqual([30, 180, 600])
+    const { clearAllRetries } = await import('../src/mcp/poke-retry.js')
+    clearAllRetries()
   })
 
   it('pokeFn exception is caught and falls back to guard_failed (mailbox still persisted)', async () => {
