@@ -29,7 +29,7 @@ export interface RetryContext {
 }
 
 interface RetryEntry {
-  timer: ReturnType<typeof setTimeout>
+  timer?: ReturnType<typeof setTimeout>
   attempt: number
   ctx: RetryContext
 }
@@ -43,9 +43,7 @@ function keyOf(ctx: RetryContext): string {
 export function scheduleRetry(ctx: RetryContext): void {
   const key = keyOf(ctx)
   cancelRetry(key)
-  const entry: RetryEntry = { timer: setTimeout(() => {}, 0), attempt: 0, ctx }
-  clearTimeout(entry.timer)
-  retryMap.set(key, entry)
+  retryMap.set(key, { attempt: 0, ctx })
   enqueueNext(key)
 }
 
@@ -100,12 +98,12 @@ async function tick(key: string): Promise<void> {
 export function cancelRetry(key: string): void {
   const entry = retryMap.get(key)
   if (!entry) return
-  clearTimeout(entry.timer)
+  if (entry.timer) clearTimeout(entry.timer)
   retryMap.delete(key)
 }
 
 export function clearAllRetries(): void {
-  for (const [, v] of retryMap) clearTimeout(v.timer)
+  for (const [, v] of retryMap) if (v.timer) clearTimeout(v.timer)
   retryMap.clear()
 }
 

@@ -4,6 +4,7 @@ import type { AgentsRepo } from '../storage/agents-repo.js'
 import type { EventsOutbox } from '../storage/events-outbox.js'
 import { fanoutAutoPoke } from './auto-poke-fanout.js'
 import type { AutoPokeSkipReason, FanoutDeps } from './auto-poke-fanout.js'
+import { RETRY_DELAYS_S } from './poke-retry.js'
 
 export type { AutoPokeFn, AutoPokeSkipReason } from './auto-poke-fanout.js'
 
@@ -27,8 +28,6 @@ interface SuccessResult {
   retry_scheduled: boolean
   retry_delays_s?: number[]
 }
-
-const RETRY_DELAYS_S = [30, 180, 600]
 
 export type SendResult =
   | SuccessResult
