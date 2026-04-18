@@ -385,14 +385,18 @@ Ordered by dependency: HTTP keep-alive config (1) → SSE heartbeat infrastructu
     ```ts
     // full-suite safe: new test file. Subscriber uses register_agent + register_contract + subscribe_contract, then waits 300ms and emits update; asserts both heartbeat count >= 1 AND at least 1 contract_event received.
     ```
-  - [x] **Verify INTEGRATION-RED:** With tasks 1.1 + 2.1 already landed, heartbeat runs and contract_event path is unchanged; as noted in the task description, this is a regression-guard test that passes immediately. Captured output below.
-    - Command: `pnpm exec vitest run tests/sse-fanout-coexistence.test.ts --reporter=verbose`
+  - [x] **Verify INTEGRATION-RED:** Meaningfulness proof — ran with `src/daemon/sse-fanout.ts` surgically mutated (`startHeartbeat()` body replaced with `return`, disabling the ticker) and the test FAILED on the heartbeat assertion, confirming the test discriminates on the heartbeat path. Mutation restored immediately after capture; `git diff` clean. See task 4.1 for the full mutate-run-restore protocol.
+    - Command: `pnpm exec vitest run tests/sse-fanout-coexistence.test.ts --reporter=verbose` (with surgical mutation applied)
     - **Observed output (fill during apply):**
       ```
-       ✓ tests/sse-fanout-coexistence.test.ts > sse fanout heartbeat / contract_event coexistence > subscriber receives both heartbeat(s) and a contract_event without interference 409ms
-       Test Files  1 passed (1)
-            Tests  1 passed (1)
-         Duration  684ms
+       × tests/sse-fanout-coexistence.test.ts > sse fanout heartbeat / contract_event coexistence > subscriber receives both heartbeat(s) and a contract_event without interference 412ms
+         → expected 0 to be greater than or equal to 1
+
+      ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+       FAIL  tests/sse-fanout-coexistence.test.ts > ... without interference
+      AssertionError: expected 0 to be greater than or equal to 1
+       Test Files  1 failed (1)
+            Tests  1 failed (1)
       ```
   - [x] **INTEGRATION-GREEN:** No additional production change. This test pins the non-interference invariant.
   - [x] **Verify INTEGRATION-GREEN:**
