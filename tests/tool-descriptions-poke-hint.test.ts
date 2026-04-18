@@ -12,7 +12,12 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
   const cleanups: string[] = []
   afterEach(() => { cleanups.forEach(d => rmSync(d, { recursive: true, force: true })); cleanups.length = 0 })
 
-  async function listTools(): Promise<Array<{ name: string; description?: string }>> {
+  interface ToolInfo {
+    name: string
+    description?: string
+    inputSchema?: { properties?: Record<string, { type?: string }>; required?: string[] }
+  }
+  async function listTools(): Promise<ToolInfo[]> {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
     const url = new URL(`http://${host}:${port}/mcp`)
@@ -21,7 +26,7 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     await c.connect(t)
     const resp = await c.listTools()
     await t.close(); await app.close()
-    return resp.tools
+    return resp.tools as unknown as ToolInfo[]
   }
 
   it('send_message description mentions auto-poke default + quiet-guard', async () => {
@@ -56,8 +61,8 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     const bc = tools.find(t => t.name === 'broadcast')
     expect(sm).toBeDefined()
     expect(bc).toBeDefined()
-    const smSchema = sm!.inputSchema as { properties?: Record<string, { type?: string }>; required?: string[] }
-    const bcSchema = bc!.inputSchema as { properties?: Record<string, { type?: string }>; required?: string[] }
+    const smSchema = sm!.inputSchema!
+    const bcSchema = bc!.inputSchema!
     expect(smSchema.properties?.auto_poke?.type).toBe('boolean')
     expect(bcSchema.properties?.auto_poke?.type).toBe('boolean')
     expect(smSchema.required ?? []).not.toContain('auto_poke')
