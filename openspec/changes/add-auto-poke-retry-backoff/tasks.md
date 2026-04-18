@@ -235,7 +235,7 @@ Ordered by dependency: retry core (1) → fan-out integration (2) → response s
       tests/tool-descriptions-poke-hint.test.ts updated (added retry|backoff, retry_scheduled, retry_delays_s assertions on both send_message and broadcast descriptions).  Full suite: 62 files / 168 tests passed.
       docs/configs/README.md: added two new response-field bullets (retry_scheduled, retry_delays_s) + a new "### Retry on guard_failed" subsection under "## Auto-poke on send" describing the 30s/3min/10min backoff sequence, cancel conditions, and shutdown cleanup.
       src/mcp/tools.ts: send_message and broadcast description tails append the retry explanation including retry_scheduled:bool and retry_delays_s:[30,180,600].
-      Status: [ok] — automated proxy verification passed. Driver-scope human confirmation deferred per task's apply-fixup note.
+      Status: [ok] — driver confirmed user approval of docs wording ("ok") on 2026-04-18 after reading docs/configs/README.md "Retry on guard_failed" subsection. Tool description appendixes also visible and acceptable.
       ```
   - [x] **Commit:** `docs(configs): document auto-poke retry backoff behavior`
     - **Commit SHA (fill during apply):** `de49437`
