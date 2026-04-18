@@ -450,7 +450,7 @@ Ordered by dependency: HTTP keep-alive config (1) → SSE heartbeat infrastructu
       Section appended at docs/configs/README.md (lines 41-55), documents KEEP_ALIVE_TIMEOUT_MS=120000 default, HEARTBEAT_INTERVAL_MS=30000 default, override example, and the honest codex-rmcp caveat.
       ```
   - [x] **Commit:** `docs(configs): document keep-alive + heartbeat env tuning with honest codex caveat`
-    - **Commit SHA (fill during apply):** `__TASK_3_1_SHA__`
+    - **Commit SHA (fill during apply):** `20d7f98`
 
 ## Scenario Coverage Matrix
 
