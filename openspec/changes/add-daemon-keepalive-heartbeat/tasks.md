@@ -419,7 +419,7 @@ Ordered by dependency: HTTP keep-alive config (1) → SSE heartbeat infrastructu
             Tests  1 passed (1)
       ```
   - [x] **Commit:** `test(sse): heartbeat coexists with contract_event stream without interference`
-    - **Commit SHA (fill during apply):** `__TASK_2_3_SHA__`
+    - **Commit SHA (fill during apply):** `0df5ba3`
 
 ## 3. Docs: daemon tuning section
 
@@ -428,7 +428,7 @@ Ordered by dependency: HTTP keep-alive config (1) → SSE heartbeat infrastructu
   - **Spec scenario(s):** n/a (documentation-only)
   - **Files:**
     - Edit: `docs/configs/README.md`
-  - [ ] **IMPLEMENT:** Append a section like:
+  - [x] **IMPLEMENT:** Append a section like:
     ```markdown
     ## Daemon keep-alive tuning
 
@@ -446,10 +446,11 @@ Ordered by dependency: HTTP keep-alive config (1) → SSE heartbeat infrastructu
     - Record evidence via AskUserQuestion at driver scope (subagent harness lacks it; apply-fixup pattern)
     - **Evidence (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      pending — apply-fixup pattern per task design. The subagent harness executing this task does not expose AskUserQuestion; the docs change has been written and committed, and the driver/human is expected to read docs/configs/README.md "Daemon keep-alive tuning" section and confirm wording + placement. ts-apply returns STATUS: partial to surface this gate, exactly as the task-author anticipated with the "apply-fixup pattern" marker.
+      Section appended at docs/configs/README.md (lines 41-55), documents KEEP_ALIVE_TIMEOUT_MS=120000 default, HEARTBEAT_INTERVAL_MS=30000 default, override example, and the honest codex-rmcp caveat.
       ```
-  - [ ] **Commit:** `docs(configs): document keep-alive + heartbeat env tuning with honest codex caveat`
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+  - [x] **Commit:** `docs(configs): document keep-alive + heartbeat env tuning with honest codex caveat`
+    - **Commit SHA (fill during apply):** `__TASK_3_1_SHA__`
 
 ## Scenario Coverage Matrix
 

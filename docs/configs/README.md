@@ -38,3 +38,18 @@ poke({ target_agent_id: "<B>", prompt: "inbox has <short nudge>, please get_inbo
 ```
 
 For `broadcast` the convention is **per-recipient poke**: iterate each target agent_id from `list_agents` and `poke` them individually.  A mass-poke protocol would spam every pane on routine updates and is deliberately NOT provided.  The tool descriptions for `send_message` / `broadcast` / `task_add` each remind the caller of this pattern at registration time.
+
+## Daemon keep-alive tuning
+
+The daemon ships with two idle-tolerance knobs:
+
+- `KEEP_ALIVE_TIMEOUT_MS` (default `120000`, 120s) — HTTP short-connection keep-alive window.  Applies to streamable-http POST clients like codex rmcp.
+- `HEARTBEAT_INTERVAL_MS` (default `30000`, 30s) — application-level `notifications/heartbeat` emitted to every attached SSE sink.  Keeps long-lived subscription streams TCP-active through NAT / firewall idle timers.
+
+To override (e.g. for ops tuning or for tests):
+
+```
+KEEP_ALIVE_TIMEOUT_MS=60000 HEARTBEAT_INTERVAL_MS=15000 node dist/cli.js daemon
+```
+
+**Honest limitation**: these mitigations widen the window but do NOT fully fix the codex rmcp idle-transport collapse ("error decoding response body").  The root cause is in codex's HTTP connection pool lacking retry-on-decode-error; it's outside this daemon's control.  If codex still crashes after `KEEP_ALIVE_TIMEOUT_MS` seconds of idle, restart codex and re-register.
