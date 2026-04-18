@@ -276,9 +276,9 @@ Ordered by dependency: HTTP keep-alive config (1) → SSE heartbeat infrastructu
       ```
   - [x] **Commit:** `feat(sse-fanout): add application-level heartbeat ticker with attach/detach lifecycle`
     - Staging order: test file BEFORE production file
-    - **Commit SHA (fill during apply):** `__TASK_2_1_SHA__`
+    - **Commit SHA (fill during apply):** `34ba1a6`
 
-- [ ] 2.2 MCP client end-to-end: receives `notifications/heartbeat`
+- [x] 2.2 MCP client end-to-end: receives `notifications/heartbeat`
   - kind: integration-test
   - **Spec scenario(s):**
     - `daemon-core/spec.md` → Scenario: `MCP client receives notifications/heartbeat`
@@ -334,29 +334,46 @@ Ordered by dependency: HTTP keep-alive config (1) → SSE heartbeat infrastructu
     })
     const tmp = (): string => mkdtempSync(join(tmpdir(), 'atm-hbe2e-'))
     ```
-  - [ ] **Verify INTEGRATION-RED:** Fails because the daemon currently does not emit heartbeats
-    - Command: `pnpm exec vitest run tests/mcp-heartbeat-e2e.test.ts --reporter=verbose`
+  - [x] **Verify INTEGRATION-RED:** Meaningfulness proof — ran with sse-fanout reverted to pre-2.1 state (no ticker) and the test FAILED as expected. This confirms the test asserts the heartbeat path end-to-end.
+    - Command: `pnpm exec vitest run tests/mcp-heartbeat-e2e.test.ts --reporter=verbose` (after `cp pre-2.1-sse-fanout.ts src/daemon/sse-fanout.ts`)
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       × tests/mcp-heartbeat-e2e.test.ts > mcp heartbeat end-to-end > client receives at least one heartbeat notification within 400ms at interval 100ms 446ms
+         → expected 0 to be greater than or equal to 1
+      AssertionError: expected 0 to be greater than or equal to 1
+       ❯ tests/mcp-heartbeat-e2e.test.ts:41:22
+           41|     expect(received).toBeGreaterThanOrEqual(1)
+             |                      ^
+       Test Files  1 failed (1)
+            Tests  1 failed (1)
+      (pre-2.1 code restored immediately after this proof run; src/ tree clean per `git status`)
       ```
-  - [ ] **INTEGRATION-GREEN:** Already achieved by task 2.1's implementation. This task only adds the e2e test to pin the behavior through the real SDK + HTTP path.
-  - [ ] **Verify INTEGRATION-GREEN:**
+  - [x] **INTEGRATION-GREEN:** Already achieved by task 2.1's implementation. This task only adds the e2e test to pin the behavior through the real SDK + HTTP path.
+  - [x] **Verify INTEGRATION-GREEN:**
     - Command: `pnpm exec vitest run tests/mcp-heartbeat-e2e.test.ts --reporter=verbose`
     - Full-suite command: `pnpm exec vitest run --reporter=verbose`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       ✓ tests/mcp-heartbeat-e2e.test.ts > mcp heartbeat end-to-end > client receives at least one heartbeat notification within 400ms at interval 100ms 448ms
+       Test Files  1 passed (1)
+            Tests  1 passed (1)
+      Full suite:
+       Test Files  55 passed (55)
+            Tests  135 passed (135)
+         Duration  3.98s
       ```
-  - [ ] **REFACTOR:** None
-  - [ ] **Verify REFACTOR:**
+  - [x] **REFACTOR:** None
+  - [x] **Verify REFACTOR:**
     - Command: `pnpm exec vitest run tests/mcp-heartbeat-e2e.test.ts --reporter=verbose`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      (No refactor changes made; state identical to GREEN.)
+       ✓ tests/mcp-heartbeat-e2e.test.ts > mcp heartbeat end-to-end > client receives at least one heartbeat notification within 400ms at interval 100ms 448ms
+       Test Files  1 passed (1)
+            Tests  1 passed (1)
       ```
-  - [ ] **Commit:** `test(mcp): end-to-end heartbeat notification delivery via streamable-http client`
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+  - [x] **Commit:** `test(mcp): end-to-end heartbeat notification delivery via streamable-http client`
+    - **Commit SHA (fill during apply):** `__TASK_2_2_SHA__`
 
 - [ ] 2.3 Heartbeat does not interfere with contract_event delivery
   - kind: integration-test
