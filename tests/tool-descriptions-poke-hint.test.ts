@@ -40,6 +40,10 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     expect(d).toMatch(/auto_poke/)
     expect(d).toMatch(/poked/)
     expect(d).toMatch(/poke_skip_reasons/)
+    // retry-on-guard_failed behavior is documented
+    expect(d).toMatch(/retry|backoff/i)
+    expect(d).toMatch(/retry_scheduled/)
+    expect(d).toMatch(/retry_delays_s/)
   })
 
   it('broadcast description states does NOT auto-poke by default and explains opt-in', async () => {
@@ -53,6 +57,9 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     expect(d).toMatch(/quiet-guard|guard/i)
     expect(d).toMatch(/poked/)
     expect(d).toMatch(/poke_skip_reasons/)
+    expect(d).toMatch(/retry|backoff/i)
+    expect(d).toMatch(/retry_scheduled/)
+    expect(d).toMatch(/retry_delays_s/)
   })
 
   it('send_message and broadcast tool schemas expose auto_poke as optional boolean', async () => {

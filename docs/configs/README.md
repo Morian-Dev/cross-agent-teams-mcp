@@ -42,6 +42,23 @@ Response fields:
 
 - `poked: boolean` — `true` iff at least one recipient received a successful poke.
 - `poke_skip_reasons?: Array<{ agent_id, reason }>` — entries for recipients that were not poked.  `reason` is one of `no_pane`, `guard_failed`, `tmux_unavailable`, `self`.  Absent when the caller passed `auto_poke: false`, or when a broadcast uses its default (`auto_poke` omitted).
+- `retry_scheduled: boolean` — `true` iff the daemon scheduled at least one background retry for a `guard_failed` recipient (see "Retry on guard_failed" below).
+- `retry_delays_s?: number[]` — the backoff sequence used when `retry_scheduled` is `true`.  Fixed to `[30, 180, 600]` (seconds); absent when no retries were scheduled.
+
+### Retry on guard_failed
+
+When the initial quiet-guard reports `guard_failed` for a recipient that has a registered `tmux_pane_id`, the daemon schedules up to three background retries with fixed backoff: **30 seconds, 3 minutes, 10 minutes** (total window ≈ 13.5 min).  Each retry tick:
+
+1. Looks up the recipient's current `tmux_pane_id` and `last_seen_at`.
+2. Stops silently if the recipient no longer exists, has no pane id, or the recipient's `last_seen_at` is newer than the original message's `sent_at` (i.e. the recipient came online on their own).
+3. Otherwise re-runs the quiet-guard; on pass, fires a poke with the original message body and stops remaining retries; on fail, schedules the next retry in the sequence.
+
+Notes:
+
+- Retry state lives in daemon memory only — no DB persistence.  Daemon restart drops pending retries (acceptable: the message is still in the mailbox).
+- Only `guard_failed` triggers retries.  `no_pane`, `self`, and `tmux_unavailable` skip reasons are terminal and do **not** schedule retries.
+- Successful retries are silent side effects: the sender's `send_message` / `broadcast` response has already returned, and no additional event or mailbox row is written on retry-poke success.
+- On Fastify `app.close()` the daemon clears all pending retry timers.
 
 Tuning the guard window:
 

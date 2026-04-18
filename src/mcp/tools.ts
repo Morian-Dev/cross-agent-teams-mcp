@@ -176,7 +176,10 @@ export function registerBusinessTools(
         'still persisted to the mailbox and the skip is reported.  Pass auto_poke:false if the',
         'recipient should only see it on their next `get_inbox`.  The response reports',
         'poked:true/false and, when applicable, poke_skip_reasons per recipient (reasons include',
-        'no_pane, guard_failed, tmux_unavailable, self).'
+        'no_pane, guard_failed, tmux_unavailable, self).  When the quiet-guard reports guard_failed,',
+        'the daemon schedules 3 background retries with backoff (30s / 3min / 10min); retries stop',
+        'early if the recipient comes online.  Response fields retry_scheduled:bool and',
+        'retry_delays_s:[30,180,600] indicate the backoff schedule.'
       ].join(' '),
       inputSchema: {
         to_agent_id: z.string().optional(),
@@ -204,7 +207,11 @@ export function registerBusinessTools(
         'keeps team-wide messages quiet.  When auto_poke is enabled, each recipient\'s pane is',
         'checked for idleness in parallel and only idle panes are poked; the message is always',
         'persisted to every recipient\'s mailbox regardless.  Response includes poked and',
-        'poke_skip_reasons (reasons: no_pane, guard_failed, tmux_unavailable, self).'
+        'poke_skip_reasons (reasons: no_pane, guard_failed, tmux_unavailable, self).  When',
+        'auto_poke:true is set and a recipient\'s guard reports guard_failed, the daemon schedules',
+        '3 background retries with backoff (30s / 3min / 10min); retries stop early if the',
+        'recipient comes online.  Response fields retry_scheduled:bool and',
+        'retry_delays_s:[30,180,600] indicate the backoff schedule.'
       ].join(' '),
       inputSchema: {
         subject: z.string().optional(),
