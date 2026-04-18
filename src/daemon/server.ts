@@ -5,6 +5,7 @@ import { makeAuthHook } from './auth.js'
 import { mountMcp } from '../mcp/transport.js'
 import { runCleanup } from './cleanup.js'
 import { SseFanout } from './sse-fanout.js'
+import { clearAllRetries } from '../mcp/poke-retry.js'
 
 export interface ServerOpts { dbPath: string; token?: string; cleanupIntervalMs?: number; fanout?: SseFanout }
 export interface StartOpts extends ServerOpts { port: number; host?: string }
@@ -38,6 +39,7 @@ export async function buildServer(opts: ServerOpts): Promise<FastifyInstance> {
 
   app.addHook('onClose', async () => {
     clearInterval(interval)
+    clearAllRetries()
     fanout.stopAll()
     db.close()
   })
