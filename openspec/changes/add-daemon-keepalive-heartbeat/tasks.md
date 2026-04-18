@@ -122,11 +122,11 @@ Ordered by dependency: HTTP keep-alive config (1) → SSE heartbeat infrastructu
       ```
   - [x] **Commit:** `feat(daemon): extend HTTP keepAliveTimeout default to 120s with env override`
     - Staging order: test file BEFORE production file
-    - **Commit SHA (fill during apply):** `__TASK_1_1_SHA__`
+    - **Commit SHA (fill during apply):** `622a54e`
 
 ## 2. SSE heartbeat ticker on SseFanout
 
-- [ ] 2.1 Add `sendHeartbeat(): void` to `SseSink` interface; implement in the sink defined at `src/mcp/transport.ts`
+- [x] 2.1 Add `sendHeartbeat(): void` to `SseSink` interface; implement in the sink defined at `src/mcp/transport.ts`
   - kind: unit-test
   - **Spec scenario(s):**
     - `daemon-core/spec.md` → Scenario: `Heartbeat delivered at configured interval`
@@ -168,13 +168,21 @@ Ordered by dependency: HTTP keep-alive config (1) → SSE heartbeat infrastructu
       })
     })
     ```
-  - [ ] **Verify RED:** Fails because current `SseFanout` has no heartbeat and current `SseSink` has no `sendHeartbeat`
+  - [x] **Verify RED:** Fails because current `SseFanout` has no heartbeat and current `SseSink` has no `sendHeartbeat`
     - Command: `pnpm exec vitest run tests/sse-fanout-heartbeat.test.ts --reporter=verbose`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       × tests/sse-fanout-heartbeat.test.ts > SseFanout heartbeat > ticks on every attached sink at the configured interval
+         → expected 0 to be greater than or equal to 2
+       ✓ tests/sse-fanout-heartbeat.test.ts > SseFanout heartbeat > stops ticker when last sink detaches
+      AssertionError: expected 0 to be greater than or equal to 2
+       ❯ tests/sse-fanout-heartbeat.test.ts:17:59
+           17|     expect((sink.sendHeartbeat as any).mock.calls.length).toBeGreaterT…
+             |                                                           ^
+       Test Files  1 failed (1)
+            Tests  1 failed | 1 passed (2)
       ```
-  - [ ] **GREEN:** Update `src/daemon/sse-fanout.ts`:
+  - [x] **GREEN:** Update `src/daemon/sse-fanout.ts`:
     ```ts
     export interface SseSink {
       send(msg: Record<string, unknown>): void
@@ -241,23 +249,34 @@ Ordered by dependency: HTTP keep-alive config (1) → SSE heartbeat infrastructu
     }
     ```
     Update `src/daemon/server.ts` `onClose` hook to call `fanout.stopAll()` before db.close().
-  - [ ] **Verify GREEN:**
+  - [x] **Verify GREEN:**
     - Command: `pnpm exec vitest run tests/sse-fanout-heartbeat.test.ts --reporter=verbose`
     - Full-suite command: `pnpm exec vitest run --reporter=verbose`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       ✓ tests/sse-fanout-heartbeat.test.ts > SseFanout heartbeat > ticks on every attached sink at the configured interval
+       ✓ tests/sse-fanout-heartbeat.test.ts > SseFanout heartbeat > stops ticker when last sink detaches
+       Test Files  1 passed (1)
+            Tests  2 passed (2)
+      Full suite:
+       Test Files  54 passed (54)
+            Tests  134 passed (134)
+         Duration  3.59s
       ```
-  - [ ] **REFACTOR:** None; startHeartbeat/stopHeartbeat are the minimal pair.
-  - [ ] **Verify REFACTOR:**
+  - [x] **REFACTOR:** None; startHeartbeat/stopHeartbeat are the minimal pair.
+  - [x] **Verify REFACTOR:**
     - Command: `pnpm exec vitest run tests/sse-fanout-heartbeat.test.ts --reporter=verbose`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      (No refactor changes made; state identical to GREEN.)
+       ✓ tests/sse-fanout-heartbeat.test.ts > SseFanout heartbeat > ticks on every attached sink at the configured interval
+       ✓ tests/sse-fanout-heartbeat.test.ts > SseFanout heartbeat > stops ticker when last sink detaches
+       Test Files  1 passed (1)
+            Tests  2 passed (2)
       ```
-  - [ ] **Commit:** `feat(sse-fanout): add application-level heartbeat ticker with attach/detach lifecycle`
+  - [x] **Commit:** `feat(sse-fanout): add application-level heartbeat ticker with attach/detach lifecycle`
     - Staging order: test file BEFORE production file
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `__TASK_2_1_SHA__`
 
 - [ ] 2.2 MCP client end-to-end: receives `notifications/heartbeat`
   - kind: integration-test

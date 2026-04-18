@@ -39,6 +39,13 @@ export function mountMcp(app: FastifyInstance, db: Database.Database, fanout: Ss
             }
             void transport.send(payload).catch(() => { /* no active GET stream yet */ })
           },
+          sendHeartbeat(): void {
+            void transport.send({
+              jsonrpc: '2.0' as const,
+              method: 'notifications/heartbeat',
+              params: {}
+            }).catch(() => { /* no active GET stream yet */ })
+          },
           close(): void { /* transport.onclose handles lifecycle */ }
         }
         fanout.attach(sid, 'default', sink)

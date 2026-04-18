@@ -38,6 +38,7 @@ export async function buildServer(opts: ServerOpts): Promise<FastifyInstance> {
 
   app.addHook('onClose', async () => {
     clearInterval(interval)
+    fanout.stopAll()
     db.close()
   })
   return app
