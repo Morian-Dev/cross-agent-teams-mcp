@@ -68,15 +68,17 @@ describe('agents repo', () => {
     expect(staleRow.online).toBe(false)
   })
 
-  it('role change produces a new agent_id (new identity)', () => {
+  it('role change reuses agent_id and updates role in place (identity is team+name only)', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const repo = new AgentsRepo(db)
     const r1 = repo.register({ model: 'm', role: 'backend', name: 'alice' })
     const r2 = repo.register({ model: 'm', role: 'frontend', name: 'alice' })
-    expect(r2.agent_id).not.toBe(r1.agent_id)
+    expect(r2.agent_id).toBe(r1.agent_id)
     const count = db.prepare('SELECT COUNT(*) AS c FROM agents').get() as { c: number }
-    expect(count.c).toBe(2)
+    expect(count.c).toBe(1)
+    const row = db.prepare('SELECT role FROM agents WHERE agent_id=?').get(r1.agent_id) as { role: string }
+    expect(row.role).toBe('frontend')
     db.close()
   })
 
@@ -96,9 +98,9 @@ describe('agents repo', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const repo = new AgentsRepo(db)
-    expect(repo.findByIdentity({ team: 'default', name: 'alice', role: 'backend' })).toBeUndefined()
+    expect(repo.findByIdentity({ team: 'default', name: 'alice' })).toBeUndefined()
     const r = repo.register({ model: 'm', role: 'backend', name: 'alice' })
-    expect(repo.findByIdentity({ team: 'default', name: 'alice', role: 'backend' })).toEqual({ agent_id: r.agent_id })
+    expect(repo.findByIdentity({ team: 'default', name: 'alice' })).toEqual({ agent_id: r.agent_id })
   })
 })
 

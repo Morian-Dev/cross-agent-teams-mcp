@@ -75,14 +75,14 @@ describe('register_agent idempotency integration', () => {
     expect(row.tmux_pane_id).toBe('%42')
   })
 
-  it('scenario 5: role change produces new agent_id', () => {
+  it('scenario 5: role change from another live session is a collision', () => {
     const { svc, db } = setup()
     const r1 = svc.register({ connection_id: 'c1', model: 'opus', name: 'alice', role: 'backend' })
+    if ('error' in r1) throw new Error('r1 unexpected')
     const r2 = svc.register({ connection_id: 'c2', model: 'opus', name: 'alice', role: 'frontend' })
-    if ('error' in r1 || 'error' in r2) throw new Error('unexpected error')
-    expect(r2.agent_id).not.toBe(r1.agent_id)
+    expect(r2).toEqual({ error: 'agent_id_collision' })
     const count = db.prepare('SELECT COUNT(*) AS c FROM agents').get() as { c: number }
-    expect(count.c).toBe(2)
+    expect(count.c).toBe(1)
   })
 
   it('scenario 6: team change produces new agent_id', () => {

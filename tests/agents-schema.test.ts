@@ -31,16 +31,17 @@ describe('agents schema', () => {
     db.close()
   })
 
-  it('creates agents_identity_idx covering (team, name, role)', () => {
+  it('creates UNIQUE agents_identity_idx covering (team, name)', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db'))
     applySchema(db)
-    const indexes = db.pragma('index_list(agents)') as Array<{ name: string }>
+    const indexes = db.pragma('index_list(agents)') as Array<{ name: string; unique: number }>
     const target = indexes.find(i => i.name === 'agents_identity_idx')
     expect(target).toBeDefined()
+    expect(target?.unique).toBe(1)
     const info = db.pragma(`index_info(agents_identity_idx)`) as Array<{ seqno: number; name: string }>
     const ordered = info.sort((a, b) => a.seqno - b.seqno).map(i => i.name)
-    expect(ordered).toEqual(['team', 'name', 'role'])
+    expect(ordered).toEqual(['team', 'name'])
     db.close()
   })
 })

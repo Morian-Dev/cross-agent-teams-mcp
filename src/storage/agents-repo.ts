@@ -24,31 +24,29 @@ export const ONLINE_MS = 5 * 60 * 1000
 export class AgentsRepo {
   constructor(private db: Database.Database) {}
 
-  findByIdentity(args: { team: string; name: string; role: string }): { agent_id: string } | undefined {
+  findByIdentity(args: { team: string; name: string }): { agent_id: string } | undefined {
     return this.db.prepare(
-      `SELECT agent_id FROM agents WHERE team=? AND name=? AND role=?`
-    ).get(args.team, args.name, args.role) as { agent_id: string } | undefined
+      `SELECT agent_id FROM agents WHERE team=? AND name=?`
+    ).get(args.team, args.name) as { agent_id: string } | undefined
   }
 
   register(input: RegisterInput): { agent_id: string; team: string } {
     const team = input.team ?? 'default'
     const role = input.role ?? 'default'
     const name = input.name
-    const existing = this.findByIdentity({ team, name, role })
-    const agent_id = existing?.agent_id ?? randomUUID()
     const now = new Date().toISOString()
+    const newId = randomUUID()
     this.db.prepare(
       `INSERT INTO agents (agent_id, team, role, name, model, registered_at, last_seen_at, tmux_pane_id)
-       VALUES (?,?,?,?,?,?,?,?)
-       ON CONFLICT(agent_id) DO UPDATE SET
-         team=excluded.team,
-         role=excluded.role,
-         name=excluded.name,
-         model=excluded.model,
-         last_seen_at=excluded.last_seen_at,
-         tmux_pane_id=COALESCE(excluded.tmux_pane_id, agents.tmux_pane_id)`
-    ).run(agent_id, team, role, name, input.model, now, now, input.tmux_pane_id ?? null)
-    return { agent_id, team }
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (team, name) DO UPDATE SET
+         role = excluded.role,
+         model = excluded.model,
+         last_seen_at = excluded.last_seen_at,
+         tmux_pane_id = COALESCE(excluded.tmux_pane_id, tmux_pane_id)`
+    ).run(newId, team, role, name, input.model, now, now, input.tmux_pane_id ?? null)
+    const row = this.db.prepare(`SELECT agent_id FROM agents WHERE team=? AND name=?`).get(team, name) as { agent_id: string }
+    return { agent_id: row.agent_id, team }
   }
 
   list(args: { team: string }): AgentListRow[] {
