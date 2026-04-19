@@ -853,7 +853,7 @@
     - Staging order: test before code
     - **Commit SHA (fill during apply):** `12ab4fe6a9a9745a75602d29463e3d7d7b061944`
 
-- [ ] 3.2 send_message same-team 1→1 writes with `from_team=to_team=caller.team`
+- [x] 3.2 send_message same-team 1→1 writes with `from_team=to_team=caller.team`
   - kind: unit-test
   - **Spec scenario(s):**
     - `mailbox/spec.md` → Scenario: `Sending a same-team message creates paired rows with equal team fields`
@@ -862,7 +862,7 @@
   - **Files:**
     - Modify: `tests/send-message-direct.test.ts`
     - Modify: `src/mcp/send-message.ts`
-  - [ ] **RED:** Update `tests/send-message-direct.test.ts` to assert the `messages` row has `from_team` + `to_team` both equal to the caller's team, and that the paired `events` row matches.  Add a scenario where `to_agent_id` lives in a different team (with caller omitting `to_team`) → expect `unknown_recipient`.
+  - [x] **RED:** Update `tests/send-message-direct.test.ts` to assert the `messages` row has `from_team` + `to_team` both equal to the caller's team, and that the paired `events` row matches.  Add a scenario where `to_agent_id` lives in a different team (with caller omitting `to_team`) → expect `unknown_recipient`.
     ```typescript
     it('same-team send writes from_team=to_team=caller.team, paired events row matches', async () => {
       const { svc, db, cleanup } = setupService()
@@ -890,11 +890,40 @@
       cleanup()
     })
     ```
-  - [ ] **Verify RED:** Run, confirm failures.
+  - [x] **Verify RED:** Run, confirm failures.
     - Command: `npx vitest run tests/send-message-direct.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ❯ tests/send-message-direct.test.ts (4 tests | 1 failed) 13ms
+         × send_message direct > returns unknown_recipient when to_agent_id belongs to another team and to_team is omitted 4ms
+           → expected { …(6) } to deeply equal { error: 'unknown_recipient' }
+
+      ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+       FAIL  tests/send-message-direct.test.ts > send_message direct > returns unknown_recipient when to_agent_id belongs to another team and to_team is omitted
+      AssertionError: expected { …(6) } to deeply equal { error: 'unknown_recipient' }
+
+      - Expected
+      + Received
+
+        Object {
+      -   "error": "unknown_recipient",
+      +   "event_id": 1,
+      +   "message_id": "9cf3c1da-b5d6-4d02-8fe2-a90f1543e9db",
+      +   "poked": false,
+      +   "recipients": Array [
+      +     "B",
+      +   ],
+      +   "retry_scheduled": false,
+      +   "sent_at": "2026-04-19T06:06:01.480Z",
+        }
+
+       Test Files  1 failed (1)
+            Tests  1 failed | 3 passed (4)
+
+      Note: RED was forced via genuine code mutation — the original `SELECT ... WHERE agent_id=? AND team=?` query (which filtered at SQL level) was reduced to `WHERE agent_id=?` alone without yet adding the explicit `rcpt.team !== toTeam` check.  Under the mutation, cross-team sends succeed (wrong).  GREEN restores the invariant by adding the explicit team-equality check, matching the spec's "look up by agent_id alone then verify team" pattern.
       ```
   - [ ] **GREEN:** Rewrite `SendMessageService.send` in `src/mcp/send-message.ts` to:
     1.  Resolve `to_team = input.to_team ?? fromRow.team`
@@ -920,23 +949,42 @@
     }
     ```
     Also rewrite the private `insert` method to take `from_team` + `to_team` and write both columns to `messages` and via `events.append`.
-  - [ ] **Verify GREEN:** Targeted test file green.
+  - [x] **GREEN:** Restored lookup to agent_id-only and added explicit `rcpt.team !== toTeam` check in `src/mcp/send-message.ts`. The `events.append` + `INSERT INTO messages` already wrote `from_team` + `to_team` (done in task 3.1).
+  - [x] **Verify GREEN:** Targeted test file green.
     - Command: `npx vitest run tests/send-message-direct.test.ts`
     - Full-suite command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ✓ tests/send-message-direct.test.ts (4 tests) 8ms
+
+       Test Files  1 passed (1)
+            Tests  4 passed (4)
       ```
-  - [ ] **REFACTOR:** Drop the now-unused `to_role` branching code + the `recipientRows = rows` fan-out path.  Remove the imports for `ONLINE_MS` (no longer referenced in same-team path).
-  - [ ] **Verify REFACTOR:** Full suite (send-role-broadcast still fails).
+  - [x] **REFACTOR:** Collapsed the vestigial `recipientRows`/`for (let i ...)` fan-out loop in `SendMessageService.insert` to a single 1→1 insert (`args: { ..., toAgentId: string, ... }`, single `INSERT` + `randomUUID()`). Confirmed grep: no `to_role` branching in `src/mcp/send-message.ts` (only the NULL literal passed to the legacy column, which the schema still carries). `ONLINE_MS` is not imported. `SendInput` lacks `to_role`.
+  - [x] **Verify REFACTOR:** Full suite (send-role-broadcast still fails; same-team / broadcast task fallout expected).
     - Command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       Test Files  4 failed | 70 passed (74)
+            Tests  4 failed | 224 passed (228)
+         Duration  10.15s
+
+      This task's suite (PASS):
+        - tests/send-message-direct.test.ts  (4 tests passed — 3.2 RED/GREEN/REFACTOR)
+
+      Remaining failing suites (pre-flagged by 3.1 REFACTOR block, to be fixed by 3.3 / 3.4 / 4.x / messages-schema task):
+        - tests/fanout-skip-offline.test.ts  (to_role fan-out — retired by 3.3)
+        - tests/messages-schema.test.ts      (asserts legacy `team` column; now from_team+to_team — messages-schema task)
+        - tests/send-message-auto-poke.test.ts (to_role fan-out path — 3.3 / 3.4)
+        - tests/send-role-broadcast.test.ts  (to_role fan-out — 3.3 / 4.x)
+
+      Net delta: send-message-direct transitions from 2 pre-existing legacy fails (tasks 3.1 REFACTOR block) → all 4 tests GREEN.  Remaining 4 failures are exactly the items 3.1's REFACTOR block flagged.
       ```
-  - [ ] **Commit:** `refactor(send-message): 1→1 only, write from_team+to_team`
+  - [x] **Commit:** `refactor(send-message): 1→1 only, write from_team+to_team`
     - Staging order: test before code
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `fafbd17932eb3ae18448a1e666bbf0c794f67a6f`
 
 - [ ] 3.3 send_message supports cross-team delivery via explicit `to_team`
   - kind: unit-test
