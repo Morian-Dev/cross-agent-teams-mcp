@@ -21,7 +21,7 @@ export class PendingContractEventsService {
     const since = args.since_event_id ?? 0
     const rows = this.db.prepare(
       `SELECT event_id, payload, created_at FROM events
-         WHERE team=? AND event_type='contract_registered' AND event_id > ?
+         WHERE to_team=? AND event_type='contract_registered' AND event_id > ?
          ORDER BY event_id ASC LIMIT ?`
     ).all(caller.team, since, limit + 1) as Array<{ event_id: number; payload: string; created_at: string }>
     const has_more = rows.length > limit

@@ -111,18 +111,19 @@ export class SendMessageService {
   }): { message_id: string; event_id: number; recipients: string[]; sent_at: string } {
     const tx = this.db.transaction(() => {
       const event_id = this.events.append({
-        team: args.team, event_type: 'message_sent', actor_agent_id: args.from,
+        from_team: args.team, to_team: args.team,
+        event_type: 'message_sent', actor_agent_id: args.from,
         payload: { to_role: args.to_role, recipients: args.recipients, subject: args.input.subject ?? null }
       })
       const sent_at = new Date().toISOString()
       const baseId = randomUUID()
       const insert = this.db.prepare(
-        `INSERT INTO messages (id, event_id, team, from_agent_id, to_agent_id, to_role, subject, body, sent_at)
-         VALUES (?,?,?,?,?,?,?,?,?)`
+        `INSERT INTO messages (id, event_id, from_team, to_team, from_agent_id, to_agent_id, to_role, subject, body, sent_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`
       )
       for (let i = 0; i < args.recipients.length; i++) {
         const id = i === 0 ? baseId : `${baseId}-${i}`
-        insert.run(id, event_id, args.team, args.from,
+        insert.run(id, event_id, args.team, args.team, args.from,
           args.recipients[i],
           args.to_role, args.input.subject ?? null, args.input.body, sent_at)
       }

@@ -24,7 +24,8 @@ export class TaskAddService {
          VALUES (?,?,?,?, 'pending', ?, ?)`
       ).run(id, caller.team, args.title, args.description ?? null, depends_on, created_at)
       this.events.append({
-        team: caller.team,
+        from_team: caller.team,
+        to_team: caller.team,
         event_type: 'task_added',
         actor_agent_id: args.caller,
         payload: { task_id: id, title: args.title }

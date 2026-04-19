@@ -45,7 +45,8 @@ export class TaskClaimService {
       return { error: 'already_claimed', owner: post?.claimed_by ?? '' }
     }
     this.events.append({
-      team: caller.team, event_type: 'task_claimed', actor_agent_id: args.caller,
+      from_team: caller.team, to_team: caller.team,
+      event_type: 'task_claimed', actor_agent_id: args.caller,
       payload: { task_id: args.task_id }
     })
     return { ok: true }

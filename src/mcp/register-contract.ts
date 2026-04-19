@@ -44,7 +44,8 @@ export class RegisterContractService {
       let diff: ContractDiff | undefined
       if (prev) diff = diffSchema(JSON.parse(prev.schema), args.schema as any)
       const event_id = this.events.append({
-        team: caller.team,
+        from_team: caller.team,
+        to_team: caller.team,
         event_type: 'contract_registered',
         actor_agent_id: args.caller,
         payload: { name: args.name, version, diff: diff ?? null }

@@ -27,7 +27,8 @@ export class TaskCompleteService {
     ).run(new Date().toISOString(), args.result ?? null, args.task_id, caller.team, args.caller)
     if (upd.changes !== 1) return { error: 'invalid_status' }
     this.events.append({
-      team: caller.team, event_type: 'task_completed', actor_agent_id: args.caller,
+      from_team: caller.team, to_team: caller.team,
+      event_type: 'task_completed', actor_agent_id: args.caller,
       payload: { task_id: args.task_id, result: args.result ?? null }
     })
     return { ok: true }

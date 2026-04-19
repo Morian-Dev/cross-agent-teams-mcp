@@ -35,7 +35,7 @@ export class GetInboxService {
               a.role as from_role
          FROM messages m
          LEFT JOIN agents a ON a.agent_id = m.from_agent_id
-        WHERE m.team = ?
+        WHERE m.to_team = ?
           AND m.event_id > ?
           AND ( m.to_agent_id = ? OR (m.to_role IS NOT NULL AND m.to_role = ?) )
         ORDER BY m.event_id ASC
