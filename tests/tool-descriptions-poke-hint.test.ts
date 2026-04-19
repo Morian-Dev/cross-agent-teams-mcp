@@ -183,4 +183,34 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     const d = tool!.description!
     expect(d).toMatch(/offline|5 min|idle/i)
   })
+
+  it('send_message description mentions broadcast/broadcast_to_role and cross-team constraint', async () => {
+    const tools = await listTools()
+    const d = tools.find(t => t.name === 'send_message')!.description!
+    expect(d).toMatch(/broadcast_to_role/)
+    expect(d).toMatch(/broadcast\b/)
+    expect(d).toMatch(/to_team/)
+    expect(d).toMatch(/明确指定|explicit|explicitly/i)
+    expect(d).toMatch(/短.*提醒|wake-up hint|SHORT/i)
+    expect(d).toMatch(/get_inbox/)
+  })
+
+  it('broadcast description states same-team scope and points at broadcast_to_role', async () => {
+    const tools = await listTools()
+    const d = tools.find(t => t.name === 'broadcast')!.description!
+    expect(d).toMatch(/same[- ]?team|同.*team|team[- ]wide/i)
+    expect(d).toMatch(/broadcast_to_role/)
+    expect(d).toMatch(/auto_poke/)
+    expect(d).toMatch(/get_inbox/)
+  })
+
+  it('broadcast_to_role description states same-team constraint and references send_message for cross-team', async () => {
+    const tools = await listTools()
+    const d = tools.find(t => t.name === 'broadcast_to_role')!.description!
+    expect(d).toMatch(/same[- ]?team|同.*team/i)
+    expect(d).toMatch(/send_message/)
+    expect(d).toMatch(/to_team/)
+    expect(d).toMatch(/auto_poke/)
+    expect(d).toMatch(/get_inbox/)
+  })
 })

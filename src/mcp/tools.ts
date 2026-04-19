@@ -29,6 +29,30 @@ function toText(value: unknown): TextContent {
   return { content: [{ type: 'text', text: JSON.stringify(value) }] }
 }
 
+const SEND_MESSAGE_DESC = [
+  'Private 1→1 message to another agent.  By default auto-poke=true with quiet-guard (auto_poke:false opts out).',
+  'For multi-recipient use broadcast (same-team) or broadcast_to_role (same-team, by role).',
+  '除非用户明确指定 to_team, 不要跨 team 沟通 (explicitly set to_team only when user asks).',
+  'Reports poked, poke_skip_reasons (no_pane, guard_failed, tmux_unavailable, self); on guard_failed daemon retries at 30s/180s/600s (retry_scheduled, retry_delays_s); stops early on poked.',
+  'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender>, 请调 get_inbox 查看), NOT the body — read bodies via get_inbox.',
+  'to_agent_id sends are NOT filtered by online/idle — offline targets still receive the mailbox row.'
+].join(' ')
+
+const BROADCAST_DESC = [
+  'Same-team broadcast to every other agent in the caller team.',
+  'Auto-poke default true (quiet-guard + 30s/180s/600s retry; reports poked, poke_skip_reasons, retry_scheduled, retry_delays_s).  auto_poke:false opts out.',
+  'For role filter use broadcast_to_role.  For cross-team 1→1 use send_message({to_team}).',
+  'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender>, 请调 get_inbox 查看) — never the body.  Read via get_inbox.',
+  'Skips agents idle > 5 min (offline).'
+].join(' ')
+
+const BROADCAST_TO_ROLE_DESC = [
+  'Same-team broadcast filtered by role.  Strictly same-team — no cross-team variant.',
+  'For cross-team private 1→1 use send_message({to_team}).',
+  'Auto-poke default true with quiet-guard + 30s/180s/600s retry (auto_poke:false opts out); injects only a SHORT wake-up hint, not the message body.  Recipients read via get_inbox.',
+  'Returns unknown_recipient when no same-team agent matches to_role.'
+].join(' ')
+
 export function buildAutoPokeHint(
   row: { name?: string | null } | undefined,
   fromAgentId: string
@@ -203,21 +227,7 @@ export function registerBusinessTools(
     'send_message',
     {
       title: 'Send message',
-      description: [
-        'Sends a direct 1→1 message.  By default the tool also wakes the recipient\'s',
-        'tmux pane via a quiet-guard poke (auto_poke=true): it watches the pane tail for ~2s, and',
-        'only fires the poke when the pane has been idle; if the pane is active, the message is',
-        'still persisted to the mailbox and the skip is reported.  Pass auto_poke:false if the',
-        'recipient should only see it on their next `get_inbox`.  The response reports',
-        'poked:true/false and, when applicable, poke_skip_reasons per recipient (reasons include',
-        'no_pane, guard_failed, tmux_unavailable, self).  When the quiet-guard reports guard_failed,',
-        'the daemon schedules 3 background retries with backoff (30s / 3min / 10min); retries stop',
-        'early if the recipient comes online.  Response fields retry_scheduled:bool and',
-        'retry_delays_s:[30,180,600] indicate the backoff schedule.',
-        'Auto-poke injects ONLY a SHORT wake-up hint (format: `新邮件 from {sender}, 请调 get_inbox 查看`).',
-        "The message body is never injected into the recipient's pane — callers retrieve bodies via `get_inbox`.",
-        'to_agent_id direct sends are NOT filtered by online status — offline targets still receive the mailbox row and rely on offline delivery on next get_inbox.'
-      ].join(' '),
+      description: SEND_MESSAGE_DESC,
       inputSchema: z.object({
         to_agent_id: z.string().min(1),
         to_team: z.string().min(1).optional(),
@@ -238,20 +248,7 @@ export function registerBusinessTools(
     'broadcast',
     {
       title: 'Broadcast message',
-      description: [
-        'Broadcasts to all other agents in the team.  Auto-pokes every eligible recipient by',
-        'default (per-pane parallel quiet-guard checks idleness; only idle panes are poked); the',
-        'message is always persisted to every recipient\'s mailbox regardless.  Pass',
-        'auto_poke:false to opt out and deliver pure mailbox without any tmux side-effect.',
-        'Response includes poked and poke_skip_reasons (reasons: no_pane, guard_failed,',
-        'tmux_unavailable, self), and — when guard_failed recipients are queued —',
-        'retry_scheduled:bool plus retry_delays_s:[30,180,600] indicating the 3-attempt',
-        'background backoff (30s / 3min / 10min); retries stop early if the recipient comes',
-        'online.',
-        'Auto-poke injects ONLY a SHORT wake-up hint (format: `新邮件 from {sender}, 请调 get_inbox 查看`).',
-        "The message body is never injected into the recipient's pane — callers retrieve bodies via `get_inbox`.",
-        'Online filter: broadcast skips agents whose last_seen_at is older than 5 min (idle > 5 min = offline); such recipients are excluded from both the mailbox fan-out and auto-poke.'
-      ].join(' '),
+      description: BROADCAST_DESC,
       inputSchema: {
         subject: z.string().optional(),
         body: z.string(),
@@ -270,15 +267,7 @@ export function registerBusinessTools(
     'broadcast_to_role',
     {
       title: 'Broadcast to role',
-      description: [
-        'Same-team broadcast filtered by role: fans out to every other agent in the caller\'s team',
-        'whose `role` equals `to_role`.  Never cross-team — cross-team delivery is private 1→1 only',
-        'via `send_message({to_team})`.  Auto-poke is default true with per-pane quiet-guard +',
-        'retry schedule 30s / 180s / 600s; retries stop early once the recipient comes online.',
-        'Auto-poke injects ONLY a SHORT wake-up hint (format: `新邮件 from {sender}, 请调 get_inbox 查看`).',
-        "The message body is never injected into the recipient's pane — callers retrieve bodies via `get_inbox`.",
-        'Returns unknown_recipient when no same-team agent matches `to_role`.'
-      ].join(' '),
+      description: BROADCAST_TO_ROLE_DESC,
       inputSchema: z.object({
         to_role: z.string().min(1),
         subject: z.string().optional(),
