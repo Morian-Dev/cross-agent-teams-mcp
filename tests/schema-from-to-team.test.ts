@@ -59,4 +59,13 @@ describe('events + messages schema uses from_team and to_team', () => {
         .run('x', null, '{}', new Date().toISOString())
     }).toThrow(/NOT NULL constraint failed/)
   })
+
+  it('messages.event_id has foreign key reference to events.event_id', () => {
+    const db = freshDb()
+    const fks = db.prepare(`PRAGMA foreign_key_list('messages')`).all() as
+      Array<{ table: string; from: string; to: string }>
+    const evFk = fks.find(f => f.table === 'events' && f.from === 'event_id')
+    expect(evFk).toBeTruthy()
+    expect(evFk!.to).toBe('event_id')
+  })
 })
