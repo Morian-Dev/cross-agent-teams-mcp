@@ -11,10 +11,10 @@ function seedAgedEvents(dbPath: string, count: number, daysOld: number): void {
   const db = new Database(dbPath)
   const ts = new Date(Date.now() - daysOld * 86400 * 1000).toISOString()
   const stmt = db.prepare(
-    'INSERT INTO events (team, event_type, actor_agent_id, payload, created_at) VALUES (?,?,?,?,?)'
+    'INSERT INTO events (from_team, to_team, event_type, actor_agent_id, payload, created_at) VALUES (?,?,?,?,?,?)'
   )
   const tx = db.transaction(() => {
-    for (let i = 0; i < count; i++) stmt.run('default', 'message_sent', null, '{}', ts)
+    for (let i = 0; i < count; i++) stmt.run('default', 'default', 'message_sent', null, '{}', ts)
   })
   tx()
   db.close()

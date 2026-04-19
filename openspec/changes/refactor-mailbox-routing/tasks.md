@@ -496,7 +496,7 @@
   - **Files:**
     - Modify: `tests/events-cleanup.test.ts`
     - Modify: `src/daemon/events-cleanup.ts` (or wherever cleanup lives)
-  - [ ] **RED:** Extend `tests/events-cleanup.test.ts` with a cross-team scenario:
+  - [x] **RED:** Extend `tests/events-cleanup.test.ts` with a cross-team scenario:
     - Behavior under test: event with `from_team='alpha', to_team='beta'`, older than 7 days, is preserved as long as team `beta` has an online agent whose cursor is below that event_id.
     - Expected failure reason: current cleanup code queries agents by the single `team` field against `events.team`, which no longer matches.
     ```typescript
@@ -518,13 +518,37 @@
       expect(row).toBeTruthy()
     })
     ```
-  - [ ] **Verify RED:** Run the new cross-team retention test, confirm it fails (cleanup likely deletes because it queries `team` column that no longer exists, or groups by wrong field).
+  - [x] **Verify RED:** Run the new cross-team retention test, confirm it fails (cleanup likely deletes because it queries `team` column that no longer exists, or groups by wrong field).
     - Command: `npx vitest run tests/events-cleanup.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ❯ tests/events-cleanup.test.ts (5 tests | 1 failed) 18ms
+         × events cleanup > deletes cross-team event once to_team cursor advances, regardless of other teams 4ms
+           → expected { event_id: 1 } to be falsy
+
+      ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+       FAIL  tests/events-cleanup.test.ts > events cleanup > deletes cross-team event once to_team cursor advances, regardless of other teams
+      AssertionError: expected { event_id: 1 } to be falsy
+
+      - Expected:
+      false
+
+      + Received:
+      Object {
+        "event_id": 1,
+      }
+
+       ❯ tests/events-cleanup.test.ts:96:17
+
+       Test Files  1 failed (1)
+            Tests  1 failed | 4 passed (5)
+
+      Note: RED driven by the deletion-differentiating cross-team scenario. Current global-MIN cleanup over-retains beta-targeted events because alpha's low cursor drags the global floor down. The retention-scenario test (cross-team event retained by to_team cursor) already passes under global-MIN (which is strictly more conservative); the added deletion test forces true per-team grouping. Pre-1.4 baseline also showed RED from `INSERT INTO events (team, ...)` in existing tests; the seeder was updated to `from_team, to_team` first.
       ```
-  - [ ] **GREEN:** Rewrite the cleanup SQL to group by `to_team`. For each distinct `to_team`:
+  - [x] **GREEN:** Rewrite the cleanup SQL to group by `to_team`. For each distinct `to_team`:
     ```typescript
     // src/daemon/events-cleanup.ts — pseudocode of the key SQL
     const minCursorPerTeam = db.prepare(`
@@ -546,19 +570,39 @@
     `).run({ ageCutoff: nowMinus7Days })
     ```
     (Full rewrite is done in the actual file; the snippet shows the core logic.)
-  - [ ] **Verify GREEN:** Run all cleanup tests.
+  - [x] **Verify GREEN:** Run all cleanup tests.
     - Command: `npx vitest run tests/events-cleanup.test.ts`
     - Full-suite command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ✓ tests/events-cleanup.test.ts (5 tests) 13ms
+
+       Test Files  1 passed (1)
+            Tests  5 passed (5)
+
+      Full-suite `pnpm test`:
+       Test Files  1 failed | 72 passed (73)
+            Tests  1 failed | 223 passed (224)
+
+      Remaining failure (pre-existing, later-task scope): tests/messages-schema.test.ts asserts legacy `messages.team` column — flagged by task 1.4 REFACTOR note as "later messages task". cleanup-interval.test.ts now passes (seeder updated to from_team+to_team in this task).
       ```
-  - [ ] **REFACTOR:** Extract the "online cursor per team" subquery to a named constant if inlined repetition exceeds once. Verify no regression in the "ancient contracts survive cleanup" scenario.
-  - [ ] **Verify REFACTOR:** Re-run file.
+  - [x] **REFACTOR:** Extract the "online cursor per team" subquery to a named constant if inlined repetition exceeds once. Verify no regression in the "ancient contracts survive cleanup" scenario.
+  - [x] **Verify REFACTOR:** Re-run file.
     - Command: `npx vitest run tests/events-cleanup.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ✓ tests/events-cleanup.test.ts (5 tests) 14ms
+       ✓ tests/cleanup-interval.test.ts (1 test) 1021ms
+         ✓ cleanup interval > runs runCleanup on the provided cadence and stops on close 1021ms
+
+       Test Files  2 passed (2)
+            Tests  6 passed (6)
+
+      Note: REFACTOR collapsed the two inlined subqueries into a single `WITH online_cursor AS (...)` CTE, so the :cutoffOnline parameter is bound once. "ancient contracts survive cleanup" still passes (contracts table is never touched).
       ```
   - [ ] **Commit:** `refactor(events-cleanup): group online cursor by to_team`
     - Staging order: test before code
