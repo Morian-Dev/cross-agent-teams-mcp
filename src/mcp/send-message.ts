@@ -58,6 +58,7 @@ export class SendMessageService {
   async send(input: SendInput): Promise<SendResult> {
     const hasId = typeof input.to_agent_id === 'string' && input.to_agent_id.length > 0
     const hasName = typeof input.to_agent_name === 'string' && input.to_agent_name.length > 0
+    if (!hasId && !hasName) return { error: 'missing_recipient' }
     if (hasId && hasName) return { error: 'ambiguous_recipient' }
     const fromRow = this.agents.findById(input.from)
     if (!fromRow) return { error: 'unknown_recipient' }
@@ -67,12 +68,10 @@ export class SendMessageService {
     let resolvedId: string
     if (hasId) {
       resolvedId = input.to_agent_id!
-    } else if (hasName) {
+    } else {
       const hit = this.agents.findByIdentity({ team: toTeam, name: input.to_agent_name! })
       if (!hit) return { error: 'unknown_recipient' }
       resolvedId = hit.agent_id
-    } else {
-      return { error: 'unknown_recipient' }
     }
 
     const rcpt = this.db.prepare('SELECT agent_id, team, tmux_pane_id FROM agents WHERE agent_id=?')

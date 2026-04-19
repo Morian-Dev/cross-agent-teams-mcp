@@ -35,6 +35,15 @@ describe('send_message by name — same-team resolution', () => {
     expect(m.body).toBe('hi')
   })
 
+  it('returns missing_recipient when neither to_agent_id nor to_agent_name given', async () => {
+    const { svc, db } = setup()
+    insertAgent(db, { agent_id: 'uuid-A', team: 'default', role: 'backend', name: 'alice' })
+    const resp = await svc.send({ from: 'uuid-A', body: 'hi', auto_poke: false } as unknown as Parameters<typeof svc.send>[0])
+    expect(resp).toEqual({ error: 'missing_recipient' })
+    const count = db.prepare(`SELECT COUNT(*) AS c FROM events`).get() as { c: number }
+    expect(count.c).toBe(0)
+  })
+
   it('returns ambiguous_recipient when both to_agent_id and to_agent_name given', async () => {
     const { svc, db } = setup()
     insertAgent(db, { agent_id: 'uuid-A', team: 'default', role: 'backend', name: 'alice' })
