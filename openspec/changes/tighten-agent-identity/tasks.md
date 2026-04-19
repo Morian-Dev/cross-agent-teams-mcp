@@ -395,7 +395,7 @@
 
 ## 2. MCP layer
 
-- [ ] 2.1 Narrow `RegisterAgentService.identityKey` to `(team, name)` and assert cross-role collision
+- [x] 2.1 Narrow `RegisterAgentService.identityKey` to `(team, name)` and assert cross-role collision
   - kind: unit-test
   - **Spec scenario(s):**
     - `agent-registry/spec.md` → Scenario: `Same (team, name) claimed by a different role from another live session is a collision`
@@ -405,7 +405,7 @@
   - **Files:**
     - Create: `tests/register-service-identity-collision.test.ts`
     - Modify: `src/mcp/register-agent.ts`
-  - [ ] **RED:** Write failing test — `tests/register-service-identity-collision.test.ts`
+  - [x] **RED:** Write failing test — `tests/register-service-identity-collision.test.ts`
     - Behavior under test: session X registers `(default, alice, backend)`; session Y attempts `(default, alice, frontend)` → expects `{error:'agent_id_collision'}`. After Y is released via `releaseConnection`, session Z can register `(default, alice, frontend)` and receives the same agent_id as the original registration.
     - Expected failure reason: current `identityKey(team, name, role)` at `src/mcp/register-agent.ts:17` uses all three; session Y with different role gets a different key, so the existing binding check at line 32 doesn't trigger — Y proceeds to upsert via AgentsRepo and ends up either succeeding or colliding at DB layer (after 1.1 lands UNIQUE). Neither path returns `agent_id_collision` at the service level as the spec requires.
     ```typescript
@@ -458,13 +458,35 @@
       })
     })
     ```
-  - [ ] **Verify RED:** Run the test, confirm at least the "cross-session different role → collision" case fails.
+  - [x] **Verify RED:** Run the test, confirm at least the "cross-session different role → collision" case fails.
     - Command: `npx vitest run tests/register-service-identity-collision.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ❯ tests/register-service-identity-collision.test.ts (3 tests | 1 failed) 9ms
+         × RegisterAgentService identity is (team, name) > second session with same (team, name) different role gets agent_id_collision 7ms
+           → expected { …(2) } to deeply equal { error: 'agent_id_collision' }
+
+      ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+       FAIL  tests/register-service-identity-collision.test.ts > RegisterAgentService identity is (team, name) > second session with same (team, name) different role gets agent_id_collision
+      AssertionError: expected { …(2) } to deeply equal { error: 'agent_id_collision' }
+
+      - Expected
+      + Received
+
+        Object {
+      -   "error": "agent_id_collision",
+      +   "agent_id": "0340c9cd-ce13-4ed4-acda-91e4dcefb684",
+      +   "team": "default",
+        }
+
+       Test Files  1 failed (1)
+            Tests  1 failed | 2 passed (3)
+         Duration  139ms
       ```
-  - [ ] **GREEN:** Rewrite identityKey in `src/mcp/register-agent.ts`
+  - [x] **GREEN:** Rewrite identityKey in `src/mcp/register-agent.ts`
     ```typescript
     // src/mcp/register-agent.ts — replace identityKey function:
     function identityKey(team: string, name: string): string {
@@ -478,23 +500,45 @@
     //
     // The rest of the method (connections Map check, delegation to this.repo.register) is unchanged.
     ```
-  - [ ] **Verify GREEN:** Targeted test + full suite.
+  - [x] **Verify GREEN:** Targeted test + full suite.
     - Command: `npx vitest run tests/register-service-identity-collision.test.ts`
     - Full-suite command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ✓ tests/register-service-identity-collision.test.ts (3 tests) 6ms
+
+       Test Files  1 passed (1)
+            Tests  3 passed (3)
+         Duration  135ms
       ```
-  - [ ] **REFACTOR:** Review `tests/agent-id-collision.test.ts` and `tests/agent-id-collision-auth-hash.test.ts` for any lingering assertion that assumed three-tuple keying. Update or delete as needed. Grep for `identityKey(` in `src/` and confirm every call passes only `(team, name)`.
-  - [ ] **Verify REFACTOR:** Full suite.
+  - [x] **REFACTOR:** Review `tests/agent-id-collision.test.ts` and `tests/agent-id-collision-auth-hash.test.ts` for any lingering assertion that assumed three-tuple keying. Update or delete as needed. Grep for `identityKey(` in `src/` and confirm every call passes only `(team, name)`.
+    - Grep confirmed only two call sites in `src/mcp/register-agent.ts` — both 2-arg after GREEN edit.
+    - `tests/agent-id-collision.test.ts` and `tests/agent-id-collision-auth-hash.test.ts` test Authorization-hash collision semantics on (team, name) identity (all assertions reuse same name, team); no three-tuple assumptions present. No edits needed.
+    - `tests/register-agent-idempotency.test.ts` scenario 5 (migrated by task 1.2 to expect `{error:'agent_id_collision'}`) now PASSES — confirmed via `npx vitest run tests/register-agent-idempotency.test.ts` (7/7 passing).
+  - [x] **Verify REFACTOR:** Full suite.
     - Command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       Test Files  3 failed | 75 passed (78)
+            Tests  4 failed | 249 passed (253)
+         Duration  9.37s
+
+      Remaining failing suites (all pre-existing, OUT OF SCOPE for task 2.1):
+      - tests/poke-e2e.test.ts (2 tests) — pre-existing self_poke_denied regressions, unrelated
+      - tests/poke-tmux-unavailable.test.ts (1 test) — pre-existing self_poke_denied, unrelated
+      - tests/poke-validation.test.ts (1 test) — pre-existing self_poke_denied, unrelated
+
+      Compared to pre-2.1 baseline (4 suites failing / 5 tests failing): the
+      register-agent-idempotency.test.ts scenario 5 (migrated by task 1.2 to expect
+      `{error:'agent_id_collision'}`) is now resolved by this task's identityKey narrowing.
+      All identity-related failures are now resolved. The 3 remaining poke-* failures are
+      pre-existing and unrelated to identity.
       ```
-  - [ ] **Commit:** `refactor(register-agent): narrow identityKey to (team, name) and collide cross-role`
+  - [x] **Commit:** `refactor(register-agent): narrow identityKey to (team, name) and collide cross-role`
     - Staging order: test file BEFORE production file
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `aaf1b7cc185da16b4efd8b72833cc04de30685b0`
 
 ## 3. Documentation sync
 
