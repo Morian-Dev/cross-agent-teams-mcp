@@ -23,7 +23,7 @@ const DDL = [
     last_processed_event_id INTEGER NOT NULL DEFAULT 0,
     tmux_pane_id TEXT
   )`,
-  `CREATE INDEX IF NOT EXISTS agents_identity_idx ON agents(team, name, role)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS agents_identity_idx ON agents(team, name)`,
   `CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY,
     event_id INTEGER NOT NULL REFERENCES events(event_id),
