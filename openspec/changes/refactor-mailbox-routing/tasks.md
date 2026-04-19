@@ -1756,7 +1756,7 @@
 
 ## 5. get_inbox
 
-- [ ] 5.1 `get_inbox` filters by `to_team = caller.team`, accepting cross-team inbound messages
+- [x] 5.1 `get_inbox` filters by `to_team = caller.team`, accepting cross-team inbound messages
   - kind: unit-test
   - **Spec scenario(s):**
     - `mailbox/spec.md` → Scenario: `Initial inbox with default cursor`
@@ -1766,7 +1766,7 @@
   - **Files:**
     - Modify: `tests/get-inbox.test.ts`
     - Modify: `src/mcp/get-inbox.ts`
-  - [ ] **RED:** Add cross-team inbox scenario to `tests/get-inbox.test.ts`:
+  - [x] **RED:** Add cross-team inbox scenario to `tests/get-inbox.test.ts`:
     ```typescript
     it('returns cross-team inbound messages by to_team filter', async () => {
       const { svc, db, cleanup } = setupInbox()
@@ -1808,13 +1808,41 @@
       cleanup()
     })
     ```
-  - [ ] **Verify RED:** Test fails because current `get-inbox` query uses `messages.team` (no longer exists).
+  - [x] **Verify RED:** Test fails because current `get-inbox` query uses `messages.team` (no longer exists).
     - Command: `npx vitest run tests/get-inbox.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ❯ tests/get-inbox.test.ts (5 tests | 1 failed) 19ms
+         × get_inbox > returns cross-team inbound messages by to_team filter 4ms
+           → expected undefined to be 'alpha' // Object.is equality
+
+      ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+       FAIL  tests/get-inbox.test.ts > get_inbox > returns cross-team inbound messages by to_team filter
+      AssertionError: expected undefined to be 'alpha' // Object.is equality
+
+      - Expected:
+      "alpha"
+
+      + Received:
+      undefined
+
+       ❯ tests/get-inbox.test.ts:78:40
+           76|     const resp = await svc.get({ caller: 'B', since_event_id: 0, limit…
+           77|     expect(resp.messages).toHaveLength(1)
+           78|     expect(resp.messages[0].from_team).toBe('alpha')
+             |                                        ^
+           79|     expect(resp.messages[0].to_team).toBe('beta')
+           80|     expect(resp.messages[0].from_agent_id).toBe('A')
+
+       Test Files  1 failed (1)
+            Tests  1 failed | 4 passed (5)
+
+      Note: Task 1.2 already migrated the WHERE clause to `m.to_team = ?`, so the "does not return a message whose to_team does not match caller team" case was already GREEN.  The first new test supplies genuine RED via missing `from_team`/`to_team` columns in the SELECT projection and `InboxMessage` type.
       ```
-  - [ ] **GREEN:** Update `src/mcp/get-inbox.ts` SQL:
+  - [x] **GREEN:** Update `src/mcp/get-inbox.ts` SQL:
     ```typescript
     // Old: WHERE team = :callerTeam AND (to_agent_id = :caller OR (to_role IS NOT NULL AND to_role = :callerRole))
     // New: WHERE to_team = :callerTeam AND (to_agent_id = :caller OR (to_role IS NOT NULL AND to_role = :callerRole))
@@ -1829,23 +1857,40 @@
     `
     ```
     Update the TypeScript types for the returned message row to include `from_team` and `to_team`.
-  - [ ] **Verify GREEN:** Run test.
+  - [x] **Verify GREEN:** Run test.
     - Command: `npx vitest run tests/get-inbox.test.ts`
     - Full-suite command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ✓ tests/get-inbox.test.ts (5 tests) 19ms
+
+       Test Files  1 passed (1)
+            Tests  5 passed (5)
+         Duration  175ms
       ```
-  - [ ] **REFACTOR:** Ensure `get_inbox` response shape also exposes `from_team` and `to_team` so callers can detect cross-team.
-  - [ ] **Verify REFACTOR:** Full suite + check MCP tool description to include these new fields in the documented response schema.
+  - [x] **REFACTOR:** Ensure `get_inbox` response shape also exposes `from_team` and `to_team` so callers can detect cross-team.
+
+    Already satisfied in GREEN: `InboxMessage` interface now includes `from_team: string` and `to_team: string`, and the SQL SELECT projects both columns.  MCP tool description in `src/mcp/tools.ts` is deliberately minimal here — task 6.1 handles the richer description edits.
+  - [x] **Verify REFACTOR:** Full suite + check MCP tool description to include these new fields in the documented response schema.
     - Command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       Test Files  2 failed | 75 passed (77)
+            Tests  2 failed | 238 passed (240)
+         Duration  10.30s
+
+      This task's suite (PASS):
+        ✓ tests/get-inbox.test.ts (5 tests)
+
+      Remaining failing suites (pre-flagged carry-overs):
+        - tests/messages-schema.test.ts    (asserts legacy `team` column — messages-schema task)
+        - tests/fanout-skip-offline.test.ts (to_role fan-out — retired by 4.2)
       ```
-  - [ ] **Commit:** `refactor(get-inbox): filter by to_team; surface from_team/to_team`
+  - [x] **Commit:** `refactor(get-inbox): filter by to_team; surface from_team/to_team`
     - Staging order: test before code
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `12bd1eec34e3a712640e552125cd39ac4b96a871`
 
 ## 6. Tool descriptions
 
