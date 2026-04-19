@@ -37,6 +37,7 @@ export interface FanoutResult {
   retryScheduledCount: number
 }
 
+// Recipients are supplied by the caller; no team filter is applied here, so cross-team fan-out works transparently.
 export async function fanoutAutoPoke(args: {
   team: string
   fromAgentId: string

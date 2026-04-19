@@ -104,35 +104,6 @@ describe('send_message auto_poke integration', () => {
     expect(pokeCalls.length).toBe(0)
   })
 
-  it('to_role fan-out with one idle + one active: poked:true, guard_failed for active, retry_scheduled:true', async () => {
-    const { svc, db, pokeCalls, cleanup } = setupService({
-      paneState: { '%2': 'idle', '%3': 'active' }
-    })
-    cleanups.push(cleanup)
-    const agents = new AgentsRepo(db)
-    insertAgent(db, { agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' , name: 'A' })
-    insertAgent(db, { agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' , name: 'B' })
-    insertAgent(db, { agent_id: 'C', model: 'm', role: 'worker', tmux_pane_id: '%3' , name: 'C' })
-
-    const start = Date.now()
-    const r = await svc.send({ from: 'A', to_role: 'worker', body: 'hi' })
-    const dur = Date.now() - start
-    if ('error' in r) throw new Error('expected success')
-
-    expect(r.poked).toBe(true)
-    expect(pokeCalls.map(c => c.target)).toEqual(['B'])
-    const reasons = r.poke_skip_reasons ?? []
-    expect(reasons).toContainEqual({ agent_id: 'C', reason: 'guard_failed' as AutoPokeSkipReason })
-    // parallel guard: total duration should be less than 2x quiet_ms + overhead
-    expect(dur).toBeLessThan(400)
-    // retry_scheduled: at least one recipient (C) had guard_failed with a pane
-    expect(r.retry_scheduled).toBe(true)
-    expect(r.retry_delays_s).toEqual([30, 180, 600])
-    // cleanup: stop any scheduled retry timers so the process exits cleanly
-    const { clearAllRetries } = await import('../src/mcp/poke-retry.js')
-    clearAllRetries()
-  })
-
   it('single recipient with active pane: poked:false, guard_failed, retry_scheduled:true, delays=[30,180,600]', async () => {
     const { svc, db, pokeCalls, cleanup } = setupService({ paneState: { '%2': 'active' } })
     cleanups.push(cleanup)

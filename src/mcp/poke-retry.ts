@@ -40,6 +40,7 @@ function keyOf(ctx: RetryContext): string {
   return `${ctx.messageId}:${ctx.agentId}`
 }
 
+// Retry tick resolves the recipient via ctx.lookupAgentFn (caller-provided), which is team-agnostic; cross-team retries are supported.
 export function scheduleRetry(ctx: RetryContext): void {
   const key = keyOf(ctx)
   cancelRetry(key)
