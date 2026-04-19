@@ -280,7 +280,7 @@
       ```
   - [x] **Commit:** `fix(auto-poke): bypass cross-team check when invoking internal poke()`
     - Staging order: test file BEFORE production file
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `29db6ba`
 
 ## Scenario Coverage Matrix
 
