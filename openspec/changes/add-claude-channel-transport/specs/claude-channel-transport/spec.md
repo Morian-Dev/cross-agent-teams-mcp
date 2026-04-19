@@ -6,7 +6,7 @@ The channel proxy SHALL declare `capabilities.experimental['claude/channel']: {}
 
 #### Scenario: proxy declares claude/channel experimental capability
 
-- **GIVEN** the proxy is spawned with `--daemon-url http://localhost:8787 --agent-team default --agent-name alice`
+- **GIVEN** the proxy is spawned with `--daemon-url http://localhost:8787`
 - **WHEN** an MCP client (simulating Claude Code) sends `initialize` over the proxy's stdio
 - **THEN** the `initialize` response includes `capabilities.experimental` containing the key `claude/channel` with value `{}`
 
@@ -68,37 +68,38 @@ When the MCP session transport closes, the daemon MUST call `ChannelWakeFanout.d
 - **WHEN** the proxy's MCP transport closes
 - **THEN** the sink is removed from `ChannelWakeFanout`
 
-### Requirement: bind_channel MCP tool writes channel_session_id to agents row
+### Requirement: bind_channel MCP tool writes channel_session_id to caller's agents row
 
-The daemon SHALL register an MCP tool `bind_channel({team: string, name: string, channel_session_id: string})` for protocol-side binding of a channel session to an owner agent.  When invoked:
+The daemon SHALL register an MCP tool `bind_channel({channel_session_id: string})` for self-binding a Claude Code host to its proxy's channel session.  The caller identity is resolved from the session (the MCP session is already bound to an `agent_id` via `register_agent`); `bind_channel` does NOT accept `team` or `name` arguments.  When invoked:
 
-1. The caller MUST be a registered agent; otherwise return `{error: 'unknown_agent'}`.
-2. The caller's `role` MUST be `'__channel_proxy__'`; otherwise return `{error: 'forbidden_role'}`.
+1. The caller MUST be a registered agent (session bound to an `agent_id`); otherwise return `{error: 'unknown_agent'}`.
+2. The caller's `role` MUST NOT be `'__channel_proxy__'` (proxies never bind themselves as channel owners); non-proxy roles are all accepted.
 3. `channel_session_id` MUST be a trimmed non-empty string; otherwise return `{error: 'invalid_channel_session_id'}`.
-4. If an agents row for `(team, name)` exists, UPDATE `agents.channel_session_id = <csid>` and return `{ok: true}`.
-5. If the row does not exist, return `{error: 'agent_not_registered'}`.
+4. The `channel_session_id` MUST correspond to a currently-attached sink in `ChannelWakeFanout` (i.e. a live proxy session already called `subscribe_channel_wake` with this csid); otherwise return `{error: 'unknown_channel_session'}`.  This guards against Claude typing a random string and catches races where Claude tries to bind after the proxy session already closed.
+5. Otherwise UPDATE `agents.channel_session_id = <csid>` WHERE `agent_id = <caller's agent_id>` and return `{ok: true}`.
 
-#### Scenario: bind_channel updates agents row when it exists
+#### Scenario: bind_channel updates caller's agents row when csid has live sink
 
-- **GIVEN** agent `(default, alice)` exists with `channel_session_id=NULL`
-- **AND** a proxy caller with role `__channel_proxy__` is connected
-- **WHEN** the proxy invokes `bind_channel({team: 'default', name: 'alice', channel_session_id: 'csid-abc'})`
+- **GIVEN** agent `alice` exists with `channel_session_id=NULL` and is the MCP session caller
+- **AND** a proxy session has attached a `ChannelWakeFanout` sink under `csid-abc`
+- **WHEN** alice invokes `bind_channel({channel_session_id: 'csid-abc'})`
 - **THEN** the response is `{ok: true}`
-- **AND** the agents row for `(default, alice)` has `channel_session_id='csid-abc'`
+- **AND** the agents row for alice has `channel_session_id='csid-abc'`
 
-#### Scenario: bind_channel returns agent_not_registered when row absent
+#### Scenario: bind_channel rejects unknown channel_session_id
 
-- **GIVEN** no agents row exists for `(default, ghost)`
-- **AND** a proxy caller with role `__channel_proxy__` is connected
-- **WHEN** the proxy invokes `bind_channel({team: 'default', name: 'ghost', channel_session_id: 'csid-x'})`
-- **THEN** the response is `{error: 'agent_not_registered'}`
+- **GIVEN** agent `alice` is the MCP session caller
+- **AND** no `ChannelWakeFanout` sink is attached under `csid-ghost`
+- **WHEN** alice invokes `bind_channel({channel_session_id: 'csid-ghost'})`
+- **THEN** the response is `{error: 'unknown_channel_session'}`
+- **AND** the agents row for alice is unchanged
 
-#### Scenario: bind_channel rejects non-proxy caller
+#### Scenario: bind_channel rejects proxy caller
 
-- **GIVEN** a caller registered with `role='backend'`
-- **WHEN** the caller invokes `bind_channel({team: 'default', name: 'alice', channel_session_id: 'csid-abc'})`
+- **GIVEN** a caller registered with `role='__channel_proxy__'`
+- **AND** a `ChannelWakeFanout` sink is attached under `csid-abc`
+- **WHEN** the proxy caller invokes `bind_channel({channel_session_id: 'csid-abc'})`
 - **THEN** the response is `{error: 'forbidden_role'}`
-- **AND** the agents row for `(default, alice)` is unchanged
 
 ### Requirement: daemon emits notifications/channel_wake with sanitized meta
 
@@ -127,35 +128,28 @@ The daemon SHALL expose an internal `sendChannelWake(channel_session_id, {conten
 
 On startup, the channel proxy SHALL, in order:
 
-1. Parse CLI args: `--daemon-url <url>` (or env `TS_AGENT_TEAMS_DAEMON_URL`), `--agent-team <team>`, `--agent-name <name>`.  If any of daemon-url / agent-team / agent-name is missing, exit with a non-zero status and a diagnostic on stderr.
-2. Resolve the persistence path `<cache_dir>/ts-agent-teams-channel/<team>-<name>.json` where `<cache_dir>` is `$XDG_CACHE_HOME` if set, else `~/.cache` on POSIX, `%LOCALAPPDATA%` on Windows.  Read the file to recover a stored `channel_session_id`; if absent or malformed, generate a fresh UUID v4 and write it (creating intermediate dirs if needed).
-3. Open an MCP Streamable HTTP client to `<daemon-url>/mcp`.
+1. Parse CLI args: `--daemon-url <url>` (or env `TS_AGENT_TEAMS_DAEMON_URL`).  The proxy is identity-agnostic — it MUST NOT accept `--agent-team` or `--agent-name`.  If daemon-url is missing, exit with a non-zero status and a diagnostic on stderr.
+2. Generate a fresh UUID v4 as `channel_session_id` for this process lifetime.  No persistence — each proxy startup gets a new csid.  (Rationale: the proxy is shared-by-directory in `.mcp.json`, so persisting by identity would collide across multi-instance Claude Code runs; a fresh csid per startup sidesteps the issue entirely.)
+3. Open an MCP Streamable HTTP client to `<daemon-url>`.
 4. Call `register_agent({role: '__channel_proxy__', name: 'channel-proxy-<pid>', team: 'default', model: 'proxy'})` to establish its own MCP session identity.
-5. Call `bind_channel({team: <agent-team>, name: <agent-name>, channel_session_id: <csid>})`.  On `{error: 'agent_not_registered'}`, retry with exponential backoff (initial 500ms, doubled up to 30s cap, jittered 10-20%).  Other errors propagate to stderr and exit.
-6. Call `subscribe_channel_wake({channel_session_id: <csid>})`.
-7. Enter an idle loop receiving `notifications/channel_wake` from the daemon.
+5. Call `subscribe_channel_wake({channel_session_id: <csid>})` to attach its notification sink.
+6. Emit a `notifications/claude/channel` JSON-RPC notification on its host stdio telling Claude: its `channel_session_id` is `<csid>` and it should call `bind_channel({channel_session_id: '<csid>'})` to complete binding.  This hands off self-binding to Claude.
+7. Enter an idle loop receiving `notifications/channel_wake` from the daemon and relaying them to the host.
 
-#### Scenario: proxy recovers csid from persistence when file exists
+#### Scenario: proxy generates fresh csid on every startup
 
-- **GIVEN** `<cache_dir>/ts-agent-teams-channel/default-alice.json` exists and contains `{"channel_session_id": "csid-persisted"}`
-- **WHEN** the proxy starts with `--agent-team default --agent-name alice`
-- **THEN** the proxy does NOT generate a new UUID
-- **AND** the proxy uses `'csid-persisted'` for `bind_channel` and `subscribe_channel_wake`
+- **GIVEN** a proxy binary
+- **WHEN** the proxy starts with `--daemon-url http://localhost:8787`
+- **THEN** the proxy generates a fresh UUID v4 as its `channel_session_id`
+- **AND** does NOT read or write any persistence file
 
-#### Scenario: proxy generates fresh csid when persistence absent
+#### Scenario: proxy emits startup channel notification with csid and bind instruction
 
-- **GIVEN** no file exists at `<cache_dir>/ts-agent-teams-channel/default-alice.json`
-- **WHEN** the proxy starts with `--agent-team default --agent-name alice`
-- **THEN** the proxy generates a fresh UUID v4
-- **AND** writes the generated value to the persistence path
-
-#### Scenario: proxy retries bind_channel with backoff when agent not yet registered
-
-- **GIVEN** the daemon returns `{error: 'agent_not_registered'}` on the first `bind_channel` call
-- **WHEN** the proxy retries after backoff
-- **AND** the owner agent registers between attempts
-- **THEN** a subsequent `bind_channel` call returns `{ok: true}`
-- **AND** the proxy proceeds to `subscribe_channel_wake`
+- **GIVEN** the proxy has completed `register_agent` and `subscribe_channel_wake` successfully with `channel_session_id='csid-xyz'`
+- **WHEN** the proxy is about to enter its idle loop
+- **THEN** the proxy emits a `notifications/claude/channel` JSON-RPC notification to its host
+- **AND** the notification `params.content` contains the literal string `csid-xyz`
+- **AND** the notification `params.content` mentions `bind_channel`
 
 ### Requirement: Channel proxy relays channel_wake as claude/channel notification
 
@@ -175,14 +169,14 @@ When the proxy receives a `notifications/channel_wake` notification from the dae
 
 ### Requirement: Channel proxy reconnects on daemon disconnect
 
-When the proxy's MCP connection to the daemon closes unexpectedly, the proxy SHALL attempt reconnection with exponential backoff (initial 500ms, capped 30s, jittered).  On each successful reconnect the proxy MUST re-execute the registration sequence (`register_agent` → `bind_channel` → `subscribe_channel_wake`) in order.  During disconnect periods the proxy MUST NOT emit any `notifications/claude/channel` to its host.
+When the proxy's MCP connection to the daemon closes unexpectedly, the proxy SHALL attempt reconnection with exponential backoff (initial 500ms, capped 30s, jittered).  On each successful reconnect the proxy MUST re-execute the registration sequence (`register_agent` → `subscribe_channel_wake` → emit host-startup notification) in order.  During disconnect periods the proxy MUST NOT emit any `notifications/claude/channel` relay to its host.
 
 #### Scenario: proxy reconnects and re-subscribes after daemon disconnect
 
 - **GIVEN** proxy is connected to a fake daemon and subscribed
 - **WHEN** the fake daemon closes the MCP transport
 - **THEN** the proxy retries the HTTP MCP connect within 2 seconds (first retry in the schedule)
-- **AND** upon reconnect, the proxy re-calls `register_agent`, `bind_channel`, `subscribe_channel_wake` in order
+- **AND** upon reconnect, the proxy re-calls `register_agent`, `subscribe_channel_wake` in order
 
 ### Requirement: End-to-end poke via channel transport
 
@@ -192,7 +186,7 @@ When an authenticated agent calls `poke({target_agent_id, prompt})` and the targ
 
 - **GIVEN** the daemon is running on a random port
 - **AND** a channel proxy subprocess is running and subscribed under `channel_session_id='csid-bob'`
-- **AND** agent `bob` has `channel_session_id='csid-bob'` (tmux_pane_id may be set or null)
+- **AND** agent `bob` has `channel_session_id='csid-bob'` (bound via `bind_channel` by the host Claude after receiving the startup notification; tmux_pane_id may be set or null)
 - **AND** agent `alice` is registered in the same team as `bob`
 - **WHEN** `alice` calls `poke({target_agent_id: 'bob', prompt: 'check inbox'})`
 - **THEN** the poke response is `{ok: true, transport_used: 'claude-channel', channel_session_id: 'csid-bob'}`

@@ -519,31 +519,28 @@ export function registerBusinessTools(
     }
   )
 
-  // bind_channel — reserved for channel proxies (role=__channel_proxy__)
-  {
-    const bindSvc = new BindChannelService(db)
+  // bind_channel — self-binding: caller (Claude host) writes its own channel_session_id
+  if (channelWakeFanout) {
+    const bindSvc = new BindChannelService(db, channelWakeFanout)
     server.registerTool(
       'bind_channel',
       {
-        title: 'Bind channel_session_id to agent',
+        title: 'Bind channel_session_id to caller',
         description: [
-          'Internal tool reserved for the ts-agent-teams channel proxy.',
-          'Writes a channel_session_id to the (team, name) agent row.',
-          'Returns agent_not_registered if the row does not exist (caller should backoff and retry).'
+          'Bind the caller session\'s agent row to a channel_session_id produced by the ts-agent-teams channel proxy.',
+          'Call this after receiving a startup <channel> notification from the proxy announcing your csid.',
+          'Rejects proxy callers (role=__channel_proxy__).',
+          'Rejects unknown csid (no live proxy sink attached).'
         ].join(' '),
         inputSchema: {
-          team: z.string().min(1),
-          name: z.string().min(1),
           channel_session_id: z.string().min(1)
         }
       },
-      async (args: { team: string; name: string; channel_session_id: string }) => {
+      async (args: { channel_session_id: string }) => {
         const who = requireAgent()
         if (typeof who !== 'string') return toText(who)
         return run(() => bindSvc.bind({
           callerAgentId: who,
-          team: args.team,
-          name: args.name,
           channel_session_id: args.channel_session_id
         }))
       }

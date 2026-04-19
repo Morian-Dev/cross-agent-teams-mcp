@@ -4,6 +4,13 @@
   "iteration": 1,
   "max_iterations": 3,
   "last_critical_types": [],
-  "history": [],
+  "history": [
+    { "iteration": 1, "phase": "apply", "status": "partial", "at": "2026-04-19T00:00:00Z" },
+    { "iteration": 1, "phase": "stop", "status": "stop", "reason": "apply partial: 10.1 + cli.ts placeholder", "at": "2026-04-19T00:00:00Z" },
+    { "iteration": 1, "phase": "apply", "status": "resume", "reason": "user option 1 — cli.ts wire-up", "at": "2026-04-19T00:00:00Z" },
+    { "iteration": 1, "phase": "apply", "status": "ok", "reason": "task 8.8 complete (a503ac4, ee4daa8)", "at": "2026-04-19T00:00:00Z" },
+    { "iteration": 1, "phase": "stop", "status": "stop", "reason": "10.1 pending; cli.ts ready", "at": "2026-04-19T00:00:00Z" },
+    { "iteration": 1, "phase": "apply", "status": "resume", "reason": "multi-instance design flaw discovered; pivot to self-binding (option C). user-approved re-dispatch.", "at": "2026-04-19T00:00:00Z" }
+  ],
   "updated_at": "2026-04-19T00:00:00Z"
 }

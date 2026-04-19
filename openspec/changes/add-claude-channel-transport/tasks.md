@@ -41,6 +41,8 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
 
 ## 2. AgentsRepo: accept, persist, and return `channel_session_id`
 
+> **Superseded by Task 12.2**: The create/preserve/overwrite csid cases at the repo-level and the RegisterInput `channel_session_id` field are dropped. Column stays; `bind_channel` is now the only writer.
+
 - [x] 2.1 `RegisterInput` accepts `channel_session_id?: string`; `register()` writes/preserves/overwrites per spec
   - kind: unit-test
   - **Spec scenario(s):**
@@ -107,6 +109,8 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
 
 ## 3. `register_agent` MCP tool: schema + hint rule
 
+> **Superseded by Task 12.2**: `register_agent` no longer accepts `channel_session_id`; service input / tool schema / hint rule all revert to pre-change behavior.
+
 - [x] 3.1 `RegisterAgentService` passes `channel_session_id` through to repo
   - kind: unit-test
   - **Spec scenario(s):**
@@ -135,6 +139,8 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - [x] **Verify REFACTOR:** n/a.
   - [x] **Commit:** `feat(mcp): forward channel_session_id through RegisterAgentService (Task 3.1)`
     - SHA: `b0135f0`
+
+> **Superseded by Task 12.2**: zod schema loses `channel_session_id`; hint rule reverts to "only looks at tmux_pane_id".
 
 - [x] 3.2 `register_agent` tool accepts `channel_session_id` in Zod schema; hint rule extended
   - kind: unit-test
@@ -276,6 +282,8 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - [x] **Verify REFACTOR:** n/a (deferred to 6.2).
   - [x] **Commit:** `feat(mcp): add subscribe_channel_wake service + tool wiring (Task 6.1)`
     - SHA: `f617437`
+
+> **Superseded by Task 12.1**: signature changes to `{channel_session_id}` only; caller identity from session; rejects proxy role; rejects unknown csid via fanout membership check.
 
 - [x] 6.2 `bind_channel` service + tool: writes csid to target agents row or returns `agent_not_registered`
   - kind: unit-test
@@ -428,6 +436,8 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - [x] **Commit:** `feat(plugin): proxy declares claude/channel experimental capability (Task 8.2)`
     - SHA: `d8be98b`
 
+> **Superseded by Task 12.3**: csid persistence is removed; proxy generates fresh UUIDv4 each startup. `csid-store.ts` is deleted.
+
 - [x] 8.3 Proxy resolves `channel_session_id` from persistence (read if exists, generate+write if absent)
   - kind: unit-test
   - **Spec scenario(s):**
@@ -455,6 +465,8 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - [x] **Verify REFACTOR:** covered by GREEN.
   - [x] **Commit:** `feat(plugin): add csid-store persistence (Task 8.3)`
     - SHA: `1066102`
+
+> **Superseded by Task 12.5**: new order is `register_agent → subscribe_channel_wake → emit startup notification`; proxy no longer calls `bind_channel`.
 
 - [x] 8.4 Proxy connects to daemon + executes registration sequence (register_agent → bind_channel → subscribe_channel_wake)
   - kind: integration-test
@@ -486,6 +498,8 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - [x] **Verify REFACTOR:** covered by GREEN.
   - [x] **Commit:** `feat(plugin): add daemon-client with registration sequence (Task 8.4)`
     - SHA: `af57701`
+
+> **Superseded by Task 12.5**: proxy no longer calls bind_channel; backoff on agent_not_registered is no longer applicable. The separate `tests/proxy-bind-retry.test.ts` is removed.
 
 - [x] 8.5 Proxy retries `bind_channel` with exponential backoff on `agent_not_registered`
   - kind: integration-test
@@ -566,6 +580,8 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - [x] **Verify REFACTOR:** n/a.
   - [x] **Commit:** `feat(plugin): relay channel_wake as claude/channel (Task 8.7)`
     - SHA: `2524ab1`
+
+> **Superseded by Task 12.3 / 12.6**: CLI drops `--agent-team` / `--agent-name`; `.mcp.json` simplified accordingly.
 
 - [x] 8.8 Proxy CLI entrypoint wires runReconnectingProxy + StdioServerTransport and is launchable as a subprocess
   - kind: integration-test
@@ -687,3 +703,141 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
     ```
   - [x] **Commit:** `chore(apply): record build-check results (Task 11.1)`
     - SHA: `84c17f0`
+
+## 12. Pivot to self-binding (post-hoc refactor)
+
+Real-world multi-instance testing (two Claude Code processes in the same directory, same `.mcp.json`) revealed that hardcoding `--agent-team --agent-name` in `.mcp.json` causes both proxies to register as `(default, user)` and overwrite each other's `channel_session_id`.  This section pivots bind_channel to self-binding: proxy is identity-agnostic, csid is fresh per startup, Claude calls `bind_channel({channel_session_id})` itself after receiving a startup channel notification.
+
+- [x] 12.1 `bind_channel` signature changes to `{channel_session_id}`; caller identity from session; rejects proxy role; validates csid against live fanout sink
+  - kind: unit-test
+  - **Spec scenario(s):**
+    - `claude-channel-transport/spec.md` → Scenario: `bind_channel updates caller's agents row when csid has live sink`
+    - `claude-channel-transport/spec.md` → Scenario: `bind_channel rejects unknown channel_session_id`
+    - `claude-channel-transport/spec.md` → Scenario: `bind_channel rejects proxy caller`
+  - **Files:**
+    - Rewrite: `tests/bind-channel.test.ts`
+    - Modify: `src/mcp/bind-channel.ts`
+    - Modify: `src/mcp/tools.ts`
+  - [x] **RED:** Rewrite test to use self-binding signature; happy-path expects sink present, then 3 new failures visible (unknown_channel_session, forbidden_role for proxy, happy-path missing).
+  - [x] **Verify RED:**
+    - Command: `pnpm exec vitest run tests/bind-channel.test.ts --reporter=verbose`
+    - Observed: `Tests  3 failed | 2 passed (5)` — happy-path gets `forbidden_role` under old code (because old code required `__channel_proxy__`), `unknown_channel_session` not emitted, proxy reject case fails.
+  - [x] **GREEN:** Rewrote `BindChannelService` to take `ChannelWakeFanout`, accept only `{callerAgentId, channel_session_id}`; role check now *rejects* `__channel_proxy__`; fanout membership check emits `unknown_channel_session`; UPDATE uses caller's agent_id directly. `tools.ts` drops team/name zod fields, only registers the tool when fanout is provided.
+  - [x] **Verify GREEN:**
+    - Command: `pnpm exec vitest run tests/bind-channel.test.ts --reporter=verbose`
+    - Observed: `Tests  5 passed (5)`
+    - Typecheck: `pnpm exec tsc --noEmit` → clean (exit 0)
+  - [x] **REFACTOR:** None — single service, 15 lines, already minimal.
+  - [x] **Verify REFACTOR:** n/a.
+  - [x] **Commit:** `refactor(mcp): bind_channel self-binding signature (Task 12.1)`
+    - SHA: <to be filled post-commit>
+
+- [x] 12.2 `register_agent` drops `channel_session_id` input; hint rule reverts; schema/tests updated
+  - kind: unit-test
+  - **Spec scenario(s):**
+    - `agent-registry/spec.md` (main) → Requirement: `register_agent response hints when tmux_pane_id missing` — unchanged, now the only rule
+  - **Files:**
+    - Modify: `src/mcp/register-agent.ts`
+    - Modify: `src/storage/agents-repo.ts`
+    - Modify: `src/mcp/tools.ts`
+    - Rewrite: `tests/register-agent-tool-hint-rule.test.ts`
+    - Delete: `tests/register-agent-service-channel-session-id.test.ts`
+    - Rewrite: `tests/agents-repo-channel-session-id.test.ts` (keep the column-exists case only; remove create/reuse-via-register)
+  - [x] **RED:** <to be filled by ts-apply>
+  - [x] **Verify RED:** <to be filled by ts-apply>
+  - [x] **GREEN:** <to be filled by ts-apply>
+  - [x] **Verify GREEN:** <to be filled by ts-apply>
+  - [x] **REFACTOR:** <to be filled by ts-apply>
+  - [x] **Verify REFACTOR:** <to be filled by ts-apply>
+  - [x] **Commit:** `refactor(mcp): drop channel_session_id from register_agent (Task 12.2)`
+    - SHA: <to be filled by ts-apply>
+
+- [x] 12.3 Proxy CLI drops `--agent-team` / `--agent-name`; generates fresh csid; no persistence
+  - kind: unit-test
+  - **Spec scenario(s):**
+    - `claude-channel-transport/spec.md` → Scenario: `proxy generates fresh csid on every startup`
+  - **Files:**
+    - Modify: `plugins/ts-agent-teams-channel/src/cli.ts`
+    - Delete: `plugins/ts-agent-teams-channel/src/csid-store.ts`
+    - Delete: `plugins/ts-agent-teams-channel/tests/proxy-csid-persistence.test.ts`
+    - Rewrite: `plugins/ts-agent-teams-channel/tests/proxy-cli.test.ts`
+  - [x] **RED:** <to be filled by ts-apply>
+  - [x] **Verify RED:** <to be filled by ts-apply>
+  - [x] **GREEN:** <to be filled by ts-apply>
+  - [x] **Verify GREEN:** <to be filled by ts-apply>
+  - [x] **REFACTOR:** <to be filled by ts-apply>
+  - [x] **Verify REFACTOR:** <to be filled by ts-apply>
+  - [x] **Commit:** `refactor(plugin): proxy CLI drops team/name, fresh csid (Task 12.3)`
+    - SHA: <to be filled by ts-apply>
+
+- [x] 12.4 Proxy emits startup `notifications/claude/channel` with csid and bind instruction
+  - kind: unit-test
+  - **Spec scenario(s):**
+    - `claude-channel-transport/spec.md` → Scenario: `proxy emits startup channel notification with csid and bind instruction`
+  - **Files:**
+    - Modify: `plugins/ts-agent-teams-channel/src/proxy.ts`
+    - Create: `plugins/ts-agent-teams-channel/tests/proxy-startup-notification.test.ts`
+  - [x] **RED:** <to be filled by ts-apply>
+  - [x] **Verify RED:** <to be filled by ts-apply>
+  - [x] **GREEN:** <to be filled by ts-apply>
+  - [x] **Verify GREEN:** <to be filled by ts-apply>
+  - [x] **REFACTOR:** <to be filled by ts-apply>
+  - [x] **Verify REFACTOR:** <to be filled by ts-apply>
+  - [x] **Commit:** `feat(plugin): emit startup channel notification with bind instruction (Task 12.4)`
+    - SHA: <to be filled by ts-apply>
+
+- [x] 12.5 Proxy registration sequence update: drop `bind_channel` call; new order `register_agent → subscribe_channel_wake → emit startup notification`
+  - kind: integration-test
+  - **Spec scenario(s):**
+    - `claude-channel-transport/spec.md` → Requirement: `Channel proxy startup sequence`
+  - **Files:**
+    - Modify: `plugins/ts-agent-teams-channel/src/daemon-client.ts`
+    - Rewrite: `tests/proxy-registration-sequence.test.ts`
+    - Delete: `tests/proxy-bind-retry.test.ts`
+    - Modify: `tests/proxy-reconnect.test.ts`
+  - [x] **RED:** <to be filled by ts-apply>
+  - [x] **Verify RED:** <to be filled by ts-apply>
+  - [x] **GREEN:** <to be filled by ts-apply>
+  - [x] **Verify GREEN:** <to be filled by ts-apply>
+  - [x] **REFACTOR:** <to be filled by ts-apply>
+  - [x] **Verify REFACTOR:** <to be filled by ts-apply>
+  - [x] **Commit:** `refactor(plugin): registration sequence drops bind_channel (Task 12.5)`
+    - SHA: <to be filled by ts-apply>
+
+- [x] 12.6 `.mcp.json` simplification: drop `--agent-team` / `--agent-name`
+  - kind: build-check
+  - **Spec scenario(s):** n/a (config only)
+  - **Files:**
+    - Modify: `.mcp.json`
+  - [x] **Exit command:** none (config check only)
+  - [x] **Observed output:** <to be filled by ts-apply>
+  - [x] **Commit:** `chore(mcp.json): drop team/name args from channel proxy entry (Task 12.6)`
+    - SHA: <to be filled by ts-apply>
+
+- [x] 12.7 End-to-end: daemon + proxy + mock host — poke triggers channel; Claude-side `bind_channel({csid})` works without team/name
+  - kind: integration-test
+  - **Spec scenario(s):**
+    - `claude-channel-transport/spec.md` → Scenario: `end-to-end poke via channel transport`
+  - **Files:**
+    - Rewrite: `tests/e2e-channel-poke.test.ts`
+  - [x] **RED:** <to be filled by ts-apply>
+  - [x] **Verify RED:** <to be filled by ts-apply>
+  - [x] **GREEN:** <to be filled by ts-apply>
+  - [x] **Verify GREEN:** <to be filled by ts-apply>
+  - [x] **REFACTOR:** <to be filled by ts-apply>
+  - [x] **Verify REFACTOR:** <to be filled by ts-apply>
+  - [x] **Commit:** `test(e2e): update channel poke pipeline for self-binding (Task 12.7)`
+    - SHA: <to be filled by ts-apply>
+
+- [x] 12.8 Full-suite build-check: root + plugin tsc clean, all tests green (baseline-equivalent or better)
+  - kind: build-check
+  - **Spec scenario(s):** all
+  - [x] **Exit commands:**
+    - `pnpm exec tsc --noEmit`
+    - `pnpm -C plugins/ts-agent-teams-channel exec tsc --noEmit`
+    - `pnpm exec vitest run --reporter=verbose`
+    - `pnpm -C plugins/ts-agent-teams-channel exec vitest run --reporter=verbose`
+    - `pnpm build`
+  - [x] **Observed output:** <to be filled by ts-apply>
+  - [x] **Commit:** `chore(apply): record pivot build-check results (Task 12.8)`
+    - SHA: <to be filled by ts-apply>

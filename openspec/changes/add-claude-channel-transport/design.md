@@ -51,29 +51,35 @@ Claude Code Channels 的官方实现假设 channel server 是 stdio MCP 子进�
 -  不需要新 endpoint, 不需要新认证
 -  新增一个 notification method (`notifications/channel_wake`) 走现有管道
 
-### D3: channel_session_id 的生成与绑定: 协议侧 bind_channel
+### D3: channel_session_id 的生成与绑定: self-binding (Claude 自调 bind_channel)
 
-**选项**:
+**历史**:  最初选择 "选 B — 协议侧 bind (proxy 通过 `--agent-team --agent-name` 知道业主身份, 直接 `bind_channel({team, name, csid})` 写入)".  在真机多实例测试中暴露了致命缺陷: `.mcp.json` 硬编码 `--agent-team default --agent-name user`, 两个 Claude Code 进程共享同一目录时, 各自派生的 proxy 都把自己的 csid 写到 `(default, user)` 行, 互相覆盖, 最后留下的 csid 指向其中一个已经死掉的 proxy, 另一个 Claude 的 channel 不通.  B 的根本问题是 "proxy 以为自己代表固定身份", 但 `.mcp.json` 是目录级共享, 身份信息不该硬编码到命令行里.
 
--  A. proxy 生成 csid, 通过 `notifications/claude/channel` 告知 Claude, Claude 在下次 `register_agent` 自觉把 csid 作为参数传入
--  B. proxy 通过 CLI 参数知道业主 `(team, name)`, 生成 csid 后调专门的 MCP tool `bind_channel({team, name, csid})` 做协议侧写入, 完全不依赖 Claude 的执行
+**选项 (重新考虑)**:
 
-**选 B**.  理由:
+-  A (原方案). proxy 生成 csid, 通过 `notifications/claude/channel` 告知 Claude, Claude 主动调 `bind_channel({channel_session_id})` 完成绑定
+-  B (放弃). proxy 通过 CLI 参数知道业主 `(team, name)`, 用 `bind_channel({team, name, csid})` 做协议侧写入
+-  C. proxy 身份无关; 启动后 subscribe, 然后 emit 一条 startup channel notification 告诉 Claude "你的 csid 是 X, 请调 bind_channel", 由 Claude (其 MCP session 已经通过 register_agent 绑定到自己的 agent_id) 自调 `bind_channel({channel_session_id})`, 没有 team/name 参数 — daemon 从 session 自动解析 caller 身份
 
--  A 依赖 Claude 的执行力, 容易漏掉或走样
--  B 让 proxy 一侧全自动, Claude 无需感知 csid
--  `(team, name)` 信息在 Claude Code 启动 proxy 时已经可以通过 `.mcp.json` / CLI 参数传入 (proxy 代表的就是那个固定 agent 身份)
+**选 C (pivot)**.  理由:
 
-**流程**:
+-  B 的硬编码身份无法处理多实例共享 `.mcp.json` 的情况; `.mcp.json` 本身不是每 agent 一份
+-  C 让 proxy 完全身份无关 — 一个 proxy 实例只服务派生它的那个 Claude Code 进程, csid 是绑定到 proxy 进程的短暂随机值
+-  C 和 A 同样依赖 Claude "收到提示后自调 tool" 的执行力, 但这一步非常短 (一条 tool call), 失败就意味着 channel 不通, 降级为 tmux 也是合理的
+-  self-binding 让 daemon 可以精确知道哪个 Claude session 对应哪个 csid, 而不是靠 CLI 字符串猜
 
-1.  用户在 `.mcp.json` 或启动命令配置: `ts-agent-teams-channel-proxy --daemon-url ... --agent-team default --agent-name alice`
-2.  proxy 启动: 读/生成 csid (持久化到 `$XDG_CACHE_HOME/ts-agent-teams-channel/<team>-<name>.json`)
+**流程 (新)**:
+
+1.  用户在 `.mcp.json` 配置: `ts-agent-teams-channel-proxy --daemon-url ...` (没有 team/name)
+2.  proxy 启动: 每次生成 fresh UUIDv4 作为 csid, 不持久化
 3.  proxy 连 daemon, `register_agent({role: '__channel_proxy__', name: 'channel-proxy-<pid>', team: 'default', model: 'proxy'})` 建立自己的 MCP session identity
-4.  proxy 调 `bind_channel({team: '<agent-team>', name: '<agent-name>', channel_session_id: <csid>})`:
-    -  若 agents 行已存在 → UPDATE `channel_session_id` 列 → 返回 `{ok: true}`
-    -  若 agents 行不存在 → 返回 `{error: 'agent_not_registered'}`
-5.  bind 失败时 proxy 以 exponential backoff (500ms 起, 封顶 30s, jitter) 重试, 直到业主 agent 完成 register_agent
-6.  proxy 调 `subscribe_channel_wake({channel_session_id: <csid>})` 订阅 notification sink
+4.  proxy 调 `subscribe_channel_wake({channel_session_id: <csid>})` 订阅自己的 sink
+5.  proxy emit `notifications/claude/channel` 到 host stdio, content 包含 csid 和 "请调 `bind_channel({channel_session_id: '<csid>'})`" 指令
+6.  Claude (host) 看到 `<channel>` tag 注入, 调 `bind_channel({channel_session_id: '<csid>'})`
+7.  daemon 从 session 自动解析 Claude 的 agent_id, 在 ChannelWakeFanout 校验 csid 确实有 live sink, 然后 `UPDATE agents SET channel_session_id=<csid> WHERE agent_id=<caller>`
+8.  proxy 进入 idle loop 接收 `notifications/channel_wake` 并 relay
+
+**保留的 rejected D3-A 语境**: 原来反对 A 的理由是 "依赖 Claude 的执行力", 这个仍然是 C 的风险, 但真机测试证明 B 的 silent corruption 比 A 的 visible failure 更糟, 所以优先级反转.
 
 ### D4: Fallback 语义
 
@@ -135,10 +141,10 @@ channel 成功不 double-poke tmux.  channel 失败才降级.  `transport_used` 
 | claude.ai 登录限制 | API key 用户无法用 | fallback tmux 路径保留; API key 用户不受影响 |
 | mid-turn notification 行为未文档化 | "可靠"承诺可能在对方生成期间不成立 | 安排 runtime-verify 任务, 对照 idle / mid-turn 两种状态 |
 | proxy 断线 | channel_wake 送不到, 自动降级 tmux | proxy 断线时主动退出, Claude Code 重启它; 期间 poke 走 tmux 路径 |
-| proxy 重启丢 csid | 重启后 fanout 里 sink 已经 detach | csid 持久化到文件, 重启后 re-subscribe 相同 csid |
+| proxy 重启丢 csid | 重启后 fanout 里 sink 已经 detach | 不持久化 csid; 每次启动新 csid; 重启后 Claude 收到新的 startup notification 重新 bind |
 | 两个 transport 同时投递 | 用户同时收到两份通知 | dispatcher 成功即停, 不 cascade |
 | dev 加载 `--dangerously-load-development-channels` 被组织策略禁用 | 无法本地开发 | 设计层面无解, 在 README 提示 |
-| 并发多 Claude Code 实例 | 每个实例都派生 proxy, csid 需隔离 | csid 持久化文件按 `<team>-<name>.json` 隔离; fanout 按 csid 索引天然不混 |
+| 并发多 Claude Code 实例 | 每个实例都派生 proxy, csid 需隔离 | 每个 proxy 进程生成自己的 fresh csid (无持久化, 无 `.mcp.json` 身份参数); fanout 按 csid 索引天然不混; Claude 自调 bind_channel 保证 csid ↔ agent_id 精确对应 |
 
 ## Alternatives Considered
 
@@ -155,13 +161,14 @@ channel 成功不 double-poke tmux.  channel 失败才降级.  `transport_used` 
 -  已部署 agent: 既有 `tmux_pane_id` 仍工作; `channel_session_id` 为空时走 tmux
 -  Claude Code 用户启用 channel 需要:
     -  claude.ai 登录 (非 API key)
-    -  `.mcp.json` 加 channel plugin 条目, 配置 `--agent-team` / `--agent-name`
+    -  `.mcp.json` 加 channel plugin 条目 (仅 `--daemon-url`; 不需要 `--agent-team` / `--agent-name`)
     -  启动命令加 `--channels` 和 `--dangerously-load-development-channels`
+    -  Claude 收到 proxy 的 startup channel notification 后自调 `bind_channel({channel_session_id})`
 -  回滚: 删除 `.mcp.json` 的 channel plugin 条目即可; `agents.channel_session_id` 列留存无害
 
 ## Open Questions
 
-Q1: proxy 的 channel_session_id 持久化路径, `$XDG_CACHE_HOME/ts-agent-teams-channel/<team>-<name>.json` 是否合适?  Windows 下 `$XDG_CACHE_HOME` 通常未设, 用 `%LOCALAPPDATA%` 代替.  **Phase 2 决定**.
+Q1: ~~proxy 的 channel_session_id 持久化路径~~  — **resolved by D3 pivot**: 不再持久化, 每次启动生成新 csid.
 
 Q2: proxy 是否应该在业主 agent 长期 offline 时自动退出?  还是保持 idle 等待?  **保持 idle** (符合"Claude Code 生命周期控制 proxy"的原则).
 
