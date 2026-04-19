@@ -86,6 +86,18 @@ describe('send_message by name — same-team resolution', () => {
     expect(e).toEqual({ from_team: 'alpha', to_team: 'beta' })
   })
 
+  it('recipients always holds resolved UUID regardless of input path', async () => {
+    const { svc, db } = setup()
+    insertAgent(db, { agent_id: 'uuid-A', team: 'default', role: 'backend', name: 'alice' })
+    insertAgent(db, { agent_id: 'uuid-B', team: 'default', role: 'frontend', name: 'bob' })
+    const r1 = await svc.send({ from: 'uuid-A', to_agent_id: 'uuid-B', body: 'via-id', auto_poke: false })
+    const r2 = await svc.send({ from: 'uuid-A', to_agent_name: 'bob', body: 'via-name', auto_poke: false })
+    if ('error' in r1) throw new Error('r1 expected success')
+    if ('error' in r2) throw new Error('r2 expected success')
+    expect(r1.recipients).toEqual(['uuid-B'])
+    expect(r2.recipients).toEqual(['uuid-B'])
+  })
+
   it('returns ambiguous_recipient when both to_agent_id and to_agent_name given', async () => {
     const { svc, db } = setup()
     insertAgent(db, { agent_id: 'uuid-A', team: 'default', role: 'backend', name: 'alice' })
