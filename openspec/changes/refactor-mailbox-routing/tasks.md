@@ -1144,7 +1144,7 @@
     - Staging order: test before code
     - **Commit SHA (fill during apply):** `cd44adba5746383eb1e499f9bd18c21b30d9ba1a`
 
-- [ ] 3.4 send_message auto-poke + retry across same-team and cross-team
+- [x] 3.4 send_message auto-poke + retry across same-team and cross-team
   - kind: unit-test
   - **Spec scenario(s):**
     - `mailbox/spec.md` → Scenario: `Cross-team auto-poke fires when recipient pane idle`
@@ -1168,7 +1168,7 @@
     - Modify: `tests/send-message-auto-poke.test.ts`
     - Create: `tests/send-message-cross-team-auto-poke.test.ts`
     - Modify: `src/mcp/auto-poke-fanout.ts`, `src/mcp/poke-retry.ts`
-  - [ ] **RED:** Add cross-team auto-poke test; verify existing same-team tests still compile against new `send` signature.
+  - [x] **RED:** Add cross-team auto-poke test; verify existing same-team tests still compile against new `send` signature.
     ```typescript
     // tests/send-message-cross-team-auto-poke.test.ts
     it('cross-team send auto-pokes recipient idle pane with hint-only', async () => {
@@ -1206,30 +1206,88 @@
     })
     ```
     Migrate all existing `send-message-auto-poke.test.ts` scenarios to the new `send` signature (no `to_role` calls); they already cover single-recipient same-team, guard_failed, no_pane, auto_poke:false, POKE_QUIET_MS env, hint format.
-  - [ ] **Verify RED:** Run the new file + old file.
+  - [x] **Verify RED:** Run the new file + old file.
     - Command: `npx vitest run tests/send-message-cross-team-auto-poke.test.ts tests/send-message-auto-poke.test.ts tests/auto-poke-hint-format.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      RED forcing approach: Task 3.4's intended invariant ("retry recipient lookup queries by agent_id alone, no team filter") is already satisfied by the existing `lookupAgentFn` in `src/mcp/send-message.ts`.  To produce a genuine RED, temporarily mutated the SQL in `send-message.ts` lookupAgentFn from
+        SELECT agent_id, tmux_pane_id, last_seen_at FROM agents WHERE agent_id=?
+      to
+        SELECT agent_id, tmux_pane_id, last_seen_at FROM agents WHERE agent_id=? AND team=?
+      (binding caller's fromTeam).  Under the mutation, the cross-team retry tick cannot find recipient B (team='beta') because the query filters by sender's team 'alpha', so the retry aborts and no poke fires.  Reverted mutation immediately after observing RED.
+
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ✓ tests/auto-poke-hint-format.test.ts (6 tests) 217ms
+       ✓ tests/send-message-auto-poke.test.ts (6 tests) 369ms
+       ❯ tests/send-message-cross-team-auto-poke.test.ts (2 tests | 1 failed) 60ms
+         × send_message cross-team auto-poke + retry > cross-team send guard_failed schedules retries; retry lookup works without team filter 5ms
+           → expected [] to have a length of 1 but got +0
+
+      ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+       FAIL  tests/send-message-cross-team-auto-poke.test.ts > send_message cross-team auto-poke + retry > cross-team send guard_failed schedules retries; retry lookup works without team filter
+      AssertionError: expected [] to have a length of 1 but got +0
+
+      - Expected
+      + Received
+
+      - 1
+      + 0
+
+       Test Files  1 failed | 2 passed (3)
+            Tests  1 failed | 13 passed (14)
+
+      Secondary observation: the first cross-team scenario (idle-pane auto-poke, no retry path) passed even under the mutation — the initial send's `fanoutAutoPoke` recipient list is built from send-message.ts's direct `SELECT ... WHERE agent_id=?` (already correct), and the pane guard passes on an idle pane without ever exercising the retry lookup.  The RED mutation specifically breaks the retry-tick path, which is precisely the invariant this task must guard.
       ```
-  - [ ] **GREEN:** In `src/mcp/auto-poke-fanout.ts` and `src/mcp/poke-retry.ts`, update recipient lookups to query by `agent_id` alone (no team filter), so cross-team recipients resolve.  The `lookupAgentFn` passed from `send-message.ts` already does `WHERE agent_id=?`, so no change; verify `auto-poke-fanout.ts` does not add a team filter internally.  Ensure the poke prompt uses `fromRow.name` regardless of team.
-  - [ ] **Verify GREEN:** Run both targeted files.
+  - [x] **GREEN:** In `src/mcp/auto-poke-fanout.ts` and `src/mcp/poke-retry.ts`, update recipient lookups to query by `agent_id` alone (no team filter), so cross-team recipients resolve.  The `lookupAgentFn` passed from `send-message.ts` already does `WHERE agent_id=?`, so no change; verify `auto-poke-fanout.ts` does not add a team filter internally.  Ensure the poke prompt uses `fromRow.name` regardless of team.
+
+      GREEN: no code changes needed.  Audit confirmed all three files are already cross-team clean:
+        - `src/mcp/auto-poke-fanout.ts` accepts recipients as an explicit list (no SQL lookup); team field is threaded through as metadata only (passed to pokeFn and retry ctx).  No internal recipient filtering by team.
+        - `src/mcp/poke-retry.ts`'s tick reads the recipient via the caller-supplied `lookupAgentFn`, which is `WHERE agent_id=?` only.
+        - `src/mcp/send-message.ts`'s `lookupAgentFn` also uses `WHERE agent_id=?` only.
+        - `createAutoPokeImpl` (`src/mcp/tools.ts`) builds the hint with `fromRow.name` without team prefix, so cross-team sends use the same hint format as same-team (`新邮件 from {sender}, 请调 get_inbox 查看`).
+      Reverted the RED mutation in `send-message.ts` (lookupAgentFn SQL).  No changes to `auto-poke-fanout.ts` or `poke-retry.ts` beyond the pre-existing state.
+  - [x] **Verify GREEN:** Run both targeted files.
     - Command: `npx vitest run tests/send-message-cross-team-auto-poke.test.ts tests/send-message-auto-poke.test.ts`
     - Full-suite command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ✓ tests/auto-poke-hint-format.test.ts (6 tests) 226ms
+       ✓ tests/send-message-auto-poke.test.ts (6 tests) 371ms
+       ✓ tests/send-message-cross-team-auto-poke.test.ts (2 tests) 57ms
+
+       Test Files  3 passed (3)
+            Tests  14 passed (14)
       ```
-  - [ ] **REFACTOR:** If any `fanoutAutoPoke` or `poke-retry` helper previously assumed a single team for retries, drop the assumption and add a sentence in its JSDoc-style one-line comment (English) noting cross-team compatibility.
-  - [ ] **Verify REFACTOR:** Full suite.
+  - [x] **REFACTOR:** If any `fanoutAutoPoke` or `poke-retry` helper previously assumed a single team for retries, drop the assumption and add a sentence in its JSDoc-style one-line comment (English) noting cross-team compatibility.
+
+      Added two one-line English comments documenting cross-team support:
+        - `src/mcp/auto-poke-fanout.ts` above `fanoutAutoPoke`: "Recipients are supplied by the caller; no team filter is applied here, so cross-team fan-out works transparently."
+        - `src/mcp/poke-retry.ts` above `scheduleRetry`: "Retry tick resolves the recipient via ctx.lookupAgentFn (caller-provided), which is team-agnostic; cross-team retries are supported."
+      No behavioral change; comments only.
+  - [x] **Verify REFACTOR:** Full suite.
     - Command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       Test Files  3 failed | 73 passed (76)
+            Tests  3 failed | 230 passed (233)
+
+      Remaining failures (all pre-flagged in earlier tasks, addressed in 4.x):
+        - tests/messages-schema.test.ts > creates messages table with columns and FK to events (messages-schema-split; flagged at 1.4 REFACTOR)
+        - tests/send-role-broadcast.test.ts > to_role fan-out writes one message per recipient sharing event_id (to_role retirement; task 4.2)
+        - tests/fanout-skip-offline.test.ts > to_role with mixed online/offline (same to_role retirement; task 4.2)
+
+      Auto-poke-related suites all pass:
+        ✓ tests/auto-poke-hint-format.test.ts (6 tests)
+        ✓ tests/send-message-auto-poke.test.ts (6 tests)
+        ✓ tests/send-message-cross-team-auto-poke.test.ts (2 tests)
       ```
-  - [ ] **Commit:** `feat(send-message): auto-poke + retry work for cross-team recipients`
+  - [x] **Commit:** `feat(send-message): auto-poke + retry work for cross-team recipients`
     - Staging order: test before code
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `7698c72a7a80952889f8e37d5799eeb425d09134`
 
 ## 4. broadcast and broadcast_to_role
 
