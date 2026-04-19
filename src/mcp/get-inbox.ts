@@ -4,6 +4,8 @@ import type { AgentsRepo } from '../storage/agents-repo.js'
 export interface InboxMessage {
   id: string
   event_id: number
+  from_team: string
+  to_team: string
   from_agent_id: string
   from_role: string | null
   to_agent_id: string | null
@@ -31,7 +33,7 @@ export class GetInboxService {
     const limit = Math.min(args.limit ?? 50, 200)
     const since = args.since_event_id ?? 0
     const rows = this.db.prepare(
-      `SELECT m.id, m.event_id, m.from_agent_id, m.to_agent_id, m.to_role, m.subject, m.body, m.sent_at,
+      `SELECT m.id, m.event_id, m.from_team, m.to_team, m.from_agent_id, m.to_agent_id, m.to_role, m.subject, m.body, m.sent_at,
               a.role as from_role
          FROM messages m
          LEFT JOIN agents a ON a.agent_id = m.from_agent_id

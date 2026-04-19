@@ -50,4 +50,50 @@ describe('get_inbox', () => {
     expect(next.messages.length).toBe(3)
     expect(next.messages[0].event_id).toBeGreaterThan(cursor)
   })
+
+  function setupInbox() {
+    const dir = tmp(); cleanups.push(dir)
+    const db = openDb(join(dir, 'data.db')); applySchema(db)
+    const agents = new AgentsRepo(db)
+    const svc = new GetInboxService(db, agents)
+    return { svc, db, cleanup: () => {} }
+  }
+
+  it('returns cross-team inbound messages by to_team filter', async () => {
+    const { svc, db, cleanup } = setupInbox()
+    insertAgent(db, { agent_id: 'A', team: 'alpha' })
+    insertAgent(db, { agent_id: 'B', team: 'beta' })
+    const event_id = new EventsOutbox(db).append({
+      from_team: 'alpha', to_team: 'beta',
+      event_type: 'message_sent', actor_agent_id: 'A',
+      payload: { recipients: ['B'], subject: null, to_role: null }
+    })
+    db.prepare(
+      `INSERT INTO messages (id, event_id, from_team, to_team, from_agent_id, to_agent_id, to_role, subject, body, sent_at)
+       VALUES (?, ?, 'alpha', 'beta', 'A', 'B', null, null, 'cross', ?)`
+    ).run('mid-1', event_id, new Date().toISOString())
+
+    const resp = await svc.get({ caller: 'B', since_event_id: 0, limit: 50 })
+    expect(resp.messages).toHaveLength(1)
+    expect(resp.messages[0].from_team).toBe('alpha')
+    expect(resp.messages[0].to_team).toBe('beta')
+    expect(resp.messages[0].from_agent_id).toBe('A')
+    cleanup()
+  })
+
+  it('does not return a message whose to_team does not match caller team', async () => {
+    const { svc, db, cleanup } = setupInbox()
+    insertAgent(db, { agent_id: 'A', team: 'alpha' })
+    insertAgent(db, { agent_id: 'B', team: 'beta' })
+    const event_id = new EventsOutbox(db).append({
+      from_team: 'alpha', to_team: 'gamma', event_type: 'message_sent', actor_agent_id: 'A', payload: {}
+    })
+    db.prepare(
+      `INSERT INTO messages (id, event_id, from_team, to_team, from_agent_id, to_agent_id, to_role, subject, body, sent_at)
+       VALUES ('m', ?, 'alpha', 'gamma', 'A', 'B', null, null, 'leaked?', ?)`
+    ).run(event_id, new Date().toISOString())
+    const resp = await svc.get({ caller: 'B', since_event_id: 0, limit: 50 })
+    expect(resp.messages).toHaveLength(0)
+    cleanup()
+  })
 })
