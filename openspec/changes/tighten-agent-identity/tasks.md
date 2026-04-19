@@ -149,7 +149,7 @@
     - Staging order: test file BEFORE production file
     - **Commit SHA (fill during apply):** `eb0c791163637b64d2edbe51c99d4393d40c6ece`
 
-- [ ] 1.2 Rewrite `AgentsRepo.findByIdentity` + `register` to use `(team, name)` identity with ON CONFLICT upsert
+- [x] 1.2 Rewrite `AgentsRepo.findByIdentity` + `register` to use `(team, name)` identity with ON CONFLICT upsert
   - kind: unit-test
   - **Spec scenario(s):**
     - `agent-registry/spec.md` → Scenario: `New identity creates a fresh agent_id`
@@ -162,7 +162,7 @@
   - **Files:**
     - Create: `tests/agents-repo-identity-team-name.test.ts`
     - Modify: `src/storage/agents-repo.ts`
-  - [ ] **RED:** Write failing test — `tests/agents-repo-identity-team-name.test.ts`
+  - [x] **RED:** Write failing test — `tests/agents-repo-identity-team-name.test.ts`
     - Behavior under test: `findByIdentity` takes `{team, name}` (no role); `register` called with same (team, name) different role returns the same `agent_id` and updates role, `last_seen_at`; `registered_at` and `last_processed_event_id` preserved.
     - Expected failure reason: current `findByIdentity({team, name, role})` signature (at `src/storage/agents-repo.ts:27`) rejects the two-arg shape (TS compile error); current `register` (at `src/storage/agents-repo.ts:37`) branches on (team, name, role) so role change inserts a new row, failing the "same agent_id" assertion.
     ```typescript
@@ -255,13 +255,26 @@
       })
     })
     ```
-  - [ ] **Verify RED:** Run the test, confirm compile/assertion failures.
+  - [x] **Verify RED:** Run the test, confirm compile/assertion failures.
     - Command: `npx vitest run tests/agents-repo-identity-team-name.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ❯ tests/agents-repo-identity-team-name.test.ts (7 tests | 4 failed) 14ms
+         × findByIdentity takes {team, name} only and returns the row when it exists 6ms
+           → expected undefined to be '65b72ff2-3c54-46b3-8b48-adea3b15de70'
+         × register returns same agent_id when (team, name) matches, regardless of role 2ms
+           → UNIQUE constraint failed: agents.team, agents.name
+         × role change updates existing row in place (single row, new role, same agent_id) 1ms
+           → UNIQUE constraint failed: agents.team, agents.name
+         × role change preserves registered_at and last_processed_event_id 1ms
+           → UNIQUE constraint failed: agents.team, agents.name
+
+       Test Files  1 failed (1)
+            Tests  4 failed | 3 passed (7)
       ```
-  - [ ] **GREEN:** Rewrite `src/storage/agents-repo.ts`
+  - [x] **GREEN:** Rewrite `src/storage/agents-repo.ts`
     ```typescript
     // src/storage/agents-repo.ts
     import type Database from 'better-sqlite3'
@@ -339,27 +352,46 @@
     }
     ```
     Preserve any existing methods not shown above (e.g., helper getters) — read the current file and merge.
-  - [ ] **Verify GREEN:** Targeted test file passes; full suite has expected cascading failures in tests that still call `findByIdentity({team, name, role})` — those get fixed in this task's REFACTOR step.
+  - [x] **Verify GREEN:** Targeted test file passes; full suite has expected cascading failures in tests that still call `findByIdentity({team, name, role})` — those get fixed in this task's REFACTOR step.
     - Command: `npx vitest run tests/agents-repo-identity-team-name.test.ts`
     - Full-suite command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ✓ tests/agents-repo-identity-team-name.test.ts (7 tests) 12ms
+
+       Test Files  1 passed (1)
+            Tests  7 passed (7)
+         Duration  141ms
       ```
-  - [ ] **REFACTOR:** Migrate call sites and legacy tests:
+  - [x] **REFACTOR:** Migrate call sites and legacy tests:
     - Grep for `findByIdentity(` across `src/` and `tests/`. Every call must pass `{team, name}` only. Drop `role` from call sites.
     - In `tests/agents-repo.test.ts`: any scenario asserting "role change produces new agent_id" is inverted by this change — update to assert "role change returns same agent_id, role column updated". Drop or migrate any test that can't be reconciled.
     - In `tests/agents-schema.test.ts`: update PRAGMA assertions to expect UNIQUE index on `(team, name)` — may already be handled by task 1.1's test; dedupe if needed.
     - Run full suite; non-register-agent suites should be green again.
-  - [ ] **Verify REFACTOR:** Full suite.
+  - [x] **Verify REFACTOR:** Full suite.
     - Command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       Test Files  4 failed | 73 passed (77)
+            Tests  5 failed | 245 passed (250)
+         Duration  9.48s
+
+      Remaining failing suites (all OUT OF SCOPE for task 1.2):
+      - tests/poke-e2e.test.ts (2 tests) — pre-existing self_poke_denied regressions, unrelated to identity
+      - tests/poke-tmux-unavailable.test.ts (1 test) — pre-existing self_poke_denied
+      - tests/poke-validation.test.ts (1 test) — pre-existing self_poke_denied
+      - tests/register-agent-idempotency.test.ts scenario 5 — intentionally migrated to expect
+        {error:'agent_id_collision'} for cross-session cross-role; will turn green in task 2.1.
+
+      Baseline pre-1.2: 7 test files failing / 12 tests failing. Post-1.2: 4 / 5. All identity-
+      related repo failures resolved. Remaining 1 register-service failure is task 2.1's scope;
+      4 poke failures are pre-existing and unrelated.
       ```
-  - [ ] **Commit:** `refactor(agents-repo): identity by (team, name) via ON CONFLICT upsert`
+  - [x] **Commit:** `refactor(agents-repo): identity by (team, name) via ON CONFLICT upsert`
     - Staging order: test file BEFORE production file
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `a147dfa088a58b8fc4c93d9751ddfcc19626d95e`
 
 ## 2. MCP layer
 
