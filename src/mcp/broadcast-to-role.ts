@@ -1,14 +1,15 @@
 import type Database from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
 import { ONLINE_MS, type AgentsRepo } from '../storage/agents-repo.js'
-import type { SendMessageService } from './send-message.js'
-import type { AutoPokeSkipReason, FanoutDeps } from './auto-poke-fanout.js'
+import type { EventsOutbox } from '../storage/events-outbox.js'
+import type { FanoutDeps, AutoPokeSkipReason } from './auto-poke-fanout.js'
 import { runFanoutWithRetry } from './fanout-with-retry.js'
 
-export type BroadcastDeps = FanoutDeps
+export type BroadcastToRoleDeps = FanoutDeps
 
-export interface BroadcastInput {
+export interface BroadcastToRoleInput {
   from: string
+  to_role: string
   body: string
   subject?: string
   auto_poke?: boolean
@@ -24,34 +25,40 @@ interface SuccessResult {
   retry_delays_s?: number[]
 }
 
-export type BroadcastResult = SuccessResult | { error: 'unknown_recipient' }
+export type BroadcastToRoleResult = SuccessResult | { error: 'unknown_recipient' }
 
-interface RecipientPokeRow {
-  agent_id: string
-  tmux_pane_id: string | null
-}
+interface RecipientRow { agent_id: string; tmux_pane_id: string | null }
 
-export class BroadcastService {
+export class BroadcastToRoleService {
   constructor(
     private db: Database.Database,
     private agents: AgentsRepo,
-    private _send: SendMessageService,
-    private deps: BroadcastDeps = {}
+    private events: EventsOutbox,
+    private deps: BroadcastToRoleDeps = {}
   ) {}
 
-  async broadcast(input: BroadcastInput): Promise<BroadcastResult> {
+  async broadcast(input: BroadcastToRoleInput): Promise<BroadcastToRoleResult> {
     const fromRow = this.agents.findById(input.from)
     if (!fromRow) return { error: 'unknown_recipient' }
     const cutoffIso = new Date(Date.now() - ONLINE_MS).toISOString()
-    const rows = this.db.prepare('SELECT agent_id, tmux_pane_id FROM agents WHERE team=? AND agent_id != ? AND last_seen_at > ?')
-      .all(fromRow.team, input.from, cutoffIso) as RecipientPokeRow[]
+    const rows = this.db.prepare(
+      `SELECT agent_id, tmux_pane_id FROM agents
+       WHERE team=? AND role=? AND agent_id != ? AND last_seen_at > ?`
+    ).all(fromRow.team, input.to_role, input.from, cutoffIso) as RecipientRow[]
     if (rows.length === 0) return { error: 'unknown_recipient' }
+
     const recipients = rows.map(r => r.agent_id)
     const baseId = randomUUID()
-    const inserted = this.insertBroadcast(fromRow.team, input.from, recipients, input.body, input.subject, baseId)
+    const inserted = this.insert(fromRow.team, input, recipients, baseId)
 
     if (input.auto_poke === false) {
-      return { ...inserted, recipients, poked: false, retry_scheduled: false }
+      return {
+        message_id: inserted.message_id,
+        event_id: inserted.event_id,
+        recipients,
+        poked: false,
+        retry_scheduled: false
+      }
     }
 
     const envelope = await runFanoutWithRetry({
@@ -72,22 +79,24 @@ export class BroadcastService {
     }
   }
 
-  private insertBroadcast(team: string, from: string, recipients: string[], body: string,
-                          subject: string | undefined, baseId: string): { message_id: string; event_id: number; sent_at: string } {
+  private insert(team: string, input: BroadcastToRoleInput, recipients: string[], baseId: string):
+    { message_id: string; event_id: number; sent_at: string } {
     const tx = this.db.transaction(() => {
-      const event_id = Number(this.db.prepare(
-        `INSERT INTO events (from_team, to_team, event_type, actor_agent_id, payload, created_at) VALUES (?,?,?,?,?,?)`
-      ).run(team, team, 'message_sent', from,
-        JSON.stringify({ to_role: '*broadcast*', recipients, subject: subject ?? null }),
-        new Date().toISOString()).lastInsertRowid)
+      const event_id = this.events.append({
+        from_team: team,
+        to_team: team,
+        event_type: 'message_sent',
+        actor_agent_id: input.from,
+        payload: { to_role: input.to_role, recipients, subject: input.subject ?? null }
+      })
       const sent_at = new Date().toISOString()
-      const insert = this.db.prepare(
+      const stmt = this.db.prepare(
         `INSERT INTO messages (id, event_id, from_team, to_team, from_agent_id, to_agent_id, to_role, subject, body, sent_at)
          VALUES (?,?,?,?,?,?,?,?,?,?)`
       )
       for (let i = 0; i < recipients.length; i++) {
         const id = i === 0 ? baseId : `${baseId}-${i}`
-        insert.run(id, event_id, team, team, from, recipients[i], '*broadcast*', subject ?? null, body, sent_at)
+        stmt.run(id, event_id, team, team, input.from, recipients[i], input.to_role, input.subject ?? null, input.body, sent_at)
       }
       return { message_id: baseId, event_id, sent_at }
     })
