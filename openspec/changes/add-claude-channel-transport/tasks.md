@@ -820,17 +820,20 @@ Real-world multi-instance testing (two Claude Code processes in the same directo
   - [x] **REFACTOR:** None.
   - [x] **Verify REFACTOR:** n/a.
   - [x] **Commit:** `refactor(plugin): registration sequence drops bind_channel (Task 12.5)`
-    - SHA: <to be filled post-commit-12.5>
+    - SHA: `c49fedf`
 
 - [x] 12.6 `.mcp.json` simplification: drop `--agent-team` / `--agent-name`
   - kind: build-check
   - **Spec scenario(s):** n/a (config only)
   - **Files:**
     - Modify: `.mcp.json`
-  - [x] **Exit command:** none (config check only)
-  - [x] **Observed output:** <to be filled by ts-apply>
+  - [x] **Exit command:** `cat .mcp.json` — verify args list contains only `--daemon-url` and its value.
+  - [x] **Observed output:**
+    ```
+    args: [".../plugins/ts-agent-teams-channel/dist/cli.js", "--daemon-url", "http://127.0.0.1:9100/mcp"]
+    ```
   - [x] **Commit:** `chore(mcp.json): drop team/name args from channel proxy entry (Task 12.6)`
-    - SHA: <to be filled by ts-apply>
+    - SHA: <to be filled post-commit-12.6>
 
 - [x] 12.7 End-to-end: daemon + proxy + mock host — poke triggers channel; Claude-side `bind_channel({csid})` works without team/name
   - kind: integration-test
