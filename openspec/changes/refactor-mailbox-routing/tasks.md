@@ -1291,7 +1291,7 @@
 
 ## 4. broadcast and broadcast_to_role
 
-- [ ] 4.1 broadcast persists with `from_team = to_team = caller.team` on both `messages` and `events`
+- [x] 4.1 broadcast persists with `from_team = to_team = caller.team` on both `messages` and `events`
   - kind: unit-test
   - **Spec scenario(s):**
     - `mailbox/spec.md` → Scenario: `Sender not in recipients`
@@ -1304,7 +1304,7 @@
   - **Files:**
     - Modify: `tests/broadcast-auto-poke.test.ts` (schema assertions)
     - Modify: `src/mcp/broadcast.ts` (insert call signature)
-  - [ ] **RED:** Extend `tests/broadcast-auto-poke.test.ts` (or add focused test) asserting every `messages` row from broadcast has `from_team=to_team=caller.team`, and the paired `events` row matches:
+  - [x] **RED:** Extend `tests/broadcast-auto-poke.test.ts` (or add focused test) asserting every `messages` row from broadcast has `from_team=to_team=caller.team`, and the paired `events` row matches:
     ```typescript
     it('broadcast writes from_team=to_team=caller.team for all recipients', async () => {
       const { svc, db, cleanup } = setupBroadcast()
@@ -1329,33 +1329,80 @@
       cleanup()
     })
     ```
-  - [ ] **Verify RED:** Run broadcast-auto-poke test, expect column-not-found or assertion failure.
+  - [x] **Verify RED:** Run broadcast-auto-poke test, expect column-not-found or assertion failure.
     - Command: `npx vitest run tests/broadcast-auto-poke.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ❯ tests/broadcast-auto-poke.test.ts (5 tests | 1 failed) 451ms
+         × broadcast auto_poke default-on integration > broadcast writes from_team=to_team=caller.team for all recipients 11ms
+           → expected 'wrong' to be 'default' // Object.is equality
+
+      ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+       FAIL  tests/broadcast-auto-poke.test.ts > broadcast auto_poke default-on integration > broadcast writes from_team=to_team=caller.team for all recipients
+      AssertionError: expected 'wrong' to be 'default' // Object.is equality
+
+      Expected: "default"
+      Received: "wrong"
+
+       ❯ tests/broadcast-auto-poke.test.ts:135:27
+          133|     expect(rows).toHaveLength(2)
+          134|     for (const r of rows) {
+          135|       expect(r.from_team).toBe('default')
+             |                           ^
+          136|       expect(r.to_team).toBe('default')
+          137|     }
+
+       Test Files  1 failed (1)
+            Tests  1 failed | 4 passed (5)
+
+      Note: RED was forced via synthetic mutation.  Task 1.2 REFACTOR already landed the correct `from_team`+`to_team` columns in `src/mcp/broadcast.ts`, so the new assertion was GREEN on first run.  To exercise a genuine RED-before-GREEN, the `insert.run(...)` line's team slots were temporarily set to `'wrong', 'wrong'`, the failure was observed, then reverted for GREEN.
       ```
-  - [ ] **GREEN:** Update `src/mcp/broadcast.ts`:
+  - [x] **GREEN:** Update `src/mcp/broadcast.ts`:
     1.  Rewrite `insertBroadcast` to pass both `from_team` and `to_team` columns (both equal `fromRow.team`).
     2.  Change `events` insert to use `events.append({from_team, to_team, ...})` via the outbox API (or direct SQL with both columns).
     3.  Confirm `recipients` selection SQL still uses `agents.team = fromRow.team` filter (unchanged).
-  - [ ] **Verify GREEN:** broadcast-related tests green.
+
+    Both events INSERT and messages INSERT already write `(team, team, ...)` (landed in task 1.2 REFACTOR).  GREEN here is restoring the synthetic mutation; no production change beyond revert.
+  - [x] **Verify GREEN:** broadcast-related tests green.
     - Command: `npx vitest run tests/broadcast-auto-poke.test.ts tests/send-message-auto-poke.test.ts`
     - Full-suite command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ✓ tests/broadcast-auto-poke.test.ts (5 tests) 429ms
+       ✓ tests/send-message-auto-poke.test.ts (6 tests) 377ms
+
+       Test Files  2 passed (2)
+            Tests  11 passed (11)
       ```
-  - [ ] **REFACTOR:** Factor the `"from_team, to_team" duplicated columns` into a small helper inside `broadcast.ts` if repeated in both events and messages inserts; otherwise leave inline.
-  - [ ] **Verify REFACTOR:** Full suite.
+  - [x] **REFACTOR:** Factor the `"from_team, to_team" duplicated columns` into a small helper inside `broadcast.ts` if repeated in both events and messages inserts; otherwise leave inline.
+
+    Left inline.  The events INSERT and messages INSERT each write `(team, team, ...)` exactly once within the same transaction closure; extracting a helper for a 2-line, single-use parameter tuple would add indirection without reuse.  Per task guidance: "otherwise leave inline."
+  - [x] **Verify REFACTOR:** Full suite.
     - Command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       Test Files  3 failed | 73 passed (76)
+            Tests  3 failed | 231 passed (234)
+         Duration  10.13s
+
+      This task's suite (PASS):
+        - tests/broadcast-auto-poke.test.ts  (5 tests passed — 4.1 RED/GREEN/REFACTOR; new assertion + 4 pre-existing)
+
+      Remaining failing suites (pre-flagged carry-overs, to be fixed by 4.2 / messages-schema task):
+        - tests/fanout-skip-offline.test.ts  (to_role fan-out — retired by 4.2)
+        - tests/messages-schema.test.ts      (asserts legacy `team` column — messages-schema task)
+        - tests/send-role-broadcast.test.ts  (to_role fan-out — migrated + deleted by 4.2)
+
+      Net delta vs. 3.3 Verify REFACTOR baseline: failure count dropped from 4 → 3 (send-message-auto-poke now GREEN as of 3.4/3.5), broadcast-auto-poke stays GREEN with +1 passing assertion.
       ```
-  - [ ] **Commit:** `refactor(broadcast): persist from_team+to_team columns`
+  - [x] **Commit:** `refactor(broadcast): persist from_team+to_team columns`
     - Staging order: test before code
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `99b02ea3cd7b252819dbc9caf4e3281c21d6fd33`
 
 - [ ] 4.2 Implement `BroadcastToRoleService` — same-team role fan-out, auto-poke inherited
   - kind: unit-test
