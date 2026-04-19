@@ -307,11 +307,11 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - [x] **REFACTOR:** Role gate: `CHANNEL_PROXY_ROLE` constant exported from subscribe-channel-wake.ts and imported in bind-channel.ts. Both services check the role inline; the 3-line check is simple enough that extracting a helper would add indirection without saving much. Left as-is.
   - [x] **Verify REFACTOR:** covered by GREEN tests.
   - [x] **Commit:** `feat(mcp): add bind_channel service + tool (Task 6.2)`
-    - SHA: `<filled after commit>`
+    - SHA: `881922c`
 
 ## 7. Transport dispatch + `poke` rewrite
 
-- [ ] 7.1 `transport-dispatch` module: channel-first, tmux fallback, `no_transport_available`
+- [x] 7.1 `transport-dispatch` module: channel-first, tmux fallback, `no_transport_available`
   - kind: unit-test
   - **Spec scenario(s):**
     - `mailbox/spec.md` → Scenario: `poke prefers claude-channel transport when csid set and proxy online`
@@ -321,18 +321,27 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - **Files:**
     - Create: `tests/transport-dispatch.test.ts`
     - Create: `src/mcp/transport-dispatch.ts`
-  - [ ] **RED:** Four cases — dispatcher given a target row `{channel_session_id, tmux_pane_id}` + fanout mock + tmux mock must: (a) use channel when csid + sink, (b) fall through to tmux when no sink, (c) no_transport_available when neither, (d) transport_used on every success.
-  - [ ] **Verify RED:**
-    - Command: `pnpm exec vitest run tests/transport-dispatch.test.ts --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **GREEN:** `dispatchPoke(deps, row, {content, meta})` where `deps = {fanout, tmuxPoke}`.  Logic per spec D4.
-  - [ ] **Verify GREEN:**
-    - Command: `pnpm exec vitest run tests/transport-dispatch.test.ts --reporter=verbose`
-    - Full-suite: `pnpm exec vitest run --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **REFACTOR:** Promote `PokeResult` union to shared type.
-  - [ ] **Verify REFACTOR:**
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
+  - [x] **RED:** 6 cases — channel preferred, fallback to tmux on no sink, tmux direct when csid null, no_transport for both absent, no_transport when csid without sink + no tmux, tmux error envelope carries transport_used.
+  - [x] **Verify RED:**
+    - Command: `pnpm exec vitest run tests/transport-dispatch.test.ts`
+    - **Observed output:**
+      ```
+      Error: Failed to load url ../src/mcp/transport-dispatch.js
+      Tests  no tests
+      ```
+  - [x] **GREEN:** `dispatchPoke(deps, row, {content, meta})` with `DispatchDeps = {channelWakeFanout, tmuxPoke}`; channel-first; fallback tmux; no_transport_available with `{channel_subscribed, tmux_pane_set}` detail.
+  - [x] **Verify GREEN:**
+    - Command: `pnpm exec vitest run tests/transport-dispatch.test.ts`
+    - Full-suite: `pnpm exec vitest run`
+    - **Observed output:**
+      ```
+      ✓ 6/6 tests pass
+      Full suite: Test Files  3 failed | 87 passed (90)  Tests  4 failed | 290 passed (294)
+      ```
+  - [x] **REFACTOR:** `DispatchResult` union already shared; no extraction needed yet.
+  - [x] **Verify REFACTOR:** n/a.
+  - [x] **Commit:** `feat(mcp): add transport-dispatch (channel-first, tmux fallback) (Task 7.1)`
+    - SHA: `<filled after commit>`
 
 - [ ] 7.2 `poke()` uses dispatcher; response envelope carries `transport_used`; existing tmux path preserved under `transport_used: 'tmux-poke'`
   - kind: unit-test
