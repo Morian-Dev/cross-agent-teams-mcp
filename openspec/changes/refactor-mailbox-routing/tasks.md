@@ -1404,7 +1404,7 @@
     - Staging order: test before code
     - **Commit SHA (fill during apply):** `99b02ea3cd7b252819dbc9caf4e3281c21d6fd33`
 
-- [ ] 4.2 Implement `BroadcastToRoleService` — same-team role fan-out, auto-poke inherited
+- [x] 4.2 Implement `BroadcastToRoleService` — same-team role fan-out, auto-poke inherited
   - kind: unit-test
   - **Spec scenario(s):**
     - `mailbox/spec.md` → Scenario: `Two role-matching agents in team receive fan-out`
@@ -1415,7 +1415,7 @@
     - Create: `tests/broadcast-to-role.test.ts`
     - Create: `src/mcp/broadcast-to-role.ts`
     - Delete: `tests/send-role-broadcast.test.ts` (migrated into broadcast-to-role.test.ts after GREEN)
-  - [ ] **RED:** Write `tests/broadcast-to-role.test.ts`:
+  - [x] **RED:** Write `tests/broadcast-to-role.test.ts`:
     ```typescript
     import { describe, it, expect, afterEach, vi } from 'vitest'
     import { mkdtempSync, rmSync } from 'node:fs'
@@ -1496,13 +1496,26 @@
       })
     })
     ```
-  - [ ] **Verify RED:** Test fails because `BroadcastToRoleService` does not exist.
+  - [x] **Verify RED:** Test fails because `BroadcastToRoleService` does not exist.
     - Command: `npx vitest run tests/broadcast-to-role.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ❯ tests/broadcast-to-role.test.ts (0 test)
+
+      ⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+       FAIL  tests/broadcast-to-role.test.ts [ tests/broadcast-to-role.test.ts ]
+      Error: Failed to load url ../src/mcp/broadcast-to-role.js (resolved id: ../src/mcp/broadcast-to-role.js) in /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec/tests/broadcast-to-role.test.ts. Does the file exist?
+       ❯ loadAndTransform node_modules/.pnpm/vite@5.4.21_@types+node@22.19.17/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
+
+      ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+       Test Files  1 failed (1)
+            Tests  no tests
       ```
-  - [ ] **GREEN:** Create `src/mcp/broadcast-to-role.ts`:
+  - [x] **GREEN:** Create `src/mcp/broadcast-to-role.ts`:
     ```typescript
     import type Database from 'better-sqlite3'
     import { randomUUID } from 'node:crypto'
@@ -1611,23 +1624,44 @@
       }
     }
     ```
-  - [ ] **Verify GREEN:** Run the new test file.
+  - [x] **Verify GREEN:** Run the new test file.
     - Command: `npx vitest run tests/broadcast-to-role.test.ts`
     - Full-suite command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ✓ tests/broadcast-to-role.test.ts (3 tests) 147ms
+
+       Test Files  1 passed (1)
+            Tests  3 passed (3)
       ```
-  - [ ] **REFACTOR:** Delete `tests/send-role-broadcast.test.ts` (content migrated).  Check `src/mcp/broadcast-to-role.ts` shares ≥80% structure with `src/mcp/broadcast.ts` — if so, extract a shared helper for the auto-poke/retry wiring.  Keep each service file under 200 lines.
-  - [ ] **Verify REFACTOR:** Full suite.
+  - [x] **REFACTOR:** Delete `tests/send-role-broadcast.test.ts` (content migrated).  Check `src/mcp/broadcast-to-role.ts` shares ≥80% structure with `src/mcp/broadcast.ts` — if so, extract a shared helper for the auto-poke/retry wiring.  Keep each service file under 200 lines.
+      REFACTOR actions taken:
+      1. Ported two scenarios from legacy `tests/send-role-broadcast.test.ts` into the new suite:
+         - "to_role fan-out writes one message per recipient sharing event_id" → folded into new "fans out to same-team role, excludes sender, writes paired rows" (now also asserts shared event_id).
+         - "broadcast excludes sender" → already asserted in new fan-out test and in tests/broadcast-auto-poke.test.ts; not duplicated.
+      2. Added a 4th test "mixed outcomes — only guard_failed recipients get retries" to cover the scenarios-table row at line 1951.
+      3. Deleted `tests/send-role-broadcast.test.ts`.
+      4. Evaluated broadcast.ts vs broadcast-to-role.ts overlap: the fanoutAutoPoke + retry-wire block (~26 lines) was byte-identical; recipient SQL and INSERT logic differ. Extracted the shared chunk into `src/mcp/fanout-with-retry.ts` exporting `runFanoutWithRetry()` and `FanoutResultEnvelope`. Both services now call it — broadcast.ts shrank from 107 to ~97 lines, broadcast-to-role.ts from 109 to ~101 lines, new helper 46 lines. All under 200.
+  - [x] **Verify REFACTOR:** Full suite.
     - Command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       Test Files  2 failed | 74 passed (76)
+            Tests  2 failed | 234 passed (236)
+
+      Remaining failures (all pre-flagged carryover; no new failures from 4.2):
+        - tests/messages-schema.test.ts (legacy `team` column assertion — messages-schema-split task)
+        - tests/fanout-skip-offline.test.ts (uses retired `to_role` parameter on send_message — task 3.4 / later migration)
+
+      Targeted files green:
+       ✓ tests/broadcast-to-role.test.ts (4 tests) 194ms
+       ✓ tests/broadcast-auto-poke.test.ts (5 tests) 441ms
       ```
-  - [ ] **Commit:** `feat(mailbox): add broadcast_to_role service`
+  - [x] **Commit:** `feat(mailbox): add broadcast_to_role service`
     - Staging order: test before code, then delete legacy test in same commit
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `b403671c0014eb3cf241dce95fc0ce24d4e2b201`
 
 - [ ] 4.3 Register `broadcast_to_role` as MCP tool; reject unknown fields (incl. `to_team`)
   - kind: unit-test
