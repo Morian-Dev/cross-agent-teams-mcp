@@ -486,7 +486,7 @@
     - Staging order: test file before any code tweak
     - **Commit SHA (fill during apply):** `9de7e18b72a99963c2749667c33de81f556db3a7`
 
-- [ ] 1.4 Events cleanup groups agent cursors by `to_team`
+- [x] 1.4 Events cleanup groups agent cursors by `to_team`
   - kind: unit-test
   - **Spec scenario(s):**
     - `events-outbox/spec.md` → Scenario: `Cleanup preserves events newer than online cursor`
@@ -604,9 +604,9 @@
 
       Note: REFACTOR collapsed the two inlined subqueries into a single `WITH online_cursor AS (...)` CTE, so the :cutoffOnline parameter is bound once. "ancient contracts survive cleanup" still passes (contracts table is never touched).
       ```
-  - [ ] **Commit:** `refactor(events-cleanup): group online cursor by to_team`
+  - [x] **Commit:** `refactor(events-cleanup): group online cursor by to_team`
     - Staging order: test before code
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `dc4a72c426fad29b526dfba9a277c0d642ffd835`
 
 ## 2. SSE fanout filter
 
