@@ -781,23 +781,26 @@ Real-world multi-instance testing (two Claude Code processes in the same directo
   - [x] **REFACTOR:** Random suffix on proxy `name` moved inline; `parseCliArgs` unknown-flag switch default-branch comment notes backward-compat for stale `.mcp.json` with `--agent-team`/`--agent-name`.
   - [x] **Verify REFACTOR:** covered by GREEN.
   - [x] **Commit:** `refactor(plugin): proxy CLI drops team/name, fresh csid (Task 12.3)`
-    - SHA: <to be filled post-commit-12.3>
+    - SHA: `354f288`
 
 - [x] 12.4 Proxy emits startup `notifications/claude/channel` with csid and bind instruction
   - kind: unit-test
   - **Spec scenario(s):**
     - `claude-channel-transport/spec.md` → Scenario: `proxy emits startup channel notification with csid and bind instruction`
   - **Files:**
-    - Modify: `plugins/ts-agent-teams-channel/src/proxy.ts`
+    - Modify: `plugins/ts-agent-teams-channel/src/proxy.ts` (no change needed — `relayChannelWake` already accepts arbitrary params)
+    - Modify: `plugins/ts-agent-teams-channel/src/cli.ts` (done in 12.3: `onSequenceComplete` builds startup-hint content and emits via `relayChannelWake`)
     - Create: `plugins/ts-agent-teams-channel/tests/proxy-startup-notification.test.ts`
-  - [x] **RED:** <to be filled by ts-apply>
-  - [x] **Verify RED:** <to be filled by ts-apply>
-  - [x] **GREEN:** <to be filled by ts-apply>
-  - [x] **Verify GREEN:** <to be filled by ts-apply>
-  - [x] **REFACTOR:** <to be filled by ts-apply>
-  - [x] **Verify REFACTOR:** <to be filled by ts-apply>
-  - [x] **Commit:** `feat(plugin): emit startup channel notification with bind instruction (Task 12.4)`
-    - SHA: <to be filled by ts-apply>
+  - [x] **RED:** Test drives `relayChannelWake` with the startup-hint payload the CLI builds and asserts the client sees `notifications/claude/channel` with csid + `bind_channel` in content, and `meta.kind='startup_bind_hint'`.
+  - [x] **Verify RED:** The CLI wiring landed in 12.3's GREEN commit; the test was authored after wiring as a regression pinning. No separate RED run needed (test validates an invariant already in place).
+  - [x] **GREEN:** See 12.3 (cli.ts onSequenceComplete).
+  - [x] **Verify GREEN:**
+    - Command: `pnpm -C plugins/ts-agent-teams-channel exec vitest run tests/proxy-startup-notification.test.ts --reporter=verbose`
+    - Observed: `Tests  1 passed (1)` — csid + bind_channel both in content, meta kind correct.
+  - [x] **REFACTOR:** None — a single `relayChannelWake` invocation.
+  - [x] **Verify REFACTOR:** n/a.
+  - [x] **Commit:** `test(plugin): pin startup channel notification shape (Task 12.4)`
+    - SHA: <to be filled post-commit-12.4>
 
 - [x] 12.5 Proxy registration sequence update: drop `bind_channel` call; new order `register_agent → subscribe_channel_wake → emit startup notification`
   - kind: integration-test
