@@ -800,25 +800,27 @@ Real-world multi-instance testing (two Claude Code processes in the same directo
   - [x] **REFACTOR:** None — a single `relayChannelWake` invocation.
   - [x] **Verify REFACTOR:** n/a.
   - [x] **Commit:** `test(plugin): pin startup channel notification shape (Task 12.4)`
-    - SHA: <to be filled post-commit-12.4>
+    - SHA: `f2ea2d7`
 
 - [x] 12.5 Proxy registration sequence update: drop `bind_channel` call; new order `register_agent → subscribe_channel_wake → emit startup notification`
   - kind: integration-test
   - **Spec scenario(s):**
     - `claude-channel-transport/spec.md` → Requirement: `Channel proxy startup sequence`
   - **Files:**
-    - Modify: `plugins/ts-agent-teams-channel/src/daemon-client.ts`
+    - Modify: `plugins/ts-agent-teams-channel/src/daemon-client.ts` (done in 12.3)
     - Rewrite: `tests/proxy-registration-sequence.test.ts`
     - Delete: `tests/proxy-bind-retry.test.ts`
-    - Modify: `tests/proxy-reconnect.test.ts`
-  - [x] **RED:** <to be filled by ts-apply>
-  - [x] **Verify RED:** <to be filled by ts-apply>
-  - [x] **GREEN:** <to be filled by ts-apply>
-  - [x] **Verify GREEN:** <to be filled by ts-apply>
-  - [x] **REFACTOR:** <to be filled by ts-apply>
-  - [x] **Verify REFACTOR:** <to be filled by ts-apply>
+    - Rewrite: `tests/proxy-reconnect.test.ts`
+  - [x] **RED:** After 12.3's daemon-client changes landed, the old tests failed with `bind_channel failed: {"error":"forbidden_role"}` (new daemon rejects proxy role, so the old sequence could not complete).
+  - [x] **Verify RED:** Full-suite run at end of 12.2 observed exactly these 3 proxy integration tests failing.
+  - [x] **GREEN:** Rewrote both integration tests to assert the new `register_agent → subscribe_channel_wake` order; dropped all references to `team`/`name`/bind result; deleted `proxy-bind-retry.test.ts`.
+  - [x] **Verify GREEN:**
+    - Command: `pnpm exec vitest run tests/proxy-registration-sequence.test.ts tests/proxy-reconnect.test.ts --reporter=verbose`
+    - Observed: `Tests  2 passed (2)`.
+  - [x] **REFACTOR:** None.
+  - [x] **Verify REFACTOR:** n/a.
   - [x] **Commit:** `refactor(plugin): registration sequence drops bind_channel (Task 12.5)`
-    - SHA: <to be filled by ts-apply>
+    - SHA: <to be filled post-commit-12.5>
 
 - [x] 12.6 `.mcp.json` simplification: drop `--agent-team` / `--agent-name`
   - kind: build-check
