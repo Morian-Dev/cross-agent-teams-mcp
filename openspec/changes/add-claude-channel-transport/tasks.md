@@ -134,9 +134,9 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - [x] **REFACTOR:** None.
   - [x] **Verify REFACTOR:** n/a.
   - [x] **Commit:** `feat(mcp): forward channel_session_id through RegisterAgentService (Task 3.1)`
-    - SHA: `<filled after commit>`
+    - SHA: `b0135f0`
 
-- [ ] 3.2 `register_agent` tool accepts `channel_session_id` in Zod schema; hint rule extended
+- [x] 3.2 `register_agent` tool accepts `channel_session_id` in Zod schema; hint rule extended
   - kind: unit-test
   - **Spec scenario(s):**
     - `agent-registry/spec.md` → Scenario: `hint triggered when both identifiers missing`
@@ -146,18 +146,30 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - **Files:**
     - Create: `tests/register-agent-tool-hint-rule.test.ts`
     - Modify: `src/mcp/tools.ts`
-  - [ ] **RED:** Four cases — (a) both missing → hint present, mentions both identifiers, (b) tmux_pane_id alone → no hint, (c) channel_session_id alone → no hint, (d) error envelope → no hint.
-  - [ ] **Verify RED:**
+  - [x] **RED:** 5 cases — both missing, tmux alone, csid alone, blank csid, error envelope.
+  - [x] **Verify RED:**
     - Command: `pnpm exec vitest run tests/register-agent-tool-hint-rule.test.ts --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **GREEN:** Zod schema adds `channel_session_id: z.string().optional()`.  Hint condition becomes: neither `tmux_pane_id` nor `channel_session_id` is a trim-non-empty string.  Hint text updated to mention both identifiers.
-  - [ ] **Verify GREEN:**
-    - Command: `pnpm exec vitest run tests/register-agent-tool-hint-rule.test.ts --reporter=verbose`
-    - Full-suite: `pnpm exec vitest run --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **REFACTOR:** Extract `hasUsableTransportId(args)` helper if called more than once.
-  - [ ] **Verify REFACTOR:**
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
+    - **Observed output:**
+      ```
+      Tests  2 failed | 3 passed (5)
+      FAIL > hint present when neither ... expected hint to match /channel_session_id/i (old hint only mentioned tmux_pane_id)
+      FAIL > hint suppressed when channel_session_id alone provided (hint still emitted)
+      ```
+  - [x] **GREEN:** Added `channel_session_id: z.string().optional()` to zod schema; extracted `hasUsableTransportId()` helper at top of file; hint text rewritten to reference both identifiers.
+  - [x] **Verify GREEN:**
+    - Command: `pnpm exec vitest run tests/register-agent-tool-hint-rule.test.ts`
+    - Existing test: `pnpm exec vitest run tests/register-agent-hint.test.ts`
+    - Full-suite: `pnpm exec vitest run`
+    - **Observed output:**
+      ```
+      ✓ 5/5 new tests pass
+      ✓ 6/6 existing register-agent-hint tests still pass (new hint still contains TMUX_PANE and tmux display-message references)
+      Full suite: Test Files  3 failed | 82 passed (85)  Tests  4 failed | 267 passed (271)
+      ```
+  - [x] **REFACTOR:** `hasUsableTransportId()` extracted as a module-level helper from the start — single call site for now.
+  - [x] **Verify REFACTOR:** n/a.
+  - [x] **Commit:** `feat(mcp): accept channel_session_id in register_agent tool and update hint (Task 3.2)`
+    - SHA: `<filled after commit>`
 
 ## 4. `ChannelWakeFanout` primitive
 
