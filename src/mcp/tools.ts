@@ -74,7 +74,7 @@ export function createAutoPokeImpl(
       .get(args.fromAgentId) as { name: string | null } | undefined
     const hint = buildAutoPokeHint(row, args.fromAgentId)
     const res = await poke(
-      { db, callerAgentId: args.fromAgentId },
+      { db, callerAgentId: args.fromAgentId, allowCrossTeam: true },
       { target_agent_id: args.targetAgentId, prompt: hint }
     )
     if ('ok' in res && res.ok) return { ok: true }
