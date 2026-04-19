@@ -21,7 +21,8 @@ const DDL = [
     registered_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
     last_processed_event_id INTEGER NOT NULL DEFAULT 0,
-    tmux_pane_id TEXT
+    tmux_pane_id TEXT,
+    channel_session_id TEXT
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS agents_identity_idx ON agents(team, name)`,
   `CREATE TABLE IF NOT EXISTS messages (
