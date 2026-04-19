@@ -169,11 +169,11 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - [x] **REFACTOR:** `hasUsableTransportId()` extracted as a module-level helper from the start — single call site for now.
   - [x] **Verify REFACTOR:** n/a.
   - [x] **Commit:** `feat(mcp): accept channel_session_id in register_agent tool and update hint (Task 3.2)`
-    - SHA: `<filled after commit>`
+    - SHA: `a76be18`
 
 ## 4. `ChannelWakeFanout` primitive
 
-- [ ] 4.1 `ChannelWakeFanout` class: `attach`, `send`, `detach`, `detachBySession`, re-subscribe semantics
+- [x] 4.1 `ChannelWakeFanout` class: `attach`, `send`, `detach`, `detachBySession`, re-subscribe semantics
   - kind: unit-test
   - **Spec scenario(s):**
     - `claude-channel-transport/spec.md` → Scenario: `attach and send fan out only to the matched sink`
@@ -183,18 +183,27 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - **Files:**
     - Create: `tests/channel-wake-fanout.test.ts`
     - Create: `src/daemon/channel-wake-fanout.ts`
-  - [ ] **RED:** All four semantics.  `attach(csid, sink, sessionId)` stores the sink under csid and annotates owning session.  Expected failure: module does not exist.
-  - [ ] **Verify RED:**
+  - [x] **RED:** All four semantics + `has()` helper.
+  - [x] **Verify RED:**
     - Command: `pnpm exec vitest run tests/channel-wake-fanout.test.ts --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **GREEN:** Implement `ChannelWakeFanout` with `Map<string, {sessionId: string, sink: (payload: unknown) => void}>`.  `send(csid, payload)` calls sink if present.  `detach(csid)` removes.  Re-subscribe replaces.  `detachBySession(sessionId)` removes all entries whose sessionId matches.
-  - [ ] **Verify GREEN:**
-    - Command: `pnpm exec vitest run tests/channel-wake-fanout.test.ts --reporter=verbose`
-    - Full-suite: `pnpm exec vitest run --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **REFACTOR:** Small — name the tuple type for readability.
-  - [ ] **Verify REFACTOR:**
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
+    - **Observed output:**
+      ```
+      Error: Failed to load url ../src/daemon/channel-wake-fanout.js
+      Test Files  1 failed (1)   Tests  no tests
+      ```
+  - [x] **GREEN:** Implemented `ChannelWakeFanout` with `Map<csid, {sessionId, sink}>`; `send()` returns bool; `has()` helper; `detachBySession()` sweeps by owner session.
+  - [x] **Verify GREEN:**
+    - Command: `pnpm exec vitest run tests/channel-wake-fanout.test.ts`
+    - Full-suite: `pnpm exec vitest run`
+    - **Observed output:**
+      ```
+      ✓ 5/5 new tests pass
+      Full suite: Test Files  3 failed | 83 passed (86)  Tests  4 failed | 272 passed (276)
+      ```
+  - [x] **REFACTOR:** Named the `Entry` type for readability.
+  - [x] **Verify REFACTOR:** covered by GREEN tests.
+  - [x] **Commit:** `feat(daemon): add ChannelWakeFanout primitive (Task 4.1)`
+    - SHA: `<filled after commit>`
 
 ## 5. `sendChannelWake` daemon function
 
