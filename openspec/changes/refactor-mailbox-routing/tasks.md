@@ -731,7 +731,7 @@
 
 ## 3. send_message refactor
 
-- [ ] 3.1 Remove `to_role` from send_message Zod schema; add optional `to_team`; require `to_agent_id`
+- [x] 3.1 Remove `to_role` from send_message Zod schema; add optional `to_team`; require `to_agent_id`
   - kind: unit-test
   - **Spec scenario(s):**
     - `mailbox/spec.md` → Scenario: `to_role parameter is rejected by the schema layer`
@@ -739,7 +739,7 @@
   - **Files:**
     - Create: `tests/send-message-zod-schema.test.ts`
     - Modify: `src/mcp/tools.ts` (or wherever `send_message` Zod schema is defined)
-  - [ ] **RED:** Write failing test — `tests/send-message-zod-schema.test.ts`
+  - [x] **RED:** Write failing test — `tests/send-message-zod-schema.test.ts`
     ```typescript
     import { describe, it, expect, afterEach } from 'vitest'
     import { mkdtempSync, rmSync } from 'node:fs'
@@ -790,13 +790,25 @@
       })
     })
     ```
-  - [ ] **Verify RED:** Run; first test passes (current schema accepts to_role silently or as pass-through — verify), second test fails accordingly, third may fail if to_team is also unknown.
+  - [x] **Verify RED:** Run; tests 1+2 assert schema-layer rejection (`isError: true`), which the current loose schema does NOT produce — it silently strips unknown keys and makes `to_agent_id` optional, so the handler is entered and returns `unknown_agent`.  Test 3 accepts any `/unknown_agent|unknown_recipient/` response (covering both the current pass-through behavior and the post-GREEN schema-accepted-then-handler-runs behavior).
     - Command: `npx vitest run tests/send-message-zod-schema.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ❯ tests/send-message-zod-schema.test.ts (3 tests | 2 failed) 63ms
+         × send_message Zod schema > rejects to_role with validation error 43ms
+           → expected undefined to be true // Object.is equality
+         × send_message Zod schema > rejects missing to_agent_id with validation error 9ms
+           → expected undefined to be true // Object.is equality
+         ✓ send_message Zod schema > accepts to_team as optional string 7ms
+
+       Test Files  1 failed (1)
+            Tests  2 failed | 1 passed (3)
+
+      Note on test-shape deviation from the verbatim prompt: the MCP SDK (@modelcontextprotocol/sdk 1.22.x) catches server-side McpError from schema validation and returns `{ content, isError: true }` rather than rejecting the client-side promise.  `Client.callTool()` therefore resolves normally even on validation failure; `rejects.toThrow(...)` can never match.  The test was rewritten to assert `resp.isError === true` with error-text regex — same spec scenarios (`to_role rejected by schema layer` + `missing to_agent_id rejected`), compatible mechanism.  RED is genuine: under the current loose schema the server has no validation error to raise, so `isError` is undefined.
       ```
-  - [ ] **GREEN:** In `src/mcp/tools.ts`, redefine the `send_message` input schema. The Zod object MUST: require `to_agent_id`, optional `to_team`, optional `subject`, required `body`, optional `auto_poke`. No `to_role` key. Use `.strict()` to force rejection of unknown keys:
+  - [x] **GREEN:** In `src/mcp/tools.ts`, redefine the `send_message` input schema. The Zod object MUST: require `to_agent_id`, optional `to_team`, optional `subject`, required `body`, optional `auto_poke`. No `to_role` key. Use `.strict()` to force rejection of unknown keys:
     ```typescript
     // Excerpt from src/mcp/tools.ts
     const sendMessageSchema = z.object({
@@ -807,23 +819,39 @@
       auto_poke: z.boolean().optional()
     }).strict()
     ```
-  - [ ] **Verify GREEN:** Three test cases pass.
+  - [x] **Verify GREEN:** Three test cases pass.
     - Command: `npx vitest run tests/send-message-zod-schema.test.ts`
     - Full-suite command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ✓ tests/send-message-zod-schema.test.ts (3 tests) 68ms
+
+       Test Files  1 passed (1)
+            Tests  3 passed (3)
       ```
-  - [ ] **REFACTOR:** Remove the now-dead `to_role` branch in `src/mcp/send-message.ts`'s `SendMessageService.send` method. Keep the `SendInput` TypeScript interface in sync (drop `to_role`, add `to_team?`).
-  - [ ] **Verify REFACTOR:** Full suite (`send-message-direct`, `send-role-broadcast` will still fail — both are addressed in later tasks).
+  - [x] **REFACTOR:** Remove the now-dead `to_role` branch in `src/mcp/send-message.ts`'s `SendMessageService.send` method. Keep the `SendInput` TypeScript interface in sync (drop `to_role`, add `to_team?`).
+  - [x] **Verify REFACTOR:** Full suite (`send-message-direct`, `send-role-broadcast` will still fail — both are addressed in later tasks).
     - Command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       Test Files  5 failed | 69 passed (74)
+            Tests  6 failed | 222 passed (228)
+
+      Remaining failures (all pre-flagged by this task + prior tasks, to be fixed in 3.2 / 3.3 / 3.4):
+        - tests/send-message-direct.test.ts > rejects when both to_agent_id and to_role are given (legacy to_role ambiguity assertion — gone by design; task 3.2 rewrites this test)
+        - tests/send-message-direct.test.ts > rejects when neither recipient is given (legacy missing_recipient path — schema now makes to_agent_id required; task 3.2 rewrites)
+        - tests/send-role-broadcast.test.ts > to_role fan-out writes one message per recipient (role fan-out is being moved out of send_message — task 3.3 / 4.x)
+        - tests/send-message-auto-poke.test.ts > to_role fan-out with one idle + one active (same to_role retirement — task 3.3)
+        - tests/fanout-skip-offline.test.ts > to_role with mixed online/offline (same)
+        - tests/messages-schema.test.ts > creates messages table with columns and FK to events (pre-existing — flagged at 1.4 REFACTOR; addressed later by messages-schema task)
+
+      New: tests/send-message-zod-schema.test.ts (3 tests) passes — validates the schema-layer changes delivered by this task.
       ```
-  - [ ] **Commit:** `refactor(send-message): drop to_role, require to_agent_id, add optional to_team`
+  - [x] **Commit:** `refactor(send-message): drop to_role, require to_agent_id, add optional to_team`
     - Staging order: test before code
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `12ab4fe6a9a9745a75602d29463e3d7d7b061944`
 
 - [ ] 3.2 send_message same-team 1→1 writes with `from_team=to_team=caller.team`
   - kind: unit-test
