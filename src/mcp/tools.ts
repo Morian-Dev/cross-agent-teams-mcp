@@ -247,14 +247,15 @@ export function registerBusinessTools(
       title: 'Send message',
       description: SEND_MESSAGE_DESC,
       inputSchema: z.object({
-        to_agent_id: z.string().min(1),
+        to_agent_id: z.string().min(1).optional(),
+        to_agent_name: z.string().min(1).optional(),
         to_team: z.string().min(1).optional(),
         subject: z.string().optional(),
         body: z.string().min(1),
         auto_poke: z.boolean().optional()
       }).strict()
     },
-    async (args: { to_agent_id: string; to_team?: string; subject?: string; body: string; auto_poke?: boolean }) => {
+    async (args: { to_agent_id?: string; to_agent_name?: string; to_team?: string; subject?: string; body: string; auto_poke?: boolean }) => {
       const who = requireAgent()
       if (typeof who !== 'string') return toText(who)
       return run(() => sendSvc.send({ from: who, ...args }))
