@@ -536,9 +536,9 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - [x] **REFACTOR:** `waitForDisconnect()` factored out of the main loop.
   - [x] **Verify REFACTOR:** covered.
   - [x] **Commit:** `feat(plugin): add runReconnectingProxy controller (Task 8.6)`
-    - SHA: `<filled after commit>`
+    - SHA: `22885fa`
 
-- [ ] 8.7 Proxy relays daemon `notifications/channel_wake` as `notifications/claude/channel` to host; survives host stdio close
+- [x] 8.7 Proxy relays daemon `notifications/channel_wake` as `notifications/claude/channel` to host; survives host stdio close
   - kind: unit-test
   - **Spec scenario(s):**
     - `claude-channel-transport/spec.md` → Scenario: `proxy relays channel_wake as claude/channel notification`
@@ -546,17 +546,26 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - **Files:**
     - Create: `plugins/ts-agent-teams-channel/tests/proxy-relay.test.ts`
     - Modify: `plugins/ts-agent-teams-channel/src/proxy.ts`
-  - [ ] **RED:** Two cases — (a) host side fake MCP client receives relayed notification with params unchanged, (b) host stdio closed, daemon sends wake, proxy logs to stderr but process does not exit.
-  - [ ] **Verify RED:**
-    - Command: `pnpm -C plugins/ts-agent-teams-channel exec vitest run tests/proxy-relay.test.ts --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **GREEN:** Register notification listener for `channel_wake` on daemon client; call host server's `notification({method:'notifications/claude/channel', params})`.  Wrap host send in try/catch; on closed-transport error, log and continue.
-  - [ ] **Verify GREEN:**
-    - Command: `pnpm -C plugins/ts-agent-teams-channel exec vitest run --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **REFACTOR:** None.
-  - [ ] **Verify REFACTOR:**
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
+  - [x] **RED:** (a) host fake client receives relayed notification; (b) calling `relayChannelWake` after host closed does not throw.
+  - [x] **Verify RED:**
+    - Command: `pnpm -C plugins/ts-agent-teams-channel exec vitest run tests/proxy-relay.test.ts`
+    - **Observed output:**
+      ```
+      Tests 2 failed (2) — relayChannelWake is not a function
+      ```
+  - [x] **GREEN:** Added `relayChannelWake(server, params)` that calls `server.server.notification({method:'notifications/claude/channel', params})`; wraps in try/catch and swallows host-closed errors.
+  - [x] **Verify GREEN:**
+    - Command: `pnpm -C plugins/ts-agent-teams-channel exec vitest run`
+    - Both tsc (root + plugin) clean
+    - **Observed output:**
+      ```
+      ✓ 2/2 proxy-relay tests pass
+      Plugin suite: 3 test files | 8 passed
+      ```
+  - [x] **REFACTOR:** None; single function.
+  - [x] **Verify REFACTOR:** n/a.
+  - [x] **Commit:** `feat(plugin): relay channel_wake as claude/channel (Task 8.7)`
+    - SHA: `<filled after commit>`
 
 ## 9. End-to-end integration
 
