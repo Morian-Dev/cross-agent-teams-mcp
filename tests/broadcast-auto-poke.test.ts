@@ -120,6 +120,29 @@ describe('broadcast auto_poke default-on integration', () => {
     expect(r.retry_delays_s).toEqual([30, 180, 600])
   })
 
+  it('broadcast writes from_team=to_team=caller.team for all recipients', async () => {
+    const { svc, db, cleanup } = setupService()
+    cleanups.push(cleanup)
+    insertAgent(db, { agent_id: 'A', team: 'default' })
+    insertAgent(db, { agent_id: 'B', team: 'default' })
+    insertAgent(db, { agent_id: 'C', team: 'default' })
+    const resp = await svc.broadcast({ from: 'A', body: 'hi', auto_poke: false })
+    if ('error' in resp) throw new Error(resp.error)
+    const rows = db.prepare(`SELECT from_team, to_team, event_id FROM messages`).all() as
+      Array<{ from_team: string; to_team: string; event_id: number }>
+    expect(rows).toHaveLength(2)
+    for (const r of rows) {
+      expect(r.from_team).toBe('default')
+      expect(r.to_team).toBe('default')
+    }
+    const eventIds = new Set(rows.map(r => r.event_id))
+    expect(eventIds.size).toBe(1)
+    const e = db.prepare(`SELECT from_team, to_team FROM events WHERE event_id=?`)
+      .get([...eventIds][0]) as { from_team: string; to_team: string }
+    expect(e.from_team).toBe('default')
+    expect(e.to_team).toBe('default')
+  })
+
   it('explicit auto_poke:true with active pane: guard_failed → retry_scheduled:true, delays=[30,180,600]', async () => {
     const { svc, db, pokeCalls, cleanup } = setupService({
       paneState: { '%2': 'active' }
