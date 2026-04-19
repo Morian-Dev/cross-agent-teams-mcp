@@ -397,26 +397,36 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
     Also root `pnpm exec tsc --noEmit` stayed clean.
     ```
   - [x] **Commit:** `chore(plugin): scaffold ts-agent-teams-channel workspace package (Task 8.1)`
-    - SHA: `<filled after commit>`
+    - SHA: `009c7b6`
 
-- [ ] 8.2 Proxy server declares `capabilities.experimental['claude/channel']: {}` on initialize
+- [x] 8.2 Proxy server declares `capabilities.experimental['claude/channel']: {}` on initialize
   - kind: unit-test
   - **Spec scenario(s):**
     - `claude-channel-transport/spec.md` → Scenario: `proxy declares claude/channel experimental capability`
   - **Files:**
     - Create: `plugins/ts-agent-teams-channel/tests/proxy-capability.test.ts`
     - Create: `plugins/ts-agent-teams-channel/src/proxy.ts`
-  - [ ] **RED:** Spawn proxy, send `initialize` over stdio, assert `capabilities.experimental['claude/channel']` equals `{}`.
-  - [ ] **Verify RED:**
-    - Command: `pnpm -C plugins/ts-agent-teams-channel exec vitest run tests/proxy-capability.test.ts --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **GREEN:** Use `@modelcontextprotocol/sdk/server/mcp.js` `McpServer` with `capabilities: {experimental: {'claude/channel': {}}}`.  Minimal no-tool server sufficient at this step.
-  - [ ] **Verify GREEN:**
-    - Command: `pnpm -C plugins/ts-agent-teams-channel exec vitest run --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **REFACTOR:** None.
-  - [ ] **Verify REFACTOR:**
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
+  - [x] **RED:** Client connects to proxy via InMemoryTransport, asserts `capabilities.experimental["claude/channel"]` = {}.
+  - [x] **Verify RED:**
+    - Command: `pnpm -C plugins/ts-agent-teams-channel exec vitest run tests/proxy-capability.test.ts`
+    - **Observed output:**
+      ```
+      Error: Failed to load url ../src/proxy.js
+      Tests  no tests
+      ```
+  - [x] **GREEN:** `createProxyServer()` instantiates `McpServer` with `capabilities: {experimental: {'claude/channel': {}}}`.
+  - [x] **Verify GREEN:**
+    - Command: `pnpm -C plugins/ts-agent-teams-channel exec vitest run`
+    - Plugin typecheck: `pnpm -C plugins/ts-agent-teams-channel exec tsc --noEmit` (clean)
+    - **Observed output:**
+      ```
+      ✓ 1/1 pass  (Tests 1 passed)
+      tsc --noEmit: clean
+      ```
+  - [x] **REFACTOR:** None.
+  - [x] **Verify REFACTOR:** n/a.
+  - [x] **Commit:** `feat(plugin): proxy declares claude/channel experimental capability (Task 8.2)`
+    - SHA: `<filled after commit>`
 
 - [ ] 8.3 Proxy resolves `channel_session_id` from persistence (read if exists, generate+write if absent)
   - kind: unit-test
