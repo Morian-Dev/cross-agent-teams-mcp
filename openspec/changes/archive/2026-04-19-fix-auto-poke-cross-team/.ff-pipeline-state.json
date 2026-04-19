@@ -1,0 +1,15 @@
+{
+  "change": "fix-auto-poke-cross-team",
+  "phase": "done",
+  "iteration": 1,
+  "max_iterations": 3,
+  "last_critical_types": [],
+  "history": [
+    { "iteration": 1, "phase": "init", "status": "ok", "reason": "phase 1 artifacts pre-existing; user chose to skip regeneration", "at": "2026-04-19T21:00:00Z" },
+    { "iteration": 1, "phase": "apply", "status": "ok", "reason": "2 tasks complete (1.1, 1.2); 0 placeholders; tsc clean; SHAs 8572259, 29db6ba, e1bbceb", "at": "2026-04-19T21:20:00Z" },
+    { "iteration": 1, "phase": "review", "status": "pass", "reason": "0 findings across spec_compliance / code_quality / integration", "at": "2026-04-19T21:35:00Z" },
+    { "iteration": 1, "phase": "verify", "status": "pass", "reason": "6/6 dimensions pass; tsc clean; suite 253/257 (4 pre-existing baseline from tighten-agent-identity)", "at": "2026-04-19T21:50:00Z" },
+    { "iteration": 1, "phase": "sync", "status": "ok", "reason": "delta applied to openspec/specs/agent-interrupts/spec.md; openspec validate green", "at": "2026-04-19T22:00:00Z" }
+  ],
+  "updated_at": "2026-04-19T22:00:00Z"
+}
