@@ -73,7 +73,9 @@ export async function main(
       // can call bind_channel({channel_session_id}) to bind its own agent row.
       const content = [
         `ts-agent-teams: your channel_session_id is ${csid}.`,
-        `Please call bind_channel({channel_session_id: "${csid}"}) to complete binding.`
+        `If you have not called register_agent yet, call it first (the ts-agent-teams register_agent tool).`,
+        `Then call bind_channel({channel_session_id: "${csid}"}) to complete binding.`,
+        `If bind_channel returns unknown_agent, it means register_agent has not completed yet — call register_agent then retry bind_channel.`
       ].join(' ')
       relayChannelWake(hostServer, {
         content,
