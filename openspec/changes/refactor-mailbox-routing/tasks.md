@@ -1142,7 +1142,7 @@
       ```
   - [x] **Commit:** `feat(send-message): cross-team private delivery via to_team param`
     - Staging order: test before code
-    - **Commit SHA (fill during apply):** `<filled after commit>`
+    - **Commit SHA (fill during apply):** `cd44adba5746383eb1e499f9bd18c21b30d9ba1a`
 
 - [ ] 3.4 send_message auto-poke + retry across same-team and cross-team
   - kind: unit-test
