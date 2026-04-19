@@ -131,4 +131,33 @@ describe('broadcast_to_role', () => {
     expect(r.retry_scheduled).toBe(true)
     expect(r.retry_delays_s).toEqual([30, 180, 600])
   })
+
+  it('excludes role members with last_seen_at older than ONLINE_MS', async () => {
+    const { svc, db, cleanup } = setup()
+    cleanups.push(cleanup)
+    insertAgent(db, { agent_id: 'A', team: 'default', role: 'backend', name: 'A' })
+    insertAgent(db, { agent_id: 'F1', team: 'default', role: 'frontend', name: 'F1' })
+    insertAgent(db, { agent_id: 'F2', team: 'default', role: 'frontend', name: 'F2' })
+    insertAgent(db, { agent_id: 'F3', team: 'default', role: 'frontend', name: 'F3' })
+    const eightMinAgo = new Date(Date.now() - 8 * 60 * 1000).toISOString()
+    db.prepare('UPDATE agents SET last_seen_at=? WHERE agent_id=?').run(eightMinAgo, 'F2')
+
+    const r = await svc.broadcast({ from: 'A', to_role: 'frontend', body: 'hi', auto_poke: false })
+    if ('error' in r) throw new Error('expected success')
+    expect([...r.recipients].sort()).toEqual(['F1', 'F3'])
+    const f2Rows = db.prepare('SELECT id FROM messages WHERE to_agent_id=?').all('F2') as unknown[]
+    expect(f2Rows.length).toBe(0)
+  })
+
+  it('returns unknown_recipient when all role members are offline', async () => {
+    const { svc, db, cleanup } = setup()
+    cleanups.push(cleanup)
+    insertAgent(db, { agent_id: 'A', team: 'default', role: 'backend', name: 'A' })
+    insertAgent(db, { agent_id: 'F1', team: 'default', role: 'frontend', name: 'F1' })
+    const sixMinAgo = new Date(Date.now() - 6 * 60 * 1000).toISOString()
+    db.prepare('UPDATE agents SET last_seen_at=? WHERE agent_id=?').run(sixMinAgo, 'F1')
+
+    const r = await svc.broadcast({ from: 'A', to_role: 'frontend', body: 'hi', auto_poke: false })
+    expect(r).toEqual({ error: 'unknown_recipient' })
+  })
 })

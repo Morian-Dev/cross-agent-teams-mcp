@@ -162,4 +162,49 @@ describe('broadcast auto_poke default-on integration', () => {
     expect(r.retry_scheduled).toBe(true)
     expect(r.retry_delays_s).toEqual([30, 180, 600])
   })
+
+  it('excludes agents with last_seen_at older than ONLINE_MS from fan-out', async () => {
+    const { svc, db, cleanup } = setupService()
+    cleanups.push(cleanup)
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'backend', name: 'A' })
+    insertAgent(db, { agent_id: 'B', model: 'm', role: 'backend', name: 'B' })
+    insertAgent(db, { agent_id: 'C', model: 'm', role: 'backend', name: 'C' })
+    insertAgent(db, { agent_id: 'D', model: 'm', role: 'backend', name: 'D' })
+    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString()
+    const thirtySecAgo = new Date(Date.now() - 30 * 1000).toISOString()
+    db.prepare('UPDATE agents SET last_seen_at=? WHERE agent_id=?').run(tenMinAgo, 'C')
+    db.prepare('UPDATE agents SET last_seen_at=? WHERE agent_id=?').run(thirtySecAgo, 'D')
+
+    const r = await svc.broadcast({ from: 'A', body: 'x', auto_poke: false })
+    if ('error' in r) throw new Error('expected success')
+    expect([...r.recipients].sort()).toEqual(['B', 'D'])
+
+    const cRows = db.prepare('SELECT id FROM messages WHERE to_agent_id=?').all('C') as unknown[]
+    expect(cRows.length).toBe(0)
+
+    const ev = db.prepare('SELECT payload FROM events WHERE event_id=?').get(r.event_id) as
+      { payload: string }
+    const payload = JSON.parse(ev.payload) as { recipients: string[] }
+    expect([...payload.recipients].sort()).toEqual(['B', 'D'])
+  })
+
+  it('returns unknown_recipient when all non-sender agents are offline', async () => {
+    const { svc, db, cleanup } = setupService()
+    cleanups.push(cleanup)
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'backend', name: 'A' })
+    insertAgent(db, { agent_id: 'B', model: 'm', role: 'backend', name: 'B' })
+    const sixMinAgo = new Date(Date.now() - 6 * 60 * 1000).toISOString()
+    db.prepare('UPDATE agents SET last_seen_at=? WHERE agent_id=?').run(sixMinAgo, 'B')
+
+    const eventsBefore = (db.prepare('SELECT COUNT(*) as c FROM events').get() as { c: number }).c
+    const msgsBefore = (db.prepare('SELECT COUNT(*) as c FROM messages').get() as { c: number }).c
+
+    const r = await svc.broadcast({ from: 'A', body: 'x', auto_poke: false })
+    expect(r).toEqual({ error: 'unknown_recipient' })
+
+    const eventsAfter = (db.prepare('SELECT COUNT(*) as c FROM events').get() as { c: number }).c
+    const msgsAfter = (db.prepare('SELECT COUNT(*) as c FROM messages').get() as { c: number }).c
+    expect(eventsAfter).toBe(eventsBefore)
+    expect(msgsAfter).toBe(msgsBefore)
+  })
 })
