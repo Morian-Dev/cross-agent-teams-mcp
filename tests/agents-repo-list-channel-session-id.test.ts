@@ -20,13 +20,10 @@ describe('AgentsRepo.list channel_session_id', () => {
     const db = openDb(join(dir, 'data.db'))
     applySchema(db)
     const repo = new AgentsRepo(db)
-    const a = repo.register({
-      model: 'opus', role: 'backend', name: 'alice',
-      channel_session_id: 'csid-abc'
-    })
-    const b = repo.register({
-      model: 'sonnet', role: 'backend', name: 'bob'
-    })
+    const a = repo.register({ model: 'opus', role: 'backend', name: 'alice' })
+    // Simulate bind_channel writing the column (the only writer after the pivot).
+    db.prepare(`UPDATE agents SET channel_session_id=? WHERE agent_id=?`).run('csid-abc', a.agent_id)
+    const b = repo.register({ model: 'sonnet', role: 'backend', name: 'bob' })
     const rows = repo.list({ team: 'default' })
     const aRow = rows.find(r => r.agent_id === a.agent_id)
     const bRow = rows.find(r => r.agent_id === b.agent_id)

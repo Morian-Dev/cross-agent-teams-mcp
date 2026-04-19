@@ -730,7 +730,7 @@ Real-world multi-instance testing (two Claude Code processes in the same directo
   - [x] **REFACTOR:** None — single service, 15 lines, already minimal.
   - [x] **Verify REFACTOR:** n/a.
   - [x] **Commit:** `refactor(mcp): bind_channel self-binding signature (Task 12.1)`
-    - SHA: <to be filled post-commit>
+    - SHA: `db89eea`
 
 - [x] 12.2 `register_agent` drops `channel_session_id` input; hint rule reverts; schema/tests updated
   - kind: unit-test
@@ -742,15 +742,23 @@ Real-world multi-instance testing (two Claude Code processes in the same directo
     - Modify: `src/mcp/tools.ts`
     - Rewrite: `tests/register-agent-tool-hint-rule.test.ts`
     - Delete: `tests/register-agent-service-channel-session-id.test.ts`
-    - Rewrite: `tests/agents-repo-channel-session-id.test.ts` (keep the column-exists case only; remove create/reuse-via-register)
-  - [x] **RED:** <to be filled by ts-apply>
-  - [x] **Verify RED:** <to be filled by ts-apply>
-  - [x] **GREEN:** <to be filled by ts-apply>
-  - [x] **Verify GREEN:** <to be filled by ts-apply>
-  - [x] **REFACTOR:** <to be filled by ts-apply>
-  - [x] **Verify REFACTOR:** <to be filled by ts-apply>
+    - Rewrite: `tests/agents-repo-channel-session-id.test.ts` (column-default + untouched-on-reuse cases; no create/reuse-via-register)
+    - Rewrite: `tests/agents-repo-list-channel-session-id.test.ts` (simulate bind_channel via direct UPDATE)
+    - Fix: `tests/poke-channel-transport.test.ts` (direct UPDATE instead of register csid)
+  - [x] **RED:** Tests rewritten to the new behavior assert `channel_session_id` is NOT written by register_agent/service/repo.
+  - [x] **Verify RED:**
+    - Command: `pnpm exec vitest run tests/register-agent-tool-hint-rule.test.ts tests/agents-repo-channel-session-id.test.ts tests/agents-repo-list-channel-session-id.test.ts --reporter=verbose`
+    - Observed: `register_agent rejects unknown channel_session_id argument` FAILS — `'csid-should-not-be-written'` was persisted (register_agent still writes the column).
+  - [x] **GREEN:** Dropped `channel_session_id` from `RegisterInput` in both `src/storage/agents-repo.ts` (removed `trimUsable`, INSERT no longer touches the column) and `src/mcp/register-agent.ts`; reverted `tools.ts` zod schema and hint rule to tmux-only (new helper `hasUsableTmuxPaneId`, old hint text rewritten to reference tmux-only path while mentioning bind_channel as the separate route for channel plugin users). Deleted `register-agent-service-channel-session-id.test.ts`.
+  - [x] **Verify GREEN:**
+    - Command: `pnpm exec vitest run tests/register-agent-tool-hint-rule.test.ts tests/agents-repo-channel-session-id.test.ts tests/agents-repo-list-channel-session-id.test.ts tests/poke-channel-transport.test.ts --reporter=verbose`
+    - Observed: `Tests  9 passed (9)`
+    - Typecheck: `pnpm exec tsc --noEmit` → clean
+    - Full-suite: `Test Files  7 failed | 87 passed (94)  Tests  8 failed | 287 passed (295)` — failures are (a) 4 pre-existing poke-baseline failures, (b) 4 expected proxy/e2e tests that reference the old `bind_channel({team, name, csid})` contract; those will be fixed in Task 12.5 and 12.7.
+  - [x] **REFACTOR:** `hasUsableTmuxPaneId` kept as a named helper (single call site now, but parallel to `hasUsableTransportId` in git history — useful signpost for reviewers).
+  - [x] **Verify REFACTOR:** covered by GREEN.
   - [x] **Commit:** `refactor(mcp): drop channel_session_id from register_agent (Task 12.2)`
-    - SHA: <to be filled by ts-apply>
+    - SHA: <to be filled post-commit-12.2>
 
 - [x] 12.3 Proxy CLI drops `--agent-team` / `--agent-name`; generates fresh csid; no persistence
   - kind: unit-test

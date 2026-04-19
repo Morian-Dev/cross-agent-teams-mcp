@@ -8,7 +8,6 @@ export interface RegisterInput {
   role?: string
   team?: string
   tmux_pane_id?: string
-  channel_session_id?: string
 }
 
 export type RegisterResult =
@@ -37,8 +36,7 @@ export class RegisterAgentService {
       name: input.name,
       role,
       team,
-      tmux_pane_id: input.tmux_pane_id,
-      channel_session_id: input.channel_session_id
+      tmux_pane_id: input.tmux_pane_id
     })
   }
 

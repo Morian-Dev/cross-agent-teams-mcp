@@ -15,85 +15,32 @@ function freshRepo() {
   return { dir, db, repo: new AgentsRepo(db) }
 }
 
-describe('AgentsRepo channel_session_id', () => {
+describe('AgentsRepo channel_session_id column default', () => {
   const cleanups: string[] = []
   afterEach(() => {
     cleanups.forEach(d => rmSync(d, { recursive: true, force: true }))
     cleanups.length = 0
   })
 
-  it('create-path persists channel_session_id when provided', () => {
+  it('register() creates rows with channel_session_id=NULL (bind_channel is the only writer)', () => {
     const { dir, db, repo } = freshRepo(); cleanups.push(dir)
-    const r = repo.register({
-      model: 'opus', role: 'backend', name: 'alice',
-      channel_session_id: 'csid-abc'
-    })
+    const r = repo.register({ model: 'opus', role: 'backend', name: 'alice' })
     const row = db.prepare(`SELECT channel_session_id FROM agents WHERE agent_id=?`).get(r.agent_id) as
       { channel_session_id: string | null }
-    expect(row.channel_session_id).toBe('csid-abc')
+    expect(row.channel_session_id).toBeNull()
     db.close()
   })
 
-  it('create-path stores NULL when channel_session_id omitted or blank', () => {
+  it('re-register() leaves channel_session_id untouched (bind_channel owns that column)', () => {
     const { dir, db, repo } = freshRepo(); cleanups.push(dir)
     const r1 = repo.register({ model: 'opus', role: 'backend', name: 'alice' })
-    const row1 = db.prepare(`SELECT channel_session_id FROM agents WHERE agent_id=?`).get(r1.agent_id) as
-      { channel_session_id: string | null }
-    expect(row1.channel_session_id).toBeNull()
-
-    const r2 = repo.register({
-      model: 'opus', role: 'backend', name: 'bob',
-      channel_session_id: '   '
-    })
-    const row2 = db.prepare(`SELECT channel_session_id FROM agents WHERE agent_id=?`).get(r2.agent_id) as
-      { channel_session_id: string | null }
-    expect(row2.channel_session_id).toBeNull()
-    db.close()
-  })
-
-  it('reuse-path preserves prior channel_session_id when omitted', () => {
-    const { dir, db, repo } = freshRepo(); cleanups.push(dir)
-    const r1 = repo.register({
-      model: 'opus', role: 'backend', name: 'alice',
-      channel_session_id: 'csid-abc'
-    })
-    // Re-register without csid
+    // Simulate bind_channel having written a value.
+    db.prepare(`UPDATE agents SET channel_session_id=? WHERE agent_id=?`).run('csid-abc', r1.agent_id)
+    // Re-register — should not clear or overwrite.
     repo.register({ model: 'sonnet', role: 'backend', name: 'alice' })
     const row = db.prepare(`SELECT channel_session_id FROM agents WHERE agent_id=?`).get(r1.agent_id) as
       { channel_session_id: string | null }
     expect(row.channel_session_id).toBe('csid-abc')
-    db.close()
-  })
-
-  it('reuse-path preserves prior channel_session_id when blank provided', () => {
-    const { dir, db, repo } = freshRepo(); cleanups.push(dir)
-    const r1 = repo.register({
-      model: 'opus', role: 'backend', name: 'alice',
-      channel_session_id: 'csid-abc'
-    })
-    repo.register({
-      model: 'sonnet', role: 'backend', name: 'alice',
-      channel_session_id: '   '
-    })
-    const row = db.prepare(`SELECT channel_session_id FROM agents WHERE agent_id=?`).get(r1.agent_id) as
-      { channel_session_id: string | null }
-    expect(row.channel_session_id).toBe('csid-abc')
-    db.close()
-  })
-
-  it('reuse-path overwrites channel_session_id when new non-blank provided', () => {
-    const { dir, db, repo } = freshRepo(); cleanups.push(dir)
-    const r1 = repo.register({
-      model: 'opus', role: 'backend', name: 'alice',
-      channel_session_id: 'csid-old'
-    })
-    repo.register({
-      model: 'opus', role: 'backend', name: 'alice',
-      channel_session_id: 'csid-new'
-    })
-    const row = db.prepare(`SELECT channel_session_id FROM agents WHERE agent_id=?`).get(r1.agent_id) as
-      { channel_session_id: string | null }
-    expect(row.channel_session_id).toBe('csid-new')
     db.close()
   })
 })

@@ -21,11 +21,11 @@ async function connectClient(host: string, port: number): Promise<{ c: Client; t
   return { c, t }
 }
 
-describe('register_agent tool hint rule (tmux + channel)', () => {
+describe('register_agent tool hint rule (tmux only)', () => {
   const cleanups: string[] = []
   afterEach(() => { cleanups.forEach(d => rmSync(d, { recursive: true, force: true })); cleanups.length = 0 })
 
-  it('hint present when neither tmux_pane_id nor channel_session_id provided', async () => {
+  it('hint present when tmux_pane_id is not provided', async () => {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
     const { c, t } = await connectClient(host, port)
@@ -39,12 +39,11 @@ describe('register_agent tool hint rule (tmux + channel)', () => {
     expect(obj.agent_id).toBeDefined()
     expect(typeof obj.hint).toBe('string')
     expect(obj.hint).toMatch(/tmux_pane_id/i)
-    expect(obj.hint).toMatch(/channel_session_id/i)
 
     await t.close(); await app.close()
   })
 
-  it('hint suppressed when tmux_pane_id alone is provided', async () => {
+  it('hint suppressed when tmux_pane_id is provided', async () => {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
     const { c, t } = await connectClient(host, port)
@@ -59,52 +58,29 @@ describe('register_agent tool hint rule (tmux + channel)', () => {
     await t.close(); await app.close()
   })
 
-  it('hint suppressed when channel_session_id alone is provided', async () => {
+  it('register_agent rejects unknown channel_session_id argument (not in schema)', async () => {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
     const { c, t } = await connectClient(host, port)
 
+    // Passing channel_session_id must either be silently ignored (not persisted)
+    // or rejected; either way the agent is created and the persisted row has
+    // channel_session_id=NULL because register_agent is no longer a writer for it.
     const resp = await c.callTool({
       name: 'register_agent',
       arguments: {
-        model: 'opus-4-7', role: 'frontend', name: 'alice',
-        channel_session_id: 'csid-abc'
+        model: 'opus-4-7', role: 'frontend', name: 'alice', tmux_pane_id: '%42',
+        channel_session_id: 'csid-should-not-be-written'
       }
     })
     const obj = await parseTool(resp)
     expect(obj.agent_id).toBeDefined()
-    expect(obj.hint).toBeUndefined()
-    await t.close(); await app.close()
-  })
-
-  it('hint present when channel_session_id is blank', async () => {
-    const dir = tmp(); cleanups.push(dir)
-    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
-    const { c, t } = await connectClient(host, port)
-
-    const resp = await c.callTool({
-      name: 'register_agent',
-      arguments: {
-        model: 'opus-4-7', role: 'frontend', name: 'alice',
-        channel_session_id: '   '
-      }
-    })
-    const obj = await parseTool(resp)
-    expect(typeof obj.hint).toBe('string')
-    await t.close(); await app.close()
-  })
-
-  it('error envelope never carries hint', async () => {
-    const dir = tmp(); cleanups.push(dir)
-    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
-    const { c, t } = await connectClient(host, port)
-
-    const resp = await c.callTool({
-      name: 'register_agent',
-      arguments: { model: 'opus-4-7', role: 'frontend', name: 'alice' }
-    })
-    const obj = await parseTool(resp)
-    if (obj.error !== undefined) expect(obj.hint).toBeUndefined()
+    // The agents row should have channel_session_id=NULL because bind_channel is the only writer.
+    const listResp = await c.callTool({ name: 'list_agents', arguments: {} })
+    const list = await parseTool(listResp)
+    const agents = list.agents as Array<{ name: string; channel_session_id: string | null }>
+    const aliceRow = agents.find(a => a.name === 'alice')
+    expect(aliceRow?.channel_session_id).toBeNull()
 
     await t.close(); await app.close()
   })

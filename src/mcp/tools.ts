@@ -56,14 +56,9 @@ const BROADCAST_TO_ROLE_DESC = [
   'Returns unknown_recipient when no same-team agent matches to_role.'
 ].join(' ')
 
-function hasUsableTransportId(args: {
-  tmux_pane_id?: string; channel_session_id?: string
-}): boolean {
+function hasUsableTmuxPaneId(args: { tmux_pane_id?: string }): boolean {
   const tp = args.tmux_pane_id
-  const cs = args.channel_session_id
-  const tpOk = typeof tp === 'string' && tp.trim().length > 0
-  const csOk = typeof cs === 'string' && cs.trim().length > 0
-  return tpOk || csOk
+  return typeof tp === 'string' && tp.trim().length > 0
 }
 
 export function buildAutoPokeHint(
@@ -191,13 +186,12 @@ export function registerBusinessTools(
         name: z.string().min(1).refine(v => v.trim().length > 0, { message: 'name must not be empty' }),
         role: z.string().optional(),
         team: z.string().optional(),
-        tmux_pane_id: z.string().optional(),
-        channel_session_id: z.string().optional()
+        tmux_pane_id: z.string().optional()
       }
     },
     async (args: {
       model: string; name: string; role?: string; team?: string;
-      tmux_pane_id?: string; channel_session_id?: string
+      tmux_pane_id?: string
     }) => {
       // connection_id for collision detection must be the stable session id,
       // NOT agentIdHolder.current (which becomes the agent_id after success).
@@ -210,8 +204,7 @@ export function registerBusinessTools(
           name: args.name,
           role: args.role,
           team: args.team,
-          tmux_pane_id: args.tmux_pane_id,
-          channel_session_id: args.channel_session_id
+          tmux_pane_id: args.tmux_pane_id
         })
         if ('agent_id' in res) {
           if (onRegisterSuccess) {
@@ -219,10 +212,10 @@ export function registerBusinessTools(
           } else if (fanout) {
             try { fanout.rebind(res.agent_id, res.team) } catch { /* best-effort */ }
           }
-          if (!hasUsableTransportId(args)) {
+          if (!hasUsableTmuxPaneId(args)) {
             return {
               ...res,
-              hint: "No transport identifier provided — neither tmux_pane_id nor channel_session_id. Cross-agent poke delivery is off until you re-register with at least one. For tmux_pane_id: run `echo \"$TMUX_PANE\"` in your shell tool (the env var is set per-pane by tmux). Fall back to `tmux display-message -p '#{pane_id}'` only if $TMUX_PANE is empty. For channel_session_id: it is produced by the ts-agent-teams channel plugin when running Claude Code with `--channels plugin:ts-agent-teams-channel@dev`; the plugin's proxy writes the id via bind_channel. Most coding agents (Claude Code, opencode, codex) run inside tmux, so tmux_pane_id is usually the right field to fill."
+              hint: "No tmux_pane_id provided — cross-agent poke delivery via tmux is off until you re-register with a usable pane id. Run `echo \"$TMUX_PANE\"` in your shell tool (the env var is set per-pane by tmux); fall back to `tmux display-message -p '#{pane_id}'` only if $TMUX_PANE is empty. Most coding agents (Claude Code, opencode, codex) run inside tmux, so this is usually available. Claude Code users who loaded the ts-agent-teams channel plugin can also route pokes via channel_session_id — the plugin's proxy emits a startup <channel> notification telling Claude to call bind_channel({channel_session_id}); that path does not involve register_agent."
             }
           }
         }
