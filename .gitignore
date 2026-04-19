@@ -109,3 +109,6 @@ coverage/
 
 # Debug reports (transient per-session artifacts)
 .ff-debug-report.md
+
+# Local git worktrees
+worktrees/
