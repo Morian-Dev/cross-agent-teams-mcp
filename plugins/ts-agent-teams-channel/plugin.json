@@ -1,0 +1,6 @@
+{
+  "name": "ts-agent-teams-channel",
+  "version": "0.1.0",
+  "description": "Claude Code channel proxy for ts-agent-teams daemon",
+  "entry": "dist/cli.js"
+}

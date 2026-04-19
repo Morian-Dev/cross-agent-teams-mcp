@@ -374,11 +374,11 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - [x] **REFACTOR:** Updated the three affected mocks/assertions to include `transport_used` field; legitimate contract change as the spec notes.
   - [x] **Verify REFACTOR:** covered by full suite.
   - [x] **Commit:** `feat(mcp): poke uses transport dispatcher, carries transport_used (Task 7.2)`
-    - SHA: `<filled after commit>`
+    - SHA: `72c074d`
 
 ## 8. Channel proxy plugin package
 
-- [ ] 8.1 Scaffold `plugins/ts-agent-teams-channel/` package (package.json, tsconfig.json, vitest.config.ts, plugin.json)
+- [x] 8.1 Scaffold `plugins/ts-agent-teams-channel/` package (package.json, tsconfig.json, vitest.config.ts, plugin.json)
   - kind: build-check
   - **Spec scenario(s):** (supporting infra; no scenario)
   - **Files:**
@@ -387,9 +387,17 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
     - Create: `plugins/ts-agent-teams-channel/vitest.config.ts`
     - Create: `plugins/ts-agent-teams-channel/plugin.json`
     - Create: `plugins/ts-agent-teams-channel/README.md`
-    - Modify: `pnpm-workspace.yaml` (add `plugins/*`)
-  - [ ] **Exit command:** `pnpm -C plugins/ts-agent-teams-channel exec tsc --noEmit`
-  - [ ] **Observed output (fill during apply):** `<to be filled by ts-apply>`
+    - Create: `plugins/ts-agent-teams-channel/src/cli.ts` (placeholder, populated in 8.2-8.7)
+    - Create: `pnpm-workspace.yaml`
+  - [x] **Exit command:** `pnpm -C plugins/ts-agent-teams-channel exec tsc --noEmit`
+  - [x] **Observed output:**
+    ```
+    (no output — exit 0)
+    Also `pnpm install` succeeded for 2 workspace packages.
+    Also root `pnpm exec tsc --noEmit` stayed clean.
+    ```
+  - [x] **Commit:** `chore(plugin): scaffold ts-agent-teams-channel workspace package (Task 8.1)`
+    - SHA: `<filled after commit>`
 
 - [ ] 8.2 Proxy server declares `capabilities.experimental['claude/channel']: {}` on initialize
   - kind: unit-test
