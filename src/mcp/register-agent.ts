@@ -14,8 +14,8 @@ export type RegisterResult =
   | { agent_id: string; team: string }
   | { error: 'agent_id_collision' }
 
-function identityKey(team: string, name: string, role: string): string {
-  return `${team}\u0000${name}\u0000${role}`
+function identityKey(team: string, name: string): string {
+  return `${team}\u0000${name}`
 }
 
 export class RegisterAgentService {
@@ -27,7 +27,7 @@ export class RegisterAgentService {
   register(input: RegisterInput): RegisterResult {
     const team = input.team ?? 'default'
     const role = input.role ?? 'default'
-    const key = identityKey(team, input.name, role)
+    const key = identityKey(team, input.name)
     const bound = this.connections.get(key)
     if (bound && bound !== input.connection_id) return { error: 'agent_id_collision' }
     this.connections.set(key, input.connection_id)
