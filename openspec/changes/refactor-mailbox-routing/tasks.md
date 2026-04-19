@@ -358,7 +358,7 @@
     - Staging order: test file BEFORE production file
     - **Commit SHA (fill during apply):** `6c98bf478582f69e140506643df0fcdba26aa56f`
 
-- [ ] 1.3 `EventsOutbox.since({team})` filters by `to_team`, excluding outbound cross-team events
+- [x] 1.3 `EventsOutbox.since({team})` filters by `to_team`, excluding outbound cross-team events
   - kind: unit-test
   - **Spec scenario(s):**
     - `events-outbox/spec.md` → Scenario: `Cursor-based pagination returns events targeted at the team`
@@ -366,7 +366,7 @@
   - **Files:**
     - Create: `tests/events-outbox-since-to-team.test.ts`
     - Modify: `src/storage/events-outbox.ts` (method `since`, already updated in 1.2 — this task verifies + tightens)
-  - [ ] **RED:** Write failing test — `tests/events-outbox-since-to-team.test.ts`
+  - [x] **RED:** Write failing test — `tests/events-outbox-since-to-team.test.ts`
     - Behavior under test: Given mixed events, `since({team:'alpha'})` returns only events whose `to_team='alpha'`, excluding outbound `from_team='alpha', to_team='beta'`.
     - Expected failure reason: If 1.2 is already merged, this may pass. The test still exists as a regression guard. Write it to actively fail against a hypothetical regression: confirm it passes ONLY with `to_team` filter. To make it RED first, temporarily mutate `since` to use `from_team` OR run it against the 1.2 intermediate state.
     ```typescript
@@ -415,29 +415,72 @@
       })
     })
     ```
-  - [ ] **Verify RED:** Temporarily change `since` filter to `from_team` (or run against pre-1.2 code) to confirm test can fail. Then revert.
+  - [x] **Verify RED:** Temporarily change `since` filter to `from_team` (or run against pre-1.2 code) to confirm test can fail. Then revert.
     - Command: `npx vitest run tests/events-outbox-since-to-team.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ❯ tests/events-outbox-since-to-team.test.ts (2 tests | 1 failed) 9ms
+         × EventsOutbox.since filters by to_team > returns only events with to_team matching, excluding outbound cross-team 7ms
+           → expected [ 1, 2, 3, 5 ] to deeply equal [ 1, 2, 4, 5 ]
+
+      ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+       FAIL  tests/events-outbox-since-to-team.test.ts > EventsOutbox.since filters by to_team > returns only events with to_team matching, excluding outbound cross-team
+      AssertionError: expected [ 1, 2, 3, 5 ] to deeply equal [ 1, 2, 4, 5 ]
+
+      - Expected
+      + Received
+
+        Array [
+          1,
+          2,
+      -   4,
+      +   3,
+          5,
+        ]
+
+       Test Files  1 failed (1)
+            Tests  1 failed | 1 passed (2)
+
+      Note: RED forced by temporarily mutating since filter from `to_team = ?` to `from_team = ?`. Outbound event (id=3, from alpha→beta) leaked in; inbound event (id=4, from beta→alpha) missing. Filter was reverted to `to_team = ?` before GREEN step.
       ```
-  - [ ] **GREEN:** Ensure `since` in `src/storage/events-outbox.ts` uses `to_team = ?` filter (already set by 1.2). No code change needed if 1.2 is in. If task is iterated standalone, the SQL line is:
+  - [x] **GREEN:** Ensure `since` in `src/storage/events-outbox.ts` uses `to_team = ?` filter (already set by 1.2). No code change needed if 1.2 is in. If task is iterated standalone, the SQL line is:
     ```typescript
     `SELECT * FROM events WHERE to_team = ? AND event_id > ? ORDER BY event_id ASC LIMIT ?`
     ```
-  - [ ] **Verify GREEN:** Run test.
+  - [x] **Verify GREEN:** Run test.
     - Command: `npx vitest run tests/events-outbox-since-to-team.test.ts`
     - Full-suite command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ✓ tests/events-outbox-since-to-team.test.ts (2 tests) 6ms
+
+       Test Files  1 passed (1)
+            Tests  2 passed (2)
+
+      Note: Full `pnpm test` intentionally deferred to REFACTOR step.
       ```
-  - [ ] **REFACTOR:** Ensure existing `tests/events-outbox.test.ts` still reflects the new semantic (no leakage). Adjust existing test fixtures to pass `from_team` + `to_team` consistently.
-  - [ ] **Verify REFACTOR:** Full suite.
+  - [x] **REFACTOR:** Ensure existing `tests/events-outbox.test.ts` still reflects the new semantic (no leakage). Adjust existing test fixtures to pass `from_team` + `to_team` consistently.
+  - [x] **Verify REFACTOR:** Full suite.
     - Command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       Test Files  3 failed | 70 passed (73)
+            Tests  4 failed | 218 passed (222)
+
+      This task's suites (PASS):
+        - tests/events-outbox-since-to-team.test.ts   (2 passed — new, this task)
+        - tests/events-outbox.test.ts                 (3 passed — REFACTOR updated: from_team+to_team fixtures, idx name `idx_events_to_team_eventid`, column set includes from_team+to_team)
+        - tests/events-outbox-append.test.ts          (2 passed — task 1.2)
+
+      Remaining failing suites (pre-existing, addressed by later tasks 1.4 / 3.x / 4.x / 5.x):
+        - tests/cleanup-interval.test.ts   (INSERT INTO events (team, ...) — task 1.4)
+        - tests/events-cleanup.test.ts     (INSERT INTO events (team, ...) — task 1.4)
+        - tests/messages-schema.test.ts    (asserts legacy messages.team column, now from_team+to_team — later messages task)
       ```
   - [ ] **Commit:** `test(events-outbox): verify since() filters by to_team excluding outbound`
     - Staging order: test file before any code tweak
