@@ -7,6 +7,7 @@ export interface RegisterInput {
   role?: string
   team?: string
   tmux_pane_id?: string
+  channel_session_id?: string
 }
 
 export interface AgentListRow {
@@ -20,6 +21,12 @@ export interface AgentListRow {
 }
 
 export const ONLINE_MS = 5 * 60 * 1000
+
+function trimUsable(v: string | undefined | null): string | null {
+  if (typeof v !== 'string') return null
+  const trimmed = v.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
 
 export class AgentsRepo {
   constructor(private db: Database.Database) {}
@@ -36,15 +43,17 @@ export class AgentsRepo {
     const name = input.name
     const now = new Date().toISOString()
     const newId = randomUUID()
+    const csid = trimUsable(input.channel_session_id)
     this.db.prepare(
-      `INSERT INTO agents (agent_id, team, role, name, model, registered_at, last_seen_at, tmux_pane_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO agents (agent_id, team, role, name, model, registered_at, last_seen_at, tmux_pane_id, channel_session_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (team, name) DO UPDATE SET
          role = excluded.role,
          model = excluded.model,
          last_seen_at = excluded.last_seen_at,
-         tmux_pane_id = COALESCE(excluded.tmux_pane_id, tmux_pane_id)`
-    ).run(newId, team, role, name, input.model, now, now, input.tmux_pane_id ?? null)
+         tmux_pane_id = COALESCE(excluded.tmux_pane_id, tmux_pane_id),
+         channel_session_id = COALESCE(excluded.channel_session_id, channel_session_id)`
+    ).run(newId, team, role, name, input.model, now, now, input.tmux_pane_id ?? null, csid)
     const row = this.db.prepare(`SELECT agent_id FROM agents WHERE team=? AND name=?`).get(team, name) as { agent_id: string }
     return { agent_id: row.agent_id, team }
   }

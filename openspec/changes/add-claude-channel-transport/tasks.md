@@ -37,11 +37,11 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - [x] **Verify REFACTOR:**
     - **Observed output:** None run; no refactor performed.
   - [x] **Commit:** `feat(storage): add channel_session_id column to agents table (Task 1.1)`
-    - SHA: `<filled after commit>`
+    - SHA: `24cee92`
 
 ## 2. AgentsRepo: accept, persist, and return `channel_session_id`
 
-- [ ] 2.1 `RegisterInput` accepts `channel_session_id?: string`; `register()` writes/preserves/overwrites per spec
+- [x] 2.1 `RegisterInput` accepts `channel_session_id?: string`; `register()` writes/preserves/overwrites per spec
   - kind: unit-test
   - **Spec scenario(s):**
     - `agent-registry/spec.md` → Scenario: `register_agent persists channel_session_id when provided on create`
@@ -50,18 +50,29 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - **Files:**
     - Create: `tests/agents-repo-channel-session-id.test.ts`
     - Modify: `src/storage/agents-repo.ts`
-  - [ ] **RED:** Three cases — (a) create-path persists csid, (b) reuse-path omission preserves prior csid, (c) reuse-path non-blank overwrites.  Trim-empty treated as omission.  Expected failure: `RegisterInput` has no `channel_session_id` field; repo doesn't write that column.
-  - [ ] **Verify RED:**
+  - [x] **RED:** 5 cases — create persists csid, create stores NULL when omitted/blank, reuse preserves when omitted, reuse preserves when blank, reuse overwrites non-blank.
+  - [x] **Verify RED:**
     - Command: `pnpm exec vitest run tests/agents-repo-channel-session-id.test.ts --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **GREEN:** Extend `RegisterInput` with optional `channel_session_id?: string`.  Trim-usable helper for `csid` (blank → undefined).  INSERT includes the column; ON CONFLICT sets `channel_session_id = COALESCE(excluded.channel_session_id, agents.channel_session_id)` — preserves when excluded is NULL, overwrites when non-null.
-  - [ ] **Verify GREEN:**
+    - **Observed output:**
+      ```
+      Test Files  1 failed (1)   Tests  4 failed | 1 passed (5)
+      Main failure: SqliteError via INSERT column mismatch and
+      `expected null to be 'csid-new'` — RegisterInput has no csid field.
+      ```
+  - [x] **GREEN:** Extended `RegisterInput` with `channel_session_id?: string`; added `trimUsable()` helper; INSERT now writes the new column; ON CONFLICT uses `COALESCE(excluded.channel_session_id, channel_session_id)` to preserve-when-null / overwrite-when-provided.
+  - [x] **Verify GREEN:**
     - Command: `pnpm exec vitest run tests/agents-repo-channel-session-id.test.ts --reporter=verbose`
-    - Full-suite: `pnpm exec vitest run --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **REFACTOR:** Consolidate `trimUsable()` helper if it appears twice; otherwise none.
-  - [ ] **Verify REFACTOR:**
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
+    - Full-suite: `pnpm exec vitest run`
+    - **Observed output:**
+      ```
+      ✓ 5/5 tests pass
+      Full suite: Test Files  3 failed | 79 passed (82)  Tests  4 failed | 260 passed (264)
+      (same 4 pre-existing poke failures, unrelated)
+      ```
+  - [x] **REFACTOR:** `trimUsable()` extracted as module-level helper at the first use site; single call site currently (will be reused in later tasks).
+  - [x] **Verify REFACTOR:** n/a (no behavior change).
+  - [x] **Commit:** `feat(storage): persist channel_session_id on register (Task 2.1)`
+    - SHA: `<filled after commit>`
 
 - [ ] 2.2 `AgentsRepo.list()` includes `channel_session_id` in each row; `AgentListRow` type extended
   - kind: unit-test
