@@ -13,6 +13,7 @@ export interface RegistrationConfig {
 
 export interface RegistrationSequenceResult {
   order: string[]
+  bindAttempts: number
   lastBindResult: unknown
   lastSubscribeResult: unknown
   client: Client
@@ -74,7 +75,9 @@ export async function runRegistrationSequence(
   let delayMs = initial
   let bindResult: ToolResult
   const maxAttempts = 20
+  let bindAttempts = 0
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    bindAttempts++
     const resp = await client.callTool({
       name: 'bind_channel',
       arguments: {
@@ -106,6 +109,7 @@ export async function runRegistrationSequence(
 
   return {
     order,
+    bindAttempts,
     lastBindResult: bindResult!,
     lastSubscribeResult: subResult,
     client,
