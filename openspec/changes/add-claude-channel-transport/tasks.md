@@ -203,11 +203,11 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - [x] **REFACTOR:** Named the `Entry` type for readability.
   - [x] **Verify REFACTOR:** covered by GREEN tests.
   - [x] **Commit:** `feat(daemon): add ChannelWakeFanout primitive (Task 4.1)`
-    - SHA: `<filled after commit>`
+    - SHA: `420e76b`
 
 ## 5. `sendChannelWake` daemon function
 
-- [ ] 5.1 `sendChannelWake(csid, {content, meta})` emits `notifications/channel_wake`, filters meta keys, returns `no_subscriber`
+- [x] 5.1 `sendChannelWake(csid, {content, meta})` emits `notifications/channel_wake`, filters meta keys, returns `no_subscriber`
   - kind: unit-test
   - **Spec scenario(s):**
     - `claude-channel-transport/spec.md` → Scenario: `sendChannelWake emits notifications/channel_wake payload`
@@ -216,18 +216,27 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - **Files:**
     - Create: `tests/channel-wake-send.test.ts`
     - Create: `src/daemon/channel-wake-send.ts`
-  - [ ] **RED:** Three cases — (a) clean payload emitted as `{jsonrpc:'2.0', method:'notifications/channel_wake', params:{content, meta}}`, (b) `bad-key` dropped, (c) no sink → `{ok:false, reason:'no_subscriber'}`.
-  - [ ] **Verify RED:**
-    - Command: `pnpm exec vitest run tests/channel-wake-send.test.ts --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **GREEN:** Module exports `sendChannelWake(fanout, csid, {content, meta})`.  Meta key filter uses `/^[A-Za-z0-9_]+$/`; drop non-matching keys.  If no sink, return `{ok:false, reason:'no_subscriber'}`.  Else call sink with the JSON-RPC shape and return `{ok:true}`.
-  - [ ] **Verify GREEN:**
-    - Command: `pnpm exec vitest run tests/channel-wake-send.test.ts --reporter=verbose`
-    - Full-suite: `pnpm exec vitest run --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **REFACTOR:** Factor out `META_KEY_RE` as module const.
-  - [ ] **Verify REFACTOR:**
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
+  - [x] **RED:** 3 cases — clean payload, bad-key dropped, no subscriber returns no_subscriber.
+  - [x] **Verify RED:**
+    - Command: `pnpm exec vitest run tests/channel-wake-send.test.ts`
+    - **Observed output:**
+      ```
+      Error: Failed to load url ../src/daemon/channel-wake-send.js
+      Tests  no tests
+      ```
+  - [x] **GREEN:** Implemented `sendChannelWake(fanout, csid, {content, meta})` in `src/daemon/channel-wake-send.ts`; `META_KEY_RE` module const; emits the JSON-RPC shape and returns `{ok: true}` or `{ok: false, reason: 'no_subscriber'}`.
+  - [x] **Verify GREEN:**
+    - Command: `pnpm exec vitest run tests/channel-wake-send.test.ts`
+    - Full-suite: `pnpm exec vitest run`
+    - **Observed output:**
+      ```
+      ✓ 3/3 tests pass
+      Full suite: Test Files  3 failed | 84 passed (87)  Tests  4 failed | 275 passed (279)
+      ```
+  - [x] **REFACTOR:** `META_KEY_RE` factored out at module top.
+  - [x] **Verify REFACTOR:** covered by GREEN tests.
+  - [x] **Commit:** `feat(daemon): add sendChannelWake emitter (Task 5.1)`
+    - SHA: `<filled after commit>`
 
 ## 6. New MCP tools: `subscribe_channel_wake`, `bind_channel`
 
