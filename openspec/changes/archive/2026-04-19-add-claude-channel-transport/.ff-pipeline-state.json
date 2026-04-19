@@ -1,0 +1,16 @@
+{
+  "change": "add-claude-channel-transport",
+  "phase": "done",
+  "iteration": 1,
+  "max_iterations": 3,
+  "last_critical_types": [],
+  "history": [
+    { "iteration": 1, "phase": "apply", "status": "partial", "at": "2026-04-19T00:00:00Z" },
+    { "iteration": 1, "phase": "apply", "status": "ok", "reason": "cli wire-up + pivot + runtime verify", "at": "2026-04-19T00:00:00Z" },
+    { "iteration": 1, "phase": "review", "status": "warn", "reason": "5 warnings, 0 criticals", "at": "2026-04-19T00:00:00Z" },
+    { "iteration": 1, "phase": "verify", "status": "pass", "reason": "all 6 dimensions pass", "at": "2026-04-19T00:00:00Z" },
+    { "iteration": 1, "phase": "sync", "status": "ok", "reason": "no-op (openspec CLI combines sync into archive)", "at": "2026-04-19T00:00:00Z" },
+    { "iteration": 1, "phase": "done", "status": "ok", "reason": "auto_archive=false — preserved for user review before /ts-archive-os", "at": "2026-04-19T00:00:00Z" }
+  ],
+  "updated_at": "2026-04-19T00:00:00Z"
+}
