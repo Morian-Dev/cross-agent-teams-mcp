@@ -542,11 +542,11 @@
 
 ## 3. Documentation sync
 
-- [ ] 3.1 Sync auto-memory `project_p2_agent_id_reuse.md` to reflect (team, name) two-tuple identity
+- [x] 3.1 Sync auto-memory `project_p2_agent_id_reuse.md` to reflect (team, name) two-tuple identity
   - kind: skip-doc-only
   - **Spec scenario(s):**
     - `agent-registry/spec.md` → Scenario: `Role change updates existing agent_id in-place`
-  - [ ] **SKIP:** skip-doc-only — auto-memory file at `/Users/jtianling/.claude/projects/-Users-jtianling-workspace-agent-teams-mcp-workspace-agent-teams-mcp-tdd-spec/memory/project_p2_agent_id_reuse.md` is a discussion-level note about identity reuse; it must be rewritten to say: "identity = (team, name); role is informational, not part of identity; tmux_pane_id is an updateable attribute, never part of identity; previous four-tuple wording (team, tmux_pane_id, display_name, role) was inaccurate even before this change and is now fully superseded." No runtime behavior depends on this file; no test can verify it.
+  - [x] **SKIP:** skip-doc-only — rewrote `/Users/jtianling/.claude/projects/-Users-jtianling-workspace-agent-teams-mcp-workspace-agent-teams-mcp-tdd-spec/memory/project_p2_agent_id_reuse.md` to state: identity = (team, name); role is informational only; tmux_pane_id is a field that may be updated but is never part of identity; previous four-tuple wording was historical confusion and is now fully superseded. Also updated MEMORY.md index entry to match. Auto-memory is not committed to the project repo; no runtime behavior depends on it; no test can verify it.
 
 ## Scenario Coverage Matrix
 
