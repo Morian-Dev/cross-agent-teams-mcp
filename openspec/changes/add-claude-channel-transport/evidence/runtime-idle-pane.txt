@@ -1,0 +1,47 @@
+# Runtime verify evidence — scenario (a) idle poke via channel
+# Task 10.1, add-claude-channel-transport
+# Date: 2026-04-19
+
+## Setup
+- Daemon: local node dist/cli.js daemon --port 9100
+- Owner Claude Code: launched with `claude --dangerously-load-development-channels server:ts-agent-teams-channel`
+- Owner agent: (default, ts-agent-teams-dev), agent_id=599e1eb3-8cc4-44f4-b716-25b99401ab14, pane=%1674, channel_session_id=44099a2e-3930-4788-90bb-5b12a83f495f (bound via self-binding bind_channel after startup notification)
+- Sender: (default, ts-channel-tester), agent_id=91222e8e-..., pane=%71 (this Claude Code session)
+
+## Poke call (from sender)
+
+Tool: poke
+Args: { target_agent_id: "599e1eb3-8cc4-44f4-b716-25b99401ab14",
+        prompt: "channel idle test: 请回复 \"收到 idle poke via channel\" 即可" }
+
+Daemon response:
+{
+  "ok": true,
+  "transport_used": "claude-channel",
+  "channel_session_id": "44099a2e-3930-4788-90bb-5b12a83f495f"
+}
+
+## Owner Claude observation (captured by user)
+
+User message (prior instruction to owner):
+> 一旦有 <channel> 注入就告诉我
+
+Owner Claude reply 1 (before poke):
+> 好的, 收到后我会立即告知。
+
+[poke sent here — owner was idle]
+
+Channel injection received (rendered as `<channel>` citation style):
+  ← ts-agent-teams-channel: channel idle test: 请回复 "收到 idle poke via channel" 即可
+
+Owner Claude reply 2 (post-poke):
+> 收到 channel 注入:
+>   ▎ channel idle test: 请回复 "收到 idle poke via channel" 即可
+> 收到 idle poke via channel
+
+## Verdict: PASS
+
+- Channel notification actually injected into owner's context as expected by the Channels protocol (rendered with `<channel>` tag styling)
+- Owner auto-reacted without user mediation — next turn content matched the requested reply string
+- transport_used confirms NO tmux path executed; Enter was never keyboard-injected into the pane
+- csid matched the owner's bound session_id end-to-end

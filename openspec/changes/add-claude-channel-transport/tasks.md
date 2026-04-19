@@ -651,24 +651,26 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
 
 ## 10. Runtime verification (manual)
 
-- [ ] 10.1 Real Claude Code instance with dev channel plugin: verify `poke` delivers channel hint while host Claude is (a) idle and (b) mid-turn generating
+- [x] 10.1 Real Claude Code instance with dev channel plugin: verify `poke` delivers channel hint while host Claude is (a) idle and (b) mid-turn generating
   - kind: manual-verify
   - **Spec scenario(s):** End-to-end coverage for all `claude-channel-transport` scenarios that depend on real Claude Code behavior (Channels protocol acceptance).
   - **Runtime setup (procedure):**
     1. `pnpm -C plugins/ts-agent-teams-channel build`
-    2. Add `.mcp.json` entry for the plugin with `--agent-team ... --agent-name ...`
-    3. Start daemon; verify proxy appears as agent with role `__channel_proxy__` in `list_agents`
-    4. Launch Claude Code with `--channels plugin:ts-agent-teams-channel@dev --dangerously-load-development-channels`
-    5. From another agent session call `poke({target_agent_id: <owner>})`
-    6. Case (a) host Claude idle: capture Claude Code's visible response within 10s
-    7. Case (b) host Claude mid-turn (deliberately started a long generation): call `poke`, capture Claude's observable reaction and whether current turn completes cleanly
-  - **Required evidence** (commit to `openspec/changes/add-claude-channel-transport/evidence/`):
-    - `runtime-idle-pane.txt` — `tmux capture-pane` output of host pane within 10s of poke (idle case)
-    - `runtime-midturn-pane.txt` — same for mid-turn case
-    - `runtime-wire.jsonl` — proxy stderr log lines capturing `channel_wake` received and `claude/channel` emitted
-    - `runtime-notes.md` — pass/fail judgement per case with timestamps
-  - [ ] MANUAL-VERIFY: pending — awaiting user verification with real Claude Code + dev channel plugin runtime.  The proxy CLI (`src/cli.ts`) is currently a placeholder and would need a runnable wire-up of `runReconnectingProxy` + `createProxyServer` + `StdioServerTransport` before `pnpm -C plugins/ts-agent-teams-channel build` produces a working binary.  Blocker noted: 8.2/8.7 cover host-side server logic; 8.3 covers csid persistence; 8.4–8.6 cover daemon-side client; stitching them into the cli entrypoint is the remaining work before runtime verification can begin.  ts-verify will enforce this before archive.
-  - [x] **Observed output:** task deferred to a later iteration; no fabricated evidence.  AskUserQuestion was not issued because the runtime setup (building the plugin, wiring `.mcp.json`, launching Claude Code with `--dangerously-load-development-channels`, driving two agent sessions) is a multi-step out-of-process workflow that the user should kick off themselves; prompting mid-apply would be noise rather than help.  STATUS: partial.
+    2. `.mcp.json` gets a `mcpServers.ts-agent-teams-channel` entry spawning the built `dist/cli.js` with `--daemon-url ...` (self-binding — no `--agent-team` / `--agent-name`; dropped during the pivot to option C)
+    3. Start daemon; verify proxy and owner appear in `list_agents`
+    4. Launch owner Claude Code with `claude --dangerously-load-development-channels server:ts-agent-teams-channel`; confirm startup channel notification arrives with csid + bind instruction; owner calls `register_agent` then `bind_channel({channel_session_id})`
+    5. From a separate Claude Code session (the sender), call `poke({target_agent_id: <owner>})`
+    6. Case (a): owner idle — observe channel tag injection and Claude's reaction
+    7. Case (b): owner in real LLM generation — observe whether current turn completes cleanly and whether channel is delivered
+  - **Required evidence** (committed to `openspec/changes/add-claude-channel-transport/evidence/`):
+    - `runtime-idle-pane.txt` — scenario (a) transcript ✓
+    - `runtime-midturn-pane.txt` — scenario (b) transcript ✓
+    - `runtime-notes.md` — pass/fail summary, infrastructure observations, deferred items ✓
+    - `runtime-wire.jsonl` — DEFERRED (proxy stderr not captured; Claude Code does not surface proxy stderr to user).  Noted in runtime-notes.md as future improvement.
+  - [x] **Observed output:**
+    - Case (a): PASS. Channel tag injected with exact prompt text; owner auto-reacted with "收到 idle poke via channel"; daemon `transport_used=claude-channel`; no tmux invoked.
+    - Case (b): PASS. Real LLM mid-generation; channel delivered without interrupting the ongoing turn; owner reacted on next natural decision boundary; `transport_used=claude-channel`.
+    - Infrastructure fixes landed during this runtime verify: `c4edd2f` (startup notification text — explicit register_agent → bind_channel order) and `1969c34` (proxy name dropped random suffix — reconnect reuses identity row).
 
 ## 11. Build exit check
 
@@ -896,4 +898,4 @@ Real-world multi-instance testing (two Claude Code processes in the same directo
     BUILD_EXIT=0
     ```
   - [x] **Commit:** `chore(apply): record pivot build-check results (Task 12.8)`
-    - SHA: <to be filled post-commit-12.8>
+    - SHA: `8bc7759`

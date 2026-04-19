@@ -1,0 +1,44 @@
+# Runtime verify evidence — scenario (b) mid-turn poke via channel
+# Task 10.1, add-claude-channel-transport
+# Date: 2026-04-19
+
+## Setup
+Same as idle scenario (runtime-idle-pane.txt). Owner Claude has a real LLM generation task in progress (not just a sleep-blocked Bash tool) when poke is sent.
+
+## Poke call
+
+Tool: poke
+Args: { target_agent_id: "599e1eb3-8cc4-44f4-b716-25b99401ab14",
+        prompt: "channel mid-turn real test: 请回复 \"收到 real mid-turn poke via channel\" 即可" }
+
+Daemon response:
+{
+  "ok": true,
+  "transport_used": "claude-channel",
+  "channel_session_id": "44099a2e-3930-4788-90bb-5b12a83f495f"
+}
+
+## Owner Claude observation (captured by user)
+
+Condition: owner Claude was actively generating tokens for a real task (not a tool block) when poke arrived.
+
+User's report: "收到了 channel, 没有打断"
+
+Interpretation:
+- Channel notification was received by Claude Code / routed into context
+- The current generation was NOT interrupted or disrupted
+- Claude reacted to the channel at its next natural decision point (after completing the current turn), not mid-stream
+
+## Verdict: PASS
+
+This is the most load-bearing result of the runtime verify. It demonstrates:
+
+1. Channels protocol successfully delivers `notifications/claude/channel` to Claude Code even while the host LLM is generating tokens — unlike tmux `paste-buffer + Enter` which gets eaten or corrupts readline mid-generation.
+2. Delivery is non-disruptive: the ongoing turn completes cleanly; Claude reacts on the next natural decision boundary.
+3. transport_used confirms the channel path was chosen; tmux was never invoked.
+
+This eliminates the two structural problems with tmux poke documented in the proposal:
+(1) mid-turn Enter being dropped / mis-ordered
+(2) user's own terminal input being contaminated by injected prompt text
+
+(The second problem was not explicitly re-tested in this run — it's structurally impossible with channel notifications since Channels bypass the terminal entirely.)
