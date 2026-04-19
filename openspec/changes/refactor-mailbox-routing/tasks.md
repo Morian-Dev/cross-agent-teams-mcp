@@ -482,9 +482,9 @@
         - tests/events-cleanup.test.ts     (INSERT INTO events (team, ...) — task 1.4)
         - tests/messages-schema.test.ts    (asserts legacy messages.team column, now from_team+to_team — later messages task)
       ```
-  - [ ] **Commit:** `test(events-outbox): verify since() filters by to_team excluding outbound`
+  - [x] **Commit:** `test(events-outbox): verify since() filters by to_team excluding outbound`
     - Staging order: test file before any code tweak
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `9de7e18b72a99963c2749667c33de81f556db3a7`
 
 - [ ] 1.4 Events cleanup groups agent cursors by `to_team`
   - kind: unit-test
