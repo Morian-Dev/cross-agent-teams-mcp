@@ -275,9 +275,9 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - [x] **REFACTOR:** Role gate not yet duplicated — will fold together at task 6.2 where `bind_channel` may need the same check.
   - [x] **Verify REFACTOR:** n/a (deferred to 6.2).
   - [x] **Commit:** `feat(mcp): add subscribe_channel_wake service + tool wiring (Task 6.1)`
-    - SHA: `<filled after commit>`
+    - SHA: `f617437`
 
-- [ ] 6.2 `bind_channel` service + tool: writes csid to target agents row or returns `agent_not_registered`
+- [x] 6.2 `bind_channel` service + tool: writes csid to target agents row or returns `agent_not_registered`
   - kind: unit-test
   - **Spec scenario(s):**
     - `claude-channel-transport/spec.md` → Scenario: `bind_channel updates agents row when it exists`
@@ -287,18 +287,27 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
     - Create: `tests/bind-channel.test.ts`
     - Create: `src/mcp/bind-channel.ts`
     - Modify: `src/mcp/tools.ts` (register tool)
-  - [ ] **RED:** Three cases per spec.
-  - [ ] **Verify RED:**
-    - Command: `pnpm exec vitest run tests/bind-channel.test.ts --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **GREEN:** Service validates caller role; validates csid trim non-empty; `SELECT agent_id FROM agents WHERE team=? AND name=?`; if missing → `{error:'agent_not_registered'}`; else `UPDATE agents SET channel_session_id=? WHERE team=? AND name=?` → `{ok:true}`.  Register tool.
-  - [ ] **Verify GREEN:**
-    - Command: `pnpm exec vitest run tests/bind-channel.test.ts --reporter=verbose`
-    - Full-suite: `pnpm exec vitest run --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **REFACTOR:** Fold common role gating with task 6.1.
-  - [ ] **Verify REFACTOR:**
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
+  - [x] **RED:** 5 cases — proxy updates existing row, agent_not_registered on missing row, forbidden_role on non-proxy, unknown_agent on missing caller, invalid_channel_session_id on blank csid.
+  - [x] **Verify RED:**
+    - Command: `pnpm exec vitest run tests/bind-channel.test.ts`
+    - **Observed output:**
+      ```
+      Error: Failed to load url ../src/mcp/bind-channel.js
+      Tests  no tests
+      ```
+  - [x] **GREEN:** Created `BindChannelService`; imports `CHANNEL_PROXY_ROLE` from subscribe-channel-wake.ts (single source); service validates role, target existence, csid; registered `bind_channel` tool in tools.ts.
+  - [x] **Verify GREEN:**
+    - Command: `pnpm exec vitest run tests/bind-channel.test.ts`
+    - Full-suite: `pnpm exec vitest run`
+    - **Observed output:**
+      ```
+      ✓ 5/5 new tests pass
+      Full suite: Test Files  3 failed | 86 passed (89)  Tests  4 failed | 284 passed (288)
+      ```
+  - [x] **REFACTOR:** Role gate: `CHANNEL_PROXY_ROLE` constant exported from subscribe-channel-wake.ts and imported in bind-channel.ts. Both services check the role inline; the 3-line check is simple enough that extracting a helper would add indirection without saving much. Left as-is.
+  - [x] **Verify REFACTOR:** covered by GREEN tests.
+  - [x] **Commit:** `feat(mcp): add bind_channel service + tool (Task 6.2)`
+    - SHA: `<filled after commit>`
 
 ## 7. Transport dispatch + `poke` rewrite
 

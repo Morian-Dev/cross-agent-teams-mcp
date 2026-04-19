@@ -22,6 +22,7 @@ import { wrapStorage } from '../daemon/errors.js'
 import type { SseFanout } from '../daemon/sse-fanout.js'
 import type { ChannelWakeFanout } from '../daemon/channel-wake-fanout.js'
 import { SubscribeChannelWakeService } from './subscribe-channel-wake.js'
+import { BindChannelService } from './bind-channel.js'
 
 export interface AgentIdHolder { current: string | undefined }
 
@@ -515,6 +516,37 @@ export function registerBusinessTools(
       return toText(result)
     }
   )
+
+  // bind_channel — reserved for channel proxies (role=__channel_proxy__)
+  {
+    const bindSvc = new BindChannelService(db)
+    server.registerTool(
+      'bind_channel',
+      {
+        title: 'Bind channel_session_id to agent',
+        description: [
+          'Internal tool reserved for the ts-agent-teams channel proxy.',
+          'Writes a channel_session_id to the (team, name) agent row.',
+          'Returns agent_not_registered if the row does not exist (caller should backoff and retry).'
+        ].join(' '),
+        inputSchema: {
+          team: z.string().min(1),
+          name: z.string().min(1),
+          channel_session_id: z.string().min(1)
+        }
+      },
+      async (args: { team: string; name: string; channel_session_id: string }) => {
+        const who = requireAgent()
+        if (typeof who !== 'string') return toText(who)
+        return run(() => bindSvc.bind({
+          callerAgentId: who,
+          team: args.team,
+          name: args.name,
+          channel_session_id: args.channel_session_id
+        }))
+      }
+    )
+  }
 
   // subscribe_channel_wake — reserved for channel proxies (role=__channel_proxy__)
   if (channelWakeFanout) {
