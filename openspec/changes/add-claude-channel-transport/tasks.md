@@ -649,4 +649,4 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
     Test Files  3 passed (3)   Tests  8 passed (8)
     ```
   - [x] **Commit:** `chore(apply): record build-check results (Task 11.1)`
-    - SHA: `<filled after commit>`
+    - SHA: `84c17f0`
