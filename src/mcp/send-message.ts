@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
-import { ONLINE_MS, type AgentsRepo } from '../storage/agents-repo.js'
+import type { AgentsRepo } from '../storage/agents-repo.js'
 import type { EventsOutbox } from '../storage/events-outbox.js'
 import { fanoutAutoPoke } from './auto-poke-fanout.js'
 import type { AutoPokeSkipReason, FanoutDeps } from './auto-poke-fanout.js'
@@ -12,8 +12,8 @@ export type SendMessageDeps = FanoutDeps
 
 export interface SendInput {
   from: string
-  to_agent_id?: string
-  to_role?: string
+  to_agent_id: string
+  to_team?: string
   subject?: string
   body: string
   auto_poke?: boolean
@@ -31,7 +31,7 @@ interface SuccessResult {
 
 export type SendResult =
   | SuccessResult
-  | { error: 'ambiguous_recipient' | 'missing_recipient' | 'unknown_recipient' }
+  | { error: 'unknown_recipient' }
 
 interface RecipientPokeRow {
   agent_id: string
@@ -47,31 +47,18 @@ export class SendMessageService {
   ) {}
 
   async send(input: SendInput): Promise<SendResult> {
-    if (input.to_agent_id && input.to_role) return { error: 'ambiguous_recipient' }
-    if (!input.to_agent_id && !input.to_role) return { error: 'missing_recipient' }
     const fromRow = this.agents.findById(input.from)
     if (!fromRow) return { error: 'unknown_recipient' }
-    const team = fromRow.team
+    const fromTeam = fromRow.team
+    const toTeam = input.to_team ?? fromTeam
 
-    let recipientRows: RecipientPokeRow[]
-    let to_role: string | null
-    if (input.to_agent_id) {
-      const rcpt = this.db.prepare('SELECT agent_id, tmux_pane_id FROM agents WHERE agent_id=? AND team=?')
-        .get(input.to_agent_id, team) as RecipientPokeRow | undefined
-      if (!rcpt) return { error: 'unknown_recipient' }
-      recipientRows = [rcpt]
-      to_role = null
-    } else {
-      const cutoffIso = new Date(Date.now() - ONLINE_MS).toISOString()
-      const rows = this.db.prepare('SELECT agent_id, tmux_pane_id FROM agents WHERE role=? AND team=? AND last_seen_at > ?')
-        .all(input.to_role!, team, cutoffIso) as RecipientPokeRow[]
-      if (rows.length === 0) return { error: 'unknown_recipient' }
-      recipientRows = rows
-      to_role = input.to_role!
-    }
+    const rcpt = this.db.prepare('SELECT agent_id, tmux_pane_id FROM agents WHERE agent_id=? AND team=?')
+      .get(input.to_agent_id, toTeam) as RecipientPokeRow | undefined
+    if (!rcpt) return { error: 'unknown_recipient' }
+    const recipientRows: RecipientPokeRow[] = [rcpt]
 
     const recipients = recipientRows.map(r => r.agent_id)
-    const baseResult = this.insert({ team, from: input.from, recipients, to_role, input })
+    const baseResult = this.insert({ fromTeam, toTeam, from: input.from, recipients, input })
 
     const autoPokeEnabled = input.auto_poke !== false
     if (!autoPokeEnabled) {
@@ -80,7 +67,7 @@ export class SendMessageService {
 
     const db = this.db
     const fanout = await fanoutAutoPoke({
-      team,
+      team: toTeam,
       fromAgentId: input.from,
       recipients: recipientRows,
       body: input.body,
@@ -107,13 +94,13 @@ export class SendMessageService {
   }
 
   private insert(args: {
-    team: string; from: string; recipients: string[]; to_role: string | null; input: SendInput
+    fromTeam: string; toTeam: string; from: string; recipients: string[]; input: SendInput
   }): { message_id: string; event_id: number; recipients: string[]; sent_at: string } {
     const tx = this.db.transaction(() => {
       const event_id = this.events.append({
-        from_team: args.team, to_team: args.team,
+        from_team: args.fromTeam, to_team: args.toTeam,
         event_type: 'message_sent', actor_agent_id: args.from,
-        payload: { to_role: args.to_role, recipients: args.recipients, subject: args.input.subject ?? null }
+        payload: { recipients: args.recipients, subject: args.input.subject ?? null }
       })
       const sent_at = new Date().toISOString()
       const baseId = randomUUID()
@@ -123,9 +110,9 @@ export class SendMessageService {
       )
       for (let i = 0; i < args.recipients.length; i++) {
         const id = i === 0 ? baseId : `${baseId}-${i}`
-        insert.run(id, event_id, args.team, args.team, args.from,
+        insert.run(id, event_id, args.fromTeam, args.toTeam, args.from,
           args.recipients[i],
-          args.to_role, args.input.subject ?? null, args.input.body, sent_at)
+          null, args.input.subject ?? null, args.input.body, sent_at)
       }
       return { message_id: baseId, event_id, sent_at }
     })

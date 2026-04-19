@@ -202,7 +202,7 @@ export function registerBusinessTools(
     {
       title: 'Send message',
       description: [
-        'Sends a direct or role-broadcast message.  By default the tool also wakes the recipient\'s',
+        'Sends a direct 1→1 message.  By default the tool also wakes the recipient\'s',
         'tmux pane via a quiet-guard poke (auto_poke=true): it watches the pane tail for ~2s, and',
         'only fires the poke when the pane has been idle; if the pane is active, the message is',
         'still persisted to the mailbox and the skip is reported.  Pass auto_poke:false if the',
@@ -214,18 +214,17 @@ export function registerBusinessTools(
         'retry_delays_s:[30,180,600] indicate the backoff schedule.',
         'Auto-poke injects ONLY a SHORT wake-up hint (format: `新邮件 from {sender}, 请调 get_inbox 查看`).',
         "The message body is never injected into the recipient's pane — callers retrieve bodies via `get_inbox`.",
-        'Online filter: role-based routing (to_role) skips agents whose last_seen_at is older than 5 min (idle > 5 min = offline).',
-        'to_agent_id direct sends are NOT filtered — offline targets still receive the mailbox row and rely on offline delivery on next get_inbox.'
+        'to_agent_id direct sends are NOT filtered by online status — offline targets still receive the mailbox row and rely on offline delivery on next get_inbox.'
       ].join(' '),
-      inputSchema: {
-        to_agent_id: z.string().optional(),
-        to_role: z.string().optional(),
+      inputSchema: z.object({
+        to_agent_id: z.string().min(1),
+        to_team: z.string().min(1).optional(),
         subject: z.string().optional(),
-        body: z.string(),
+        body: z.string().min(1),
         auto_poke: z.boolean().optional()
-      }
+      }).strict()
     },
-    async (args: { to_agent_id?: string; to_role?: string; subject?: string; body: string; auto_poke?: boolean }) => {
+    async (args: { to_agent_id: string; to_team?: string; subject?: string; body: string; auto_poke?: boolean }) => {
       const who = requireAgent()
       if (typeof who !== 'string') return toText(who)
       return run(() => sendSvc.send({ from: who, ...args }))
