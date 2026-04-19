@@ -36,12 +36,18 @@ Since `add-auto-poke-on-send`, `send_message` **defaults to auto-poke** for both
 
 When the guard fails (pane is active), has no pane registered, tmux is unavailable, or the target is the caller itself, the message is **still persisted** to the mailbox and the skip is reported in the response.
 
-`broadcast` is **opt-in**: it does NOT auto-poke unless the caller passes `auto_poke: true`.  The default avoids mass-poke noise on team-wide announcements.
+Auto-poke injects **only a SHORT wake-up hint** into the recipient's pane, never the message body.  The hint format is fixed: `新邮件 from {display_name} ({agent_id}), 请调 get_inbox 查看`.  When the sender has no `display_name`, the hint falls back to `新邮件 from {agent_id[:8]}, 请调 get_inbox 查看`.  Recipients always retrieve full bodies via `get_inbox`; no body byte ever reaches a pane through auto-poke.
+
+`broadcast` is **opt-out**: it auto-pokes every eligible recipient by default (per-pane parallel quiet-guard).  Pass `auto_poke: false` to suppress the tmux side-effect and deliver pure mailbox.
+
+### Fan-out online filter
+
+Role-based routing (`send_message` with `to_role`) and `broadcast` skip agents whose `last_seen_at` is > 5 min old.  Offline recipients are excluded from both the mailbox fan-out and auto-poke; when every candidate is offline the call returns `{ error: 'unknown_recipient' }`.  Direct `to_agent_id` sends are **not** filtered — the single-recipient mailbox row is always written so Mailbox offline delivery picks it up on the recipient's next `get_inbox`.  The 5-min threshold is the same `ONLINE_MS` constant that `list_agents` uses for the `online` flag; offline ghosts therefore remain visible to `list_agents` for diagnosis.
 
 Response fields:
 
 - `poked: boolean` — `true` iff at least one recipient received a successful poke.
-- `poke_skip_reasons?: Array<{ agent_id, reason }>` — entries for recipients that were not poked.  `reason` is one of `no_pane`, `guard_failed`, `tmux_unavailable`, `self`.  Absent when the caller passed `auto_poke: false`, or when a broadcast uses its default (`auto_poke` omitted).
+- `poke_skip_reasons?: Array<{ agent_id, reason }>` — entries for recipients that were not poked.  `reason` is one of `no_pane`, `guard_failed`, `tmux_unavailable`, `self`.  Absent when the caller passed `auto_poke: false`.
 - `retry_scheduled: boolean` — `true` iff the daemon scheduled at least one background retry for a `guard_failed` recipient (see "Retry on guard_failed" below).
 - `retry_delays_s?: number[]` — the backoff sequence used when `retry_scheduled` is `true`.  Fixed to `[30, 180, 600]` (seconds); absent when no retries were scheduled.
 
@@ -51,7 +57,7 @@ When the initial quiet-guard reports `guard_failed` for a recipient that has a r
 
 1. Looks up the recipient's current `tmux_pane_id` and `last_seen_at`.
 2. Stops silently if the recipient no longer exists, has no pane id, or the recipient's `last_seen_at` is newer than the original message's `sent_at` (i.e. the recipient came online on their own).
-3. Otherwise re-runs the quiet-guard; on pass, fires a poke with the original message body and stops remaining retries; on fail, schedules the next retry in the sequence.
+3. Otherwise re-runs the quiet-guard; on pass, fires a poke with the same sender-identifying hint (see "Auto-poke on send" — the body is never injected) and stops remaining retries; on fail, schedules the next retry in the sequence.
 
 Notes:
 
@@ -74,8 +80,19 @@ Invalid / non-positive values are ignored and fall back to the 2000ms default.
 Earlier docs recommended chaining `send_message` + `poke` manually.  That pattern is obsolete: single-recipient and role-fanout `send_message` now auto-poke by default, and the `poke` tool itself remains as an **explicit** escape hatch (no guard, always fires) for the rare case where you know the target is busy but want to interrupt anyway.  You typically only need explicit `poke` when:
 
 - You hit a `guard_failed` in `poke_skip_reasons` but need to interrupt regardless.
-- You are sending a `broadcast` without `auto_poke: true` but want to poke one specific recipient.
+- You are sending a `broadcast` with `auto_poke: false` but want to poke one specific recipient.
 - `task_add` does not auto-poke (by design — prevents task-add spam); chain `poke` per the agent you want to claim it.
+
+## Agent 身份幂等 (agent_id reuse by identity)
+
+`register_agent` 按 `(team, name, role)` 三元组查重复用 `agent_id`:
+
+- 同 `(team, name, role)` 再次调用 (同 session 或跨 session 重连) 会**复用**已有 `agent_id`, 并更新 `tmux_pane_id`/`model`/`last_seen_at`.  Pane 迁移后 poke 路由自动跟随.
+- **`name` required**: 新 schema 中 `name` 字段必填, 空串/纯空白会被 zod 校验拒绝.  `role` 和 `team` 可省略, 默认均为 `"default"`.
+- `tmux_pane_id` reuse 时: 提供非空值 → 覆盖; 省略 → 保留旧值.
+- `role` 或 `team` 变更会产生新 `agent_id` (语义上是新身份, 不是 reuse).
+
+**Legacy migration**: 本项目 MVP 阶段按 fresh-boot 假设, 不提供 schema 迁移脚本.  已有旧 `daemon.db` (含 `display_name` 列或缺 `name NOT NULL` 约束) 需手工删除后由 daemon 重建.
 
 ## Daemon keep-alive tuning
 

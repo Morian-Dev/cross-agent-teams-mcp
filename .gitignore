@@ -105,4 +105,7 @@ coverage/
 .agents/
 .codex/
 .gemini/
-.mcp.json 
+.mcp.json
+
+# Debug reports (transient per-session artifacts)
+.ff-debug-report.md

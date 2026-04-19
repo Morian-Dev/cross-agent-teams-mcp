@@ -3,155 +3,39 @@
 ## Purpose
 
 Persist agent identity tied to MCP session ids, scope visibility by team, and track liveness for all MCP tool callers.
-
 ## Requirements
-
 ### Requirement: Agents table schema
 
-The database SHALL contain an `agents` table with columns: `agent_id TEXT PRIMARY KEY`, `team TEXT NOT NULL`, `role TEXT NOT NULL`, `display_name TEXT`, `model TEXT`, `registered_at TEXT NOT NULL`, `last_seen_at TEXT NOT NULL`, `last_processed_event_id INTEGER NOT NULL DEFAULT 0`, `tmux_pane_id TEXT`.
+The database SHALL contain an `agents` table with columns: `agent_id TEXT PRIMARY KEY`, `team TEXT NOT NULL`, `role TEXT NOT NULL`, `name TEXT NOT NULL`, `model TEXT`, `registered_at TEXT NOT NULL`, `last_seen_at TEXT NOT NULL`, `last_processed_event_id INTEGER NOT NULL DEFAULT 0`, `tmux_pane_id TEXT`.
 
-The `tmux_pane_id` column is nullable and stores an optional tmux pane identifier (e.g. `%42`) used by cross-session interrupt delivery features (see Requirement "Tmux pane id persistence").
+The `name` column is the human-readable identifier used as part of the 3-tuple identity key `(team, name, role)` — it MUST NOT be NULL and MUST NOT be empty after trimming. The `tmux_pane_id` column remains nullable and stores an optional tmux pane identifier (e.g. `%42`).
 
-#### Scenario: Fresh database creates agents table with nine columns
+An index `agents_identity_idx` SHALL exist on `(team, name, role)` to support O(log n) identity lookup during `register_agent`.
+
+#### Scenario: Fresh database creates agents table with nine columns and name is NOT NULL
 
 - **WHEN** daemon bootstraps a fresh database
 - **THEN** `PRAGMA table_info('agents')` lists nine columns
+- **AND** the `name` column exists with type `TEXT` and `notnull = 1`
 - **AND** the `tmux_pane_id` column exists with type `TEXT` and `notnull = 0`
-
-#### Scenario: Legacy database auto-migrates by adding tmux_pane_id column
-
-- **GIVEN** a pre-existing agents table without `tmux_pane_id` column (built under an older schema)
-- **WHEN** daemon bootstraps against this database
-- **THEN** `ALTER TABLE agents ADD COLUMN tmux_pane_id TEXT` is executed exactly once
-- **AND** existing rows' `tmux_pane_id` values are NULL
-- **AND** subsequent boots detect the column present and do not re-run the ALTER
-
-### Requirement: register_agent uses MCP session id as agent_id
-
-The `register_agent` MCP tool SHALL take `{ model: string, role: string, display_name?: string, team?: string = 'default', tmux_pane_id?: string }` and use the current MCP session's UUID as the `agent_id`. It MUST return `{ agent_id, team }`. If `tmux_pane_id` is provided (a non-empty, non-whitespace string), its value MUST be persisted to the agents row's `tmux_pane_id` column. If omitted or blank, the column value MUST be NULL.
-
-When `tmux_pane_id` is absent, empty, or whitespace-only, the response MUST additionally include an optional `hint: string` field whose value directs the caller to discover its tmux pane id (via `tmux display-message -p '#{pane_id}'`) and re-register with the result so cross-agent `poke` delivery can target this agent. When a non-blank `tmux_pane_id` is provided, the response MUST NOT include the `hint` field. On error paths (e.g. `unknown_agent`, `agent_id_collision`), the response MUST NOT include `hint`.
-
-#### Scenario: New session registers successfully
-
-- **GIVEN** an MCP client with a fresh session id `sess-A`
-- **WHEN** it calls `register_agent({ model: 'opus-4-6', role: 'backend' })`
-- **THEN** response is `{ agent_id: 'sess-A', team: 'default' }`
-- **AND** `agents` table has a row with `agent_id='sess-A'`, `role='backend'`, `team='default'`
-
-#### Scenario: New session registers with tmux_pane_id provided
-
-- **GIVEN** an MCP client with a fresh session id `sess-A` running in tmux pane `%42`
-- **WHEN** it calls `register_agent({ model: 'opus-4-7', role: 'frontend', tmux_pane_id: '%42' })`
-- **THEN** response is `{ agent_id: 'sess-A', team: 'default' }`
-- **AND** the agents row for `sess-A` has `tmux_pane_id = '%42'`
-
-#### Scenario: New session registers without tmux_pane_id
-
-- **GIVEN** an MCP client not running inside tmux (or not reporting pane id)
-- **WHEN** it calls `register_agent({ model: 'opus-4-7', role: 'cron' })`
-- **THEN** the call succeeds
-- **AND** the agents row for the session has `tmux_pane_id IS NULL`
-
-#### Scenario: Successful register with tmux_pane_id includes no hint field
-
-- **GIVEN** an MCP client that calls `register_agent({ model, role, tmux_pane_id: '%42' })`
-- **WHEN** the call succeeds
-- **THEN** the response is `{ agent_id, team }`
-- **AND** the response does NOT include a `hint` field
-
-#### Scenario: Successful register without tmux_pane_id includes hint field
-
-- **GIVEN** an MCP client that calls `register_agent({ model, role })` (omitting `tmux_pane_id`)
-- **WHEN** the call succeeds
-- **THEN** the response is `{ agent_id, team, hint: <string> }`
-- **AND** the `hint` value references `tmux display-message` and `tmux_pane_id`
-
-### Requirement: Repeated register_agent within same session updates metadata
-
-If the same MCP session calls `register_agent` multiple times, the daemon SHALL upsert (update) the metadata — including `tmux_pane_id` when provided — without treating it as a conflict.
-
-#### Scenario: Same session re-registers with different display_name
-
-- **GIVEN** session `sess-A` has registered as `{ role: 'backend' }`
-- **WHEN** the same session calls `register_agent({ model: 'opus-4-6', role: 'backend', display_name: 'alice' })`
-- **THEN** the call succeeds
-- **AND** the agents row's `display_name` becomes `'alice'`
-
-#### Scenario: Same session re-registers with new tmux_pane_id
-
-- **GIVEN** session `sess-A` has previously registered with `tmux_pane_id = '%42'`
-- **WHEN** the same session calls `register_agent({ model: 'opus-4-7', role: 'frontend', tmux_pane_id: '%99' })`
-- **THEN** the call succeeds
-- **AND** the agents row's `tmux_pane_id` becomes `'%99'`
-
-#### Scenario: Same session re-registers omitting tmux_pane_id does not clear existing value
-
-- **GIVEN** session `sess-A` has previously registered with `tmux_pane_id = '%42'`
-- **WHEN** the same session calls `register_agent({ model: 'opus-4-7', role: 'frontend' })` (no `tmux_pane_id`)
-- **THEN** the call succeeds
-- **AND** the agents row's `tmux_pane_id` remains `'%42'` (omitted field means "no change", not "clear")
-
-### Requirement: agent_id collision across sessions returns 409
-
-When a `register_agent` tool call carries an `Authorization` request header, the daemon MUST bind that session id to the sha256 hash of the (trimmed) header value on first binding, and MUST return `{ error: 'agent_id_collision' }` with HTTP status 409 on any subsequent `register_agent` for the same session id presenting a different `Authorization` value.
-
-When the request carries no `Authorization` header (or an empty one after trim), the daemon MUST NOT enforce collision detection against prior bindings for that session id; it trusts the `Mcp-Session-Id` header and allows the `register_agent` call.
-
-In all modes, merely arriving on a different TCP socket (e.g. after HTTP keep-alive expiry) MUST NOT by itself trigger a collision.
-
-#### Scenario: Different Authorization credentials on same session id
-
-- **GIVEN** session `sess-A` was first bound to the sha256 of `Authorization: Bearer tokenX`
-- **WHEN** a request with `Mcp-Session-Id: sess-A` AND `Authorization: Bearer tokenY` (a different value) calls `register_agent`
-- **THEN** response is HTTP 409 with body `{ error: 'agent_id_collision' }`
-
-#### Scenario: Same Authorization across different TCP sockets accepted
-
-- **GIVEN** session `sess-A` was first bound to the sha256 of `Authorization: Bearer tokenX` from TCP connection C1
-- **AND** the HTTP keep-alive timeout has expired so C1's underlying socket is closed
-- **WHEN** the same MCP client re-sends `register_agent` with `Mcp-Session-Id: sess-A` AND `Authorization: Bearer tokenX` via a freshly-opened TCP connection C2
-- **THEN** response is success (not HTTP 409); the registration metadata is upserted per the `Repeated register_agent within same session updates metadata` requirement
-
-#### Scenario: Request without Authorization header never triggers agent_id_collision
-
-- **GIVEN** session `sess-A` was registered previously (with or without an `Authorization` header on that prior request)
-- **WHEN** a subsequent `register_agent` call arrives for `Mcp-Session-Id: sess-A` carrying no `Authorization` header (or an empty header after trim)
-- **THEN** response is success (not HTTP 409); the daemon MUST NOT compare against any prior Authorization binding for this session
-
-### Requirement: Mismatched agent_id for session returns 403
-
-If a tool call explicitly carries an `agent_id` parameter (where applicable) that does not match the caller's MCP session id, the daemon MUST return HTTP 403 with body `{ error: 'identity_mismatch' }`.
-
-#### Scenario: send_message with spoofed from_agent_id
-
-- **GIVEN** session `sess-A` is registered
-- **WHEN** session `sess-A` calls any internal helper attempting to act as `sess-B`
-- **THEN** the daemon rejects with 403 `{ error: 'identity_mismatch' }`
+- **AND** `PRAGMA index_list('agents')` contains an index whose definition covers `(team, name, role)` in that order
 
 ### Requirement: list_agents scoped to caller team
 
-The `list_agents` MCP tool SHALL take `{ team?: string }` (defaults to caller's team) and return `{ agents: Array<{ agent_id, role, display_name?, model?, tmux_pane_id?, last_seen_at, online: boolean }> }`. `online` MUST be true when `last_seen_at` is within the last 5 minutes. Agents from other teams MUST NOT appear. The `tmux_pane_id` field MUST be present in every agent entry; its value is the persisted pane id (string) or `null` if unset.
+The `list_agents` MCP tool SHALL take `{ team?: string }` (defaults to caller's team) and return `{ agents: Array<{ agent_id, role, name, model?, tmux_pane_id?, last_seen_at, online: boolean }> }`. `online` MUST be true when `last_seen_at` is within the last 5 minutes. Agents from other teams MUST NOT appear. The `name` field is always present and non-empty. The `tmux_pane_id` field MUST be present in every agent entry; its value is the persisted pane id (string) or `null` if unset.
 
 #### Scenario: Caller in team 'alpha' sees only team 'alpha' agents
 
 - **GIVEN** two agents in team 'alpha' and three agents in team 'beta'
 - **WHEN** a caller registered in team 'alpha' calls `list_agents({})`
 - **THEN** the response contains exactly two agents, both with `team='alpha'`
+- **AND** each agent entry has a non-empty `name` string
 
 #### Scenario: Online flag reflects last_seen_at freshness
 
-- **GIVEN** agent `sess-A` last_seen_at is 2 minutes ago, `sess-B` is 10 minutes ago
+- **GIVEN** agent `alice` last_seen_at is 2 minutes ago, `bob` is 10 minutes ago
 - **WHEN** list_agents is called
-- **THEN** `sess-A.online === true` and `sess-B.online === false`
-
-#### Scenario: list_agents returns tmux_pane_id for each agent
-
-- **GIVEN** agent `sess-A` has `tmux_pane_id = '%42'` and agent `sess-B` has `tmux_pane_id = NULL`
-- **WHEN** `list_agents({})` is called
-- **THEN** the response contains both agents
-- **AND** the entry for `sess-A` has `tmux_pane_id === '%42'`
-- **AND** the entry for `sess-B` has `tmux_pane_id === null`
+- **THEN** `alice.online === true` and `bob.online === false`
 
 ### Requirement: last_seen_at updates on any tool invocation
 
@@ -219,3 +103,146 @@ The hint text MUST advise the caller to run a shell command (`tmux display-messa
 - **GIVEN** a register_agent call that fails (e.g. caller unregistered or `agent_id_collision` or any non-success path)
 - **WHEN** the daemon returns the error envelope
 - **THEN** the response object MUST NOT have a `hint` field
+
+### Requirement: register_agent reuses agent_id by (team, name, role) identity
+
+The `register_agent` MCP tool SHALL take `{ model: string, name: string, role?: string = 'default', team?: string = 'default', tmux_pane_id?: string }` and:
+
+1. Trim `name` and reject with a validation error if empty.
+2. SELECT `agent_id FROM agents WHERE team=? AND name=? AND role=?`.
+3. If the SELECT returns a row, **reuse** that `agent_id` — UPSERT the row updating `model`, `last_seen_at`, and (if non-blank) `tmux_pane_id`. Return `{ agent_id, team }`.
+4. If the SELECT returns no row, generate a fresh `agent_id = randomUUID()` and INSERT the new row. Return `{ agent_id, team }`.
+
+The returned `agent_id` MUST be considered the stable identity for this `(team, name, role)` triple across reconnects. The MCP session id is an orthogonal transport-level artifact and MUST NOT be conflated with `agent_id`.
+
+When `tmux_pane_id` is provided (a non-empty, non-whitespace string), its value MUST be persisted. If omitted or blank, the column value in the reuse case MUST remain the previously-persisted value (i.e. omission means "no change"); in the create-new case it MUST be NULL.
+
+The hint-on-missing-pane-id semantics (see Requirement "register_agent response hints when tmux_pane_id missing") apply unchanged.
+
+#### Scenario: New identity creates a fresh agent_id
+
+- **GIVEN** the agents table has no row for `(default, alice, backend)`
+- **WHEN** a new MCP session calls `register_agent({ model: 'opus-4-7', role: 'backend', name: 'alice' })`
+- **THEN** response is `{ agent_id: <uuid>, team: 'default' }`
+- **AND** the agents row has `name='alice'`, `role='backend'`, `team='default'`
+- **AND** `agent_id` is NOT equal to the MCP session id
+
+#### Scenario: Reconnect reuses existing agent_id
+
+- **GIVEN** agent with `(team='default', name='alice', role='backend')` already exists with `agent_id='X'`
+- **WHEN** a different MCP session (new session id) calls `register_agent({ model: 'opus-4-7', role: 'backend', name: 'alice' })`
+- **THEN** response is `{ agent_id: 'X', team: 'default' }` (same X as before)
+- **AND** the agents table still has exactly one row for this identity
+- **AND** that row's `last_seen_at` is updated to the current timestamp
+
+#### Scenario: Reuse updates tmux_pane_id when provided
+
+- **GIVEN** agent `(default, alice, backend)` exists with `agent_id='X'` and `tmux_pane_id='%42'`
+- **WHEN** a new session calls `register_agent({ model, role: 'backend', name: 'alice', tmux_pane_id: '%99' })`
+- **THEN** response is `{ agent_id: 'X', team: 'default' }`
+- **AND** the row's `tmux_pane_id` is now `'%99'`
+
+#### Scenario: Reuse preserves tmux_pane_id when omitted
+
+- **GIVEN** agent `(default, alice, backend)` exists with `tmux_pane_id='%42'`
+- **WHEN** a new session calls `register_agent({ model, role: 'backend', name: 'alice' })` (omitting `tmux_pane_id`)
+- **THEN** the row's `tmux_pane_id` remains `'%42'` (omission = no change)
+
+#### Scenario: Role change produces new agent_id (new identity)
+
+- **GIVEN** agent `(default, alice, backend)` exists with `agent_id='X'`
+- **WHEN** a new session calls `register_agent({ model, role: 'frontend', name: 'alice' })`
+- **THEN** response `agent_id` is a fresh UUID (NOT `'X'`)
+- **AND** the agents table now contains two rows: one for `(default, alice, backend)` and one for `(default, alice, frontend)`
+
+#### Scenario: Team change produces new agent_id
+
+- **GIVEN** agent `(default, alice, backend)` exists with `agent_id='X'`
+- **WHEN** a new session calls `register_agent({ model, role: 'backend', name: 'alice', team: 'alpha' })`
+- **THEN** response `agent_id` is a fresh UUID (NOT `'X'`)
+- **AND** two rows exist: one in team `default`, one in team `alpha`
+
+#### Scenario: Name is required and must be non-empty
+
+- **WHEN** a caller invokes `register_agent({ model, role: 'backend' })` (no `name` field)
+- **THEN** the call is rejected at the schema layer (MCP returns a validation error; no row is created)
+
+#### Scenario: Name after trim must be non-empty
+
+- **WHEN** a caller invokes `register_agent({ model, role: 'backend', name: '   ' })` (whitespace only)
+- **THEN** the call is rejected with a validation error; no row is created
+
+#### Scenario: Role defaults to "default" when omitted
+
+- **WHEN** a caller invokes `register_agent({ model: 'opus-4-7', name: 'alice' })` (no `role` field)
+- **THEN** the call succeeds and the agents row has `role='default'`
+
+#### Scenario: Team defaults to "default" when omitted
+
+- **WHEN** a caller invokes `register_agent({ model, name: 'alice', role: 'backend' })` (no `team` field)
+- **THEN** the call succeeds and the agents row has `team='default'`
+
+### Requirement: Repeated register_agent for same identity updates metadata
+
+Any subsequent `register_agent` call for a `(team, name, role)` triple that already has a row in the agents table SHALL upsert metadata on that existing row without producing a new `agent_id`, regardless of whether the call originates from the same MCP session or a new one.
+
+#### Scenario: Same session re-registers with new tmux_pane_id
+
+- **GIVEN** session `sess-A` has registered `(default, alice, backend)` with `tmux_pane_id='%42'` and received `agent_id='X'`
+- **WHEN** the same session calls `register_agent({ model, role: 'backend', name: 'alice', tmux_pane_id: '%99' })`
+- **THEN** response is `{ agent_id: 'X', team: 'default' }`
+- **AND** the row's `tmux_pane_id` becomes `'%99'`
+
+#### Scenario: Re-register after reconnect preserves mailbox continuity
+
+- **GIVEN** agent with `agent_id='X'` has unread messages addressed to X in the mailbox
+- **WHEN** the owner reconnects (new MCP session) and calls `register_agent({ model, role, name })` for the same identity
+- **THEN** the returned `agent_id` is `'X'`
+- **AND** a subsequent `get_inbox()` call returns those unread messages
+
+### Requirement: Within-session agent_id_collision via Authorization header
+
+When a `register_agent` tool call carries an `Authorization` request header, the daemon MUST bind that session id to the sha256 hash of the (trimmed) header value on first binding, and MUST return `{ error: 'agent_id_collision' }` with HTTP status 409 on any subsequent `register_agent` for the **same MCP session id** presenting a different `Authorization` value.
+
+This protection is scoped to within-session: cross-session `register_agent` calls targeting the same `(team, name, role)` identity are legitimate reuse (see the identity-reuse requirement) and MUST NOT trigger 409, regardless of Authorization header values.
+
+When the request carries no `Authorization` header (or an empty one after trim), the daemon MUST NOT enforce collision detection.
+
+Arriving on a different TCP socket (e.g. after keep-alive expiry) MUST NOT by itself trigger a collision.
+
+#### Scenario: Different Authorization credentials on same session id
+
+- **GIVEN** session `sess-A` was first bound to the sha256 of `Authorization: Bearer tokenX`
+- **WHEN** a request with `Mcp-Session-Id: sess-A` AND `Authorization: Bearer tokenY` calls `register_agent`
+- **THEN** response is HTTP 409 with body `{ error: 'agent_id_collision' }`
+
+#### Scenario: Cross-session same identity under different Authorization reuses agent_id
+
+- **GIVEN** session `sess-A` registered `(default, alice, backend)` with `Authorization: Bearer tokenX`, producing `agent_id='X'`
+- **WHEN** a **different** session `sess-B` calls `register_agent` for the same `(default, alice, backend)` identity with `Authorization: Bearer tokenY`
+- **THEN** response is success with `agent_id='X'` (reuse, NOT 409)
+
+#### Scenario: Request without Authorization header never triggers collision
+
+- **GIVEN** session `sess-A` was registered previously
+- **WHEN** any subsequent `register_agent` arrives for `Mcp-Session-Id: sess-A` carrying no `Authorization` header
+- **THEN** response is success (not HTTP 409)
+
+### Requirement: Mismatched agent_id for tool call returns 403
+
+If a tool call explicitly carries a `from_agent_id` parameter that does not match the caller's **currently registered agent_id** (held in the session's `agentIdHolder.current`), the daemon MUST return HTTP 403 with body `{ error: 'identity_mismatch' }`.
+
+Before the session has called `register_agent` successfully, `agentIdHolder.current` is `undefined`; any tool call other than `register_agent` MUST also be rejected (unregistered session).
+
+#### Scenario: send_message with spoofed from_agent_id
+
+- **GIVEN** session `sess-A` has registered and holds `agentIdHolder.current = 'X'`
+- **WHEN** a tool call on this session arrives with `from_agent_id='Y'` (not `'X'`)
+- **THEN** the daemon rejects with 403 `{ error: 'identity_mismatch' }`
+
+#### Scenario: Unregistered session calling business tool is rejected
+
+- **GIVEN** a fresh MCP session that has not yet called `register_agent`
+- **WHEN** it calls `list_agents` (or any business tool)
+- **THEN** the call is rejected (unregistered)
+
