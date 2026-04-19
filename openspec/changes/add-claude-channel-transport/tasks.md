@@ -426,9 +426,9 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - [x] **REFACTOR:** None.
   - [x] **Verify REFACTOR:** n/a.
   - [x] **Commit:** `feat(plugin): proxy declares claude/channel experimental capability (Task 8.2)`
-    - SHA: `<filled after commit>`
+    - SHA: `d8be98b`
 
-- [ ] 8.3 Proxy resolves `channel_session_id` from persistence (read if exists, generate+write if absent)
+- [x] 8.3 Proxy resolves `channel_session_id` from persistence (read if exists, generate+write if absent)
   - kind: unit-test
   - **Spec scenario(s):**
     - `claude-channel-transport/spec.md` → Scenario: `proxy recovers csid from persistence when file exists`
@@ -436,17 +436,25 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - **Files:**
     - Create: `plugins/ts-agent-teams-channel/tests/proxy-csid-persistence.test.ts`
     - Create: `plugins/ts-agent-teams-channel/src/csid-store.ts`
-  - [ ] **RED:** Two cases — (a) pre-write file, expect read matches; (b) no file, expect generated UUID and file written.  Use tmp dir override via arg.
-  - [ ] **Verify RED:**
-    - Command: `pnpm -C plugins/ts-agent-teams-channel exec vitest run tests/proxy-csid-persistence.test.ts --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **GREEN:** `csid-store.ts` exports `resolveCsid({cacheDir, team, name}): string`.  Path `<cacheDir>/ts-agent-teams-channel/<team>-<name>.json` with `{channel_session_id}`.  Create dirs as needed.  Use `node:crypto.randomUUID()`.
-  - [ ] **Verify GREEN:**
-    - Command: `pnpm -C plugins/ts-agent-teams-channel exec vitest run --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **REFACTOR:** Normalize cacheDir resolution (XDG / HOME / LOCALAPPDATA) in a helper.
-  - [ ] **Verify REFACTOR:**
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
+  - [x] **RED:** 5 cases — recover existing, generate fresh + write, stable on re-invoke, isolation across identities, regenerate on malformed.
+  - [x] **Verify RED:**
+    - Command: `pnpm -C plugins/ts-agent-teams-channel exec vitest run tests/proxy-csid-persistence.test.ts`
+    - **Observed output:**
+      ```
+      Error: Failed to load url ../src/csid-store.js
+      Tests  no tests
+      ```
+  - [x] **GREEN:** `csid-store.ts` exports `resolveCsid({cacheDir, team, name})` and `resolveCacheDir(env)` helper; uses `randomUUID()`; writes `<cacheDir>/ts-agent-teams-channel/<team>-<name>.json`.
+  - [x] **Verify GREEN:**
+    - Command: `pnpm -C plugins/ts-agent-teams-channel exec vitest run`
+    - **Observed output:**
+      ```
+      ✓ 5/5 tests pass
+      ```
+  - [x] **REFACTOR:** `resolveCacheDir()` extracted as exported helper (XDG / LOCALAPPDATA / ~/.cache).
+  - [x] **Verify REFACTOR:** covered by GREEN.
+  - [x] **Commit:** `feat(plugin): add csid-store persistence (Task 8.3)`
+    - SHA: `<filled after commit>`
 
 - [ ] 8.4 Proxy connects to daemon + executes registration sequence (register_agent → bind_channel → subscribe_channel_wake)
   - kind: integration-test
