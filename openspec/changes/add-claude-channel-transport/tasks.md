@@ -602,7 +602,7 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - [x] **REFACTOR:** Extracted `parseCliArgs` + `CliArgError` as exported helpers at module top so a future unit test can cover arg parsing without subprocess overhead.  Shutdown path centralised in a single `shutdown()` closure wired from stdio `onclose`, SIGTERM, and SIGINT.
   - [x] **Verify REFACTOR:** covered by the GREEN run above (no behaviour change).
   - [x] **Commit:** `feat(plugin): wire CLI entrypoint to runReconnectingProxy + stdio transport (Task 8.8)`
-    - SHA: `<pending>`
+    - SHA: `a503ac4`
 
 ## 9. End-to-end integration
 
