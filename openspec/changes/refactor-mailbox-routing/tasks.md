@@ -986,7 +986,7 @@
     - Staging order: test before code
     - **Commit SHA (fill during apply):** `fafbd17932eb3ae18448a1e666bbf0c794f67a6f`
 
-- [ ] 3.3 send_message supports cross-team delivery via explicit `to_team`
+- [x] 3.3 send_message supports cross-team delivery via explicit `to_team`
   - kind: unit-test
   - **Spec scenario(s):**
     - `mailbox/spec.md` → Scenario: `Cross-team private message is delivered`
@@ -997,7 +997,7 @@
   - **Files:**
     - Create: `tests/send-message-cross-team.test.ts`
     - Modify: `src/mcp/send-message.ts` (already handled by 3.2 if implemented correctly)
-  - [ ] **RED:** Write `tests/send-message-cross-team.test.ts` with positive and negative cross-team cases.
+  - [x] **RED:** Write `tests/send-message-cross-team.test.ts` with positive and negative cross-team cases.
     ```typescript
     import { describe, it, expect, afterEach, beforeEach } from 'vitest'
     import { mkdtempSync, rmSync } from 'node:fs'
@@ -1070,30 +1070,79 @@
       })
     })
     ```
-  - [ ] **Verify RED:** Tests fail because the `send` method (pre-3.2) doesn't resolve `to_team` properly.  If 3.2 is in, these should already pass — in that case this task is a regression guard.  Force an initial RED by reverting 3.2's `to_team` line temporarily, verify fail, restore.
+  - [x] **Verify RED:** Tests fail because the `send` method (pre-3.2) doesn't resolve `to_team` properly.  If 3.2 is in, these should already pass — in that case this task is a regression guard.  Force an initial RED by reverting 3.2's `to_team` line temporarily, verify fail, restore.
     - Command: `npx vitest run tests/send-message-cross-team.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      RED forcing approach: Option B.  Task 3.2 already delivered correct cross-team resolution, so the new test file passed on first run (4/4 green).  To produce a genuine RED, temporarily mutated `src/mcp/send-message.ts` line 59 from
+        const toTeam = input.to_team ?? fromTeam
+      to
+        const toTeam = fromTeam
+      (ignoring caller-provided `to_team`).  Re-ran the file; Scenario "cross-team delivery succeeds when to_team matches recipient team" failed as expected because messages wrote to_team='alpha' rather than 'beta', so the resulting rcpt.team !== toTeam check returned `{error: 'unknown_recipient'}`.  Reverted mutation immediately after observing RED.
+
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ❯ tests/send-message-cross-team.test.ts (4 tests | 1 failed) 11ms
+         × send_message cross-team > cross-team delivery succeeds when to_team matches recipient team 6ms
+           → expected true to be false // Object.is equality
+
+      ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+       FAIL  tests/send-message-cross-team.test.ts > send_message cross-team > cross-team delivery succeeds when to_team matches recipient team
+      AssertionError: expected true to be false // Object.is equality
+
+      - Expected
+      + Received
+
+      - false
+      + true
+
+       Test Files  1 failed (1)
+            Tests  1 failed | 3 passed (4)
       ```
-  - [ ] **GREEN:** Implementation already in 3.2 (or touch-up); ensure the `to_team ?? fromRow.team` resolution and `recipient.team === resolved_to_team` check are in place.
-  - [ ] **Verify GREEN:** All four cases in the new test file pass.
+  - [x] **GREEN:** Implementation already in 3.2 (or touch-up); ensure the `to_team ?? fromRow.team` resolution and `recipient.team === resolved_to_team` check are in place.
+  - [x] **Verify GREEN:** All four cases in the new test file pass.
     - Command: `npx vitest run tests/send-message-cross-team.test.ts`
     - Full-suite command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ✓ tests/send-message-cross-team.test.ts (4 tests) 9ms
+
+       Test Files  1 passed (1)
+            Tests  4 passed (4)
       ```
-  - [ ] **REFACTOR:** Consolidate the three "unknown_recipient" branches (no-from, no-rcpt, team-mismatch) if they share cleanup pattern.
-  - [ ] **Verify REFACTOR:** Re-run file.
+  - [x] **REFACTOR:** Consolidate the three "unknown_recipient" branches (no-from, no-rcpt, team-mismatch) if they share cleanup pattern.
+      REFACTOR: none needed.  Post-3.2, `src/mcp/send-message.ts` already collapses the recipient lookup into a single combined branch:
+        if (!fromRow) return { error: 'unknown_recipient' }
+        ...
+        if (!rcpt || rcpt.team !== toTeam) return { error: 'unknown_recipient' }
+      — only two call sites total, each returning the identical literal with no pre-return cleanup to factor.  Extracting a helper (`return unknownRecipient()`) would add a named indirection over a 3-word return statement and hurt readability.  Left as-is.
+  - [x] **Verify REFACTOR:** Re-run file.
     - Command: `npx vitest run tests/send-message-cross-team.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ✓ tests/send-message-cross-team.test.ts (4 tests) 10ms
+
+       Test Files  1 passed (1)
+            Tests  4 passed (4)
+
+      Full suite `pnpm test`:
+       Test Files  4 failed | 71 passed (75)
+            Tests  4 failed | 228 passed (232)
+
+      Remaining failures (all pre-flagged in 3.1 / 3.2 as carryover — 3.3 is regression-guard only, no new failures introduced):
+        - tests/messages-schema.test.ts (asserts legacy `team` column — messages-schema-split task)
+        - tests/send-message-auto-poke.test.ts > to_role fan-out ... (retired `to_role` — task 3.4 / 4.x)
+        - tests/send-role-broadcast.test.ts > to_role fan-out writes one message per recipient sharing event_id (task 4.x)
+        - tests/send-message-auto-poke.test.ts hint-format carryover tied to same `to_role` migration
       ```
-  - [ ] **Commit:** `feat(send-message): cross-team private delivery via to_team param`
+  - [x] **Commit:** `feat(send-message): cross-team private delivery via to_team param`
     - Staging order: test before code
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `<filled after commit>`
 
 - [ ] 3.4 send_message auto-poke + retry across same-team and cross-team
   - kind: unit-test
