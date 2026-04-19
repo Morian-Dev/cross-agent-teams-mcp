@@ -567,6 +567,43 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - [x] **Commit:** `feat(plugin): relay channel_wake as claude/channel (Task 8.7)`
     - SHA: `2524ab1`
 
+- [x] 8.8 Proxy CLI entrypoint wires runReconnectingProxy + StdioServerTransport and is launchable as a subprocess
+  - kind: integration-test
+  - **Spec scenario(s):** Thin wire-up of existing `claude-channel-transport/spec.md` scenarios — `Channel proxy startup sequence`, `proxy relays channel_wake as claude/channel notification`, `proxy recovers csid from persistence when file exists`.  The CLI is the shim that Claude Code launches via `.mcp.json`; its behavior is fully covered by the specs above via composition of `createProxyServer` (8.2), `resolveCsid` (8.3), `runReconnectingProxy` (8.6), and `relayChannelWake` (8.7).
+  - **Files:**
+    - Create: `plugins/ts-agent-teams-channel/tests/proxy-cli.test.ts`
+    - Create: `plugins/ts-agent-teams-channel/tsconfig.build.json` (rootDir=src, excludes tests from the build)
+    - Modify: `plugins/ts-agent-teams-channel/package.json` (build script uses tsconfig.build.json)
+    - Modify: `plugins/ts-agent-teams-channel/src/cli.ts` (replace placeholder with real wire-up)
+  - [x] **RED:** Two subprocess tests: (a) spawn `node dist/cli.js --daemon-url <fake> --agent-team default --agent-name alice` against an in-test fake daemon, assert the daemon observes tools/call ordering `register_agent → bind_channel → subscribe_channel_wake`, bind_channel args carry `team='default'`, `name='alice'`, a non-empty `channel_session_id`, and the process exits cleanly when stdin is closed; (b) spawn with `--daemon-url` missing + env unset, assert exit code != 0 and stderr mentions `daemon-url`/`TS_AGENT_TEAMS_DAEMON_URL`.
+  - [x] **Verify RED:**
+    - Command: `pnpm -C plugins/ts-agent-teams-channel exec vitest run tests/proxy-cli.test.ts`
+    - **Observed output:**
+      ```
+      ❯ tests/proxy-cli.test.ts (2 tests | 2 failed) 10761ms
+         × runs register_agent -> bind_channel -> subscribe_channel_wake ... stderr=: expected -1 to be greater than or equal to 0
+         × exits non-zero with diagnostic when required arg is missing ... expected +0 not to be +0
+      Test Files  1 failed (1)   Tests  2 failed (2)
+      ```
+  - [x] **GREEN:** Implemented `src/cli.ts` with `parseCliArgs(argv, env)` (CLI flags + `TS_AGENT_TEAMS_DAEMON_URL` env fallback, `CliArgError` → exit(2) with stderr diagnostic), `main()` composes `resolveCacheDir` → `resolveCsid` → `createProxyServer` → `StdioServerTransport` → `runReconnectingProxy` with a `notificationHandler` that calls `relayChannelWake`.  Stdio `onclose` + `SIGTERM`/`SIGINT` handlers shut down the reconnecting controller and host server.  Added `tsconfig.build.json` with `rootDir: "./src"` + `exclude: ["tests/**/*"]` so `dist/cli.js` lands at the path declared in `package.json` `bin`.
+  - [x] **Verify GREEN:**
+    - Command: `pnpm -C plugins/ts-agent-teams-channel exec tsc --noEmit`
+    - Command: `pnpm -C plugins/ts-agent-teams-channel exec vitest run`
+    - Command: `pnpm exec tsc --noEmit`
+    - Command: `pnpm exec vitest run`
+    - **Observed output:**
+      ```
+      plugin tsc --noEmit: (clean, exit 0)
+      plugin vitest: Test Files 4 passed (4)  Tests 10 passed (10)  (1 new file, 2 new tests — all pass)
+      root tsc --noEmit: (clean, exit 0)
+      root vitest: Test Files  3 failed | 92 passed (95)   Tests  4 failed | 297 passed (301)
+        — 4 failing tests are the same pre-existing baseline failures (poke-validation / poke-e2e / poke-tmux-unavailable) unchanged from task 11.1.
+      ```
+  - [x] **REFACTOR:** Extracted `parseCliArgs` + `CliArgError` as exported helpers at module top so a future unit test can cover arg parsing without subprocess overhead.  Shutdown path centralised in a single `shutdown()` closure wired from stdio `onclose`, SIGTERM, and SIGINT.
+  - [x] **Verify REFACTOR:** covered by the GREEN run above (no behaviour change).
+  - [x] **Commit:** `feat(plugin): wire CLI entrypoint to runReconnectingProxy + stdio transport (Task 8.8)`
+    - SHA: `<pending>`
+
 ## 9. End-to-end integration
 
 - [x] 9.1 Real daemon + real proxy subprocess: `poke` via channel triggers `notifications/claude/channel` on proxy's host stdio; no tmux command executed
