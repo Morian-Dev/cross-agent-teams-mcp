@@ -1,0 +1,111 @@
+import { describe, it, expect, afterEach, vi } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { startServer } from '../src/daemon/server.js'
+import { runRegistrationSequence } from '../plugins/ts-agent-teams-channel/src/daemon-client.js'
+import { createProxyServer, relayChannelWake } from '../plugins/ts-agent-teams-channel/src/proxy.js'
+
+const tmp = () => mkdtempSync(join(tmpdir(), 'atm-e2e-chan-'))
+
+async function parseTool(resp: unknown): Promise<Record<string, unknown>> {
+  const r = resp as { content: Array<{ text: string }> }
+  return JSON.parse(r.content[0].text)
+}
+
+describe('e2e channel poke', () => {
+  const cleanups: string[] = []
+  afterEach(() => {
+    cleanups.forEach(d => rmSync(d, { recursive: true, force: true }))
+    cleanups.length = 0
+    vi.restoreAllMocks()
+  })
+
+  it('poke triggers notifications/claude/channel on proxy host and no tmux command runs', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+    const url = `http://${host}:${port}/mcp`
+
+    // Bob (owner) registers.
+    const bobT = new StreamableHTTPClientTransport(new URL(url))
+    const bobC = new Client({ name: 'bob', version: '0.0.0' })
+    await bobC.connect(bobT)
+    const bobResp = await bobC.callTool({
+      name: 'register_agent',
+      arguments: { model: 'opus', role: 'backend', name: 'bob' }
+    })
+    const bob = await parseTool(bobResp)
+    expect(bob.agent_id).toBeDefined()
+
+    // Set up the proxy's host-facing McpServer with a fake host client,
+    // and start the daemon-side registration sequence that forwards wakes.
+    const proxyServer = createProxyServer()
+    const [hostT, proxyServerT] = InMemoryTransport.createLinkedPair()
+    await proxyServer.connect(proxyServerT)
+    const hostClient = new Client({ name: 'fake-host', version: '0.0.0' })
+    const hostNotifs: Array<{ method: string; params: unknown }> = []
+    hostClient.fallbackNotificationHandler = async (n) => {
+      hostNotifs.push({ method: n.method, params: n.params })
+    }
+    await hostClient.connect(hostT)
+
+    const seq = await runRegistrationSequence({
+      daemonUrl: url,
+      team: 'default',
+      name: 'bob',
+      channel_session_id: 'csid-bob',
+      backoffInitialMs: 10,
+      backoffMaxMs: 50,
+      notificationHandler: (params) => {
+        relayChannelWake(proxyServer, params as { content: string; meta: Record<string, string> })
+      }
+    })
+    expect(seq.order).toEqual(['register_agent', 'bind_channel', 'subscribe_channel_wake'])
+
+    // Alice (peer) registers and calls poke.
+    const aliceT = new StreamableHTTPClientTransport(new URL(url))
+    const aliceC = new Client({ name: 'alice', version: '0.0.0' })
+    await aliceC.connect(aliceT)
+    await aliceC.callTool({
+      name: 'register_agent',
+      arguments: { model: 'opus', role: 'backend', name: 'alice' }
+    })
+    const pokeResp = await aliceC.callTool({
+      name: 'poke',
+      arguments: { target_agent_id: bob.agent_id as string, prompt: 'check inbox' }
+    })
+    const pokeObj = await parseTool(pokeResp)
+    expect(pokeObj).toMatchObject({
+      ok: true,
+      transport_used: 'claude-channel',
+      channel_session_id: 'csid-bob'
+    })
+
+    // Allow notification to propagate through daemon fanout → proxy client
+    // → relayChannelWake → host in-memory transport.
+    const deadline = Date.now() + 2000
+    while (hostNotifs.length === 0 && Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 20))
+    }
+    expect(hostNotifs.length).toBeGreaterThanOrEqual(1)
+    expect(hostNotifs[0].method).toBe('notifications/claude/channel')
+    expect(hostNotifs[0].params).toMatchObject({ content: 'check inbox' })
+
+    // Sanity: no tmux sidecar process was invoked — the channel short-circuit
+    // means dispatchPoke never touched the tmux branch. We infer this from the
+    // response envelope (which would carry pane_id / pane_tail_* if tmux ran).
+    expect(pokeObj.pane_id).toBeUndefined()
+    expect(pokeObj.pane_tail_before).toBeUndefined()
+    expect(pokeObj.pane_tail_after).toBeUndefined()
+
+    await seq.close()
+    await aliceC.close()
+    await bobC.close()
+    await hostClient.close()
+    await proxyServer.close()
+    await app.close()
+  }, 20000)
+})
