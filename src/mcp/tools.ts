@@ -20,6 +20,8 @@ import { PendingContractEventsService } from './pending-contract-events.js'
 import { poke } from './poke.js'
 import { wrapStorage } from '../daemon/errors.js'
 import type { SseFanout } from '../daemon/sse-fanout.js'
+import type { ChannelWakeFanout } from '../daemon/channel-wake-fanout.js'
+import { SubscribeChannelWakeService } from './subscribe-channel-wake.js'
 
 export interface AgentIdHolder { current: string | undefined }
 
@@ -100,13 +102,19 @@ export interface RegisterSuccessHook {
   (agent_id: string, team: string): void
 }
 
+export interface TransportLike {
+  send(msg: Record<string, unknown>): Promise<void> | void
+}
+
 export function registerBusinessTools(
   server: McpServer,
   db: Database.Database,
   getCallerAgentId: () => string | undefined,
   fanout?: SseFanout,
   onRegisterSuccess?: RegisterSuccessHook,
-  getSessionId?: () => string | undefined
+  getSessionId?: () => string | undefined,
+  channelWakeFanout?: ChannelWakeFanout,
+  getTransport?: () => TransportLike
 ): void {
   const agents = new AgentsRepo(db)
   const events = new EventsOutbox(db)
@@ -507,6 +515,42 @@ export function registerBusinessTools(
       return toText(result)
     }
   )
+
+  // subscribe_channel_wake — reserved for channel proxies (role=__channel_proxy__)
+  if (channelWakeFanout) {
+    const subscribeSvc = new SubscribeChannelWakeService(db, channelWakeFanout)
+    server.registerTool(
+      'subscribe_channel_wake',
+      {
+        title: 'Subscribe channel wake',
+        description: [
+          'Internal tool reserved for the ts-agent-teams channel proxy.',
+          'Attaches the caller\'s MCP session notification sink to a channel_session_id so the',
+          'daemon can emit notifications/channel_wake to it.  Requires role=__channel_proxy__.'
+        ].join(' '),
+        inputSchema: { channel_session_id: z.string().min(1) }
+      },
+      async (args: { channel_session_id: string }) => {
+        const who = requireAgent()
+        if (typeof who !== 'string') return toText(who)
+        const sid = getSessionId?.()
+        if (!sid) return toText({ error: 'unknown_session' })
+        const sink = (payload: unknown) => {
+          const t = getTransport?.()
+          if (!t) return
+          try {
+            void Promise.resolve(t.send(payload as Record<string, unknown>)).catch(() => { /* best-effort */ })
+          } catch { /* best-effort */ }
+        }
+        return run(() => subscribeSvc.subscribe({
+          callerAgentId: who,
+          channel_session_id: args.channel_session_id,
+          sessionId: sid,
+          sink
+        }))
+      }
+    )
+  }
 
   // pending_contract_events
   server.registerTool(

@@ -6,6 +6,7 @@ import { randomUUID, createHash } from 'node:crypto'
 import { echoSchema, echoHandler } from './echo.js'
 import { registerBusinessTools, type AgentIdHolder } from './tools.js'
 import type { SseFanout, SseSink } from '../daemon/sse-fanout.js'
+import type { ChannelWakeFanout } from '../daemon/channel-wake-fanout.js'
 
 interface Session {
   transport: StreamableHTTPServerTransport
@@ -14,7 +15,12 @@ interface Session {
   agentIdHolder: AgentIdHolder
 }
 
-export function mountMcp(app: FastifyInstance, db: Database.Database, fanout: SseFanout): void {
+export function mountMcp(
+  app: FastifyInstance,
+  db: Database.Database,
+  fanout: SseFanout,
+  channelWakeFanout?: ChannelWakeFanout
+): void {
   const sessions = new Map<string, Session>()
   // Once register_agent succeeds for a session id, pin the owning Authorization hash.
   // A later register_agent presenting a different Authorization triggers HTTP 409.
@@ -74,12 +80,15 @@ export function mountMcp(app: FastifyInstance, db: Database.Database, fanout: Ss
       if (agentIdHolder.current) {
         try { fanout.detach(agentIdHolder.current) } catch { /* ignore */ }
       }
+      if (transport.sessionId && channelWakeFanout) {
+        try { channelWakeFanout.detachBySession(transport.sessionId) } catch { /* ignore */ }
+      }
       if (transport.sessionId) {
         sessions.delete(transport.sessionId)
         sessionOwners.delete(transport.sessionId)
       }
     }
-    registerBusinessTools(server, db, getCallerAgentId, fanout, onRegisterSuccess, () => sessionIdForCaller)
+    registerBusinessTools(server, db, getCallerAgentId, fanout, onRegisterSuccess, () => sessionIdForCaller, channelWakeFanout, () => transport)
     server.connect(transport)
     return { transport, server, sessionId: '', agentIdHolder }
   }

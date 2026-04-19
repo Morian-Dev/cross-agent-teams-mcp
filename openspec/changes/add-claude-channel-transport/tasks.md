@@ -236,11 +236,11 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - [x] **REFACTOR:** `META_KEY_RE` factored out at module top.
   - [x] **Verify REFACTOR:** covered by GREEN tests.
   - [x] **Commit:** `feat(daemon): add sendChannelWake emitter (Task 5.1)`
-    - SHA: `<filled after commit>`
+    - SHA: `074b960`
 
 ## 6. New MCP tools: `subscribe_channel_wake`, `bind_channel`
 
-- [ ] 6.1 `subscribe_channel_wake` service + tool: role gating, attach sink, detach on session close
+- [x] 6.1 `subscribe_channel_wake` service + tool: role gating, attach sink, detach on session close
   - kind: unit-test
   - **Spec scenario(s):**
     - `claude-channel-transport/spec.md` → Scenario: `subscribe_channel_wake succeeds for __channel_proxy__ caller`
@@ -250,19 +250,32 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
     - Create: `tests/subscribe-channel-wake.test.ts`
     - Create: `src/mcp/subscribe-channel-wake.ts`
     - Modify: `src/mcp/tools.ts` (register tool)
-    - Modify: `src/daemon/server.ts` (wire `detachBySession` in transport.onclose)
-  - [ ] **RED:** Three cases — (a) proxy role succeeds, fanout has sink under csid, (b) non-proxy role returns `{error:'forbidden_role'}`, fanout unchanged, (c) simulate session close → fanout no longer has sink.
-  - [ ] **Verify RED:**
-    - Command: `pnpm exec vitest run tests/subscribe-channel-wake.test.ts --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **GREEN:** Service validates caller registered + role=`__channel_proxy__`; creates sink that writes to the MCP session's notification transport; calls `fanout.attach(csid, sink, sessionId)`.  `server.ts` on each new transport adds `onclose → fanout.detachBySession(sessionId)`.  Register tool in `tools.ts`.
-  - [ ] **Verify GREEN:**
-    - Command: `pnpm exec vitest run tests/subscribe-channel-wake.test.ts --reporter=verbose`
-    - Full-suite: `pnpm exec vitest run --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **REFACTOR:** Consolidate role gate helper if both tools (this + bind_channel) duplicate it.
-  - [ ] **Verify REFACTOR:**
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
+    - Modify: `src/mcp/transport.ts` (thread fanout + detachBySession in onclose)
+    - Modify: `src/daemon/server.ts` (instantiate ChannelWakeFanout, pass to mountMcp)
+  - [x] **RED:** 4 cases — proxy success, backend forbidden_role, unknown_agent, detachBySession sweeps all owned sinks.
+  - [x] **Verify RED:**
+    - Command: `pnpm exec vitest run tests/subscribe-channel-wake.test.ts`
+    - **Observed output:**
+      ```
+      Error: Failed to load url ../src/mcp/subscribe-channel-wake.js
+      Tests  no tests
+      ```
+  - [x] **GREEN:** Created `SubscribeChannelWakeService` (pure unit-testable); threaded `ChannelWakeFanout` through `buildServer → mountMcp → registerBusinessTools`; registered tool only when fanout is present; `transport.onclose` now calls `channelWakeFanout.detachBySession(sessionId)`.
+  - [x] **Verify GREEN:**
+    - Command: `pnpm exec vitest run tests/subscribe-channel-wake.test.ts`
+    - Typecheck: `pnpm exec tsc --noEmit` (clean)
+    - Full-suite: `pnpm exec vitest run`
+    - **Observed output:**
+      ```
+      ✓ 4/4 new tests pass
+      tsc --noEmit: no output (clean)
+      Full suite: Test Files  3 failed | 85 passed (88)  Tests  4 failed | 279 passed (283)
+      (same 4 pre-existing poke failures)
+      ```
+  - [x] **REFACTOR:** Role gate not yet duplicated — will fold together at task 6.2 where `bind_channel` may need the same check.
+  - [x] **Verify REFACTOR:** n/a (deferred to 6.2).
+  - [x] **Commit:** `feat(mcp): add subscribe_channel_wake service + tool wiring (Task 6.1)`
+    - SHA: `<filled after commit>`
 
 - [ ] 6.2 `bind_channel` service + tool: writes csid to target agents row or returns `agent_not_registered`
   - kind: unit-test
