@@ -6,6 +6,7 @@ import { EventsOutbox } from '../storage/events-outbox.js'
 import { RegisterAgentService } from './register-agent.js'
 import { SendMessageService } from './send-message.js'
 import { BroadcastService } from './broadcast.js'
+import { BroadcastToRoleService } from './broadcast-to-role.js'
 import { GetInboxService } from './get-inbox.js'
 import { TaskAddService } from './task-add.js'
 import { TaskClaimService } from './task-claim.js'
@@ -81,6 +82,7 @@ export function registerBusinessTools(
 
   const sendSvc = new SendMessageService(db, agents, events, { poke: autoPokeImpl })
   const broadcastSvc = new BroadcastService(db, agents, sendSvc, { poke: autoPokeImpl })
+  const broadcastToRoleSvc = new BroadcastToRoleService(db, agents, events, { poke: autoPokeImpl })
   const inboxSvc = new GetInboxService(db, agents)
   const taskAddSvc = new TaskAddService(db, agents, events)
   const taskClaimSvc = new TaskClaimService(db, agents, events)
@@ -260,6 +262,34 @@ export function registerBusinessTools(
       const who = requireAgent()
       if (typeof who !== 'string') return toText(who)
       return run(() => broadcastSvc.broadcast({ from: who, ...args }))
+    }
+  )
+
+  // broadcast_to_role
+  server.registerTool(
+    'broadcast_to_role',
+    {
+      title: 'Broadcast to role',
+      description: [
+        'Same-team broadcast filtered by role: fans out to every other agent in the caller\'s team',
+        'whose `role` equals `to_role`.  Never cross-team — cross-team delivery is private 1→1 only',
+        'via `send_message({to_team})`.  Auto-poke is default true with per-pane quiet-guard +',
+        'retry schedule 30s / 180s / 600s; retries stop early once the recipient comes online.',
+        'Auto-poke injects ONLY a SHORT wake-up hint (format: `新邮件 from {sender}, 请调 get_inbox 查看`).',
+        "The message body is never injected into the recipient's pane — callers retrieve bodies via `get_inbox`.",
+        'Returns unknown_recipient when no same-team agent matches `to_role`.'
+      ].join(' '),
+      inputSchema: z.object({
+        to_role: z.string().min(1),
+        subject: z.string().optional(),
+        body: z.string().min(1),
+        auto_poke: z.boolean().optional()
+      }).strict()
+    },
+    async (args: { to_role: string; subject?: string; body: string; auto_poke?: boolean }) => {
+      const who = requireAgent()
+      if (typeof who !== 'string') return toText(who)
+      return run(() => broadcastToRoleSvc.broadcast({ from: who, ...args }))
     }
   )
 

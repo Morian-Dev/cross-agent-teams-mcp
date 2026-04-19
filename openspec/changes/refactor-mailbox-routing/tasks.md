@@ -1663,7 +1663,7 @@
     - Staging order: test before code, then delete legacy test in same commit
     - **Commit SHA (fill during apply):** `b403671c0014eb3cf241dce95fc0ce24d4e2b201`
 
-- [ ] 4.3 Register `broadcast_to_role` as MCP tool; reject unknown fields (incl. `to_team`)
+- [x] 4.3 Register `broadcast_to_role` as MCP tool; reject unknown fields (incl. `to_team`)
   - kind: unit-test
   - **Spec scenario(s):**
     - `mailbox/spec.md` → Scenario: `broadcast_to_role does not accept to_team parameter`
@@ -1671,7 +1671,7 @@
   - **Files:**
     - Modify: `src/mcp/tools.ts`
     - Create: `tests/broadcast-to-role-tool-registration.test.ts`
-  - [ ] **RED:** Write test that calls `tools/list` and asserts `broadcast_to_role` is present; also assert calling it with `to_team` rejects.
+  - [x] **RED:** Write test that calls `tools/list` and asserts `broadcast_to_role` is present; also assert calling it with `to_team` rejects.
     ```typescript
     it('tools/list exposes broadcast_to_role', async () => {
       const { c, close } = await client()
@@ -1683,51 +1683,72 @@
 
     it('broadcast_to_role rejects to_team via Zod strict schema', async () => {
       const { c, close } = await client()
-      await expect(
-        c.callTool({ name: 'broadcast_to_role', arguments: { to_role: 'x', to_team: 'beta', body: 'hi' } })
-      ).rejects.toThrow(/to_team|unknown|unrecognized|validation/i)
+      const resp = await c.callTool({ name: 'broadcast_to_role', arguments: { to_role: 'x', to_team: 'beta', body: 'hi' } }) as { isError?: boolean; content: Array<{ text?: string }> }
+      expect(resp.isError).toBe(true)
+      const text = resp.content.map(p => p.text ?? '').join(' ')
+      expect(text).toMatch(/to_team|unknown|unrecognized|validation/i)
       await close()
     })
     ```
-  - [ ] **Verify RED:** Tool missing → fails.
+    Note: adapted the assertion style to the SDK 1.22.x behavior used by the existing `tests/send-message-zod-schema.test.ts` — Zod validation errors surface as `{ isError: true }` response envelopes, not client-side throws.
+  - [x] **Verify RED:** Tool missing → fails.
     - Command: `npx vitest run tests/broadcast-to-role-tool-registration.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
-      ```
-  - [ ] **GREEN:** In `src/mcp/tools.ts`, wire `BroadcastToRoleService` into the MCP tool registry:
-    ```typescript
-    const broadcastToRoleSchema = z.object({
-      to_role: z.string().min(1),
-      subject: z.string().optional(),
-      body: z.string().min(1),
-      auto_poke: z.boolean().optional()
-    }).strict()
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
 
-    server.tool('broadcast_to_role', broadcastToRoleSchema, async (args, _ctx) => {
-      const from = agentIdHolder.current
-      if (!from) throw new Error('register_agent first')
-      const svc = new BroadcastToRoleService(db, agentsRepo, eventsOutbox, fanoutDeps)
-      const res = await svc.broadcast({ from, ...args })
-      return { content: [{ type: 'text', text: JSON.stringify(res) }] }
-    }, {
-      description: /* see task 6.1 for full text */
-        'Same-team broadcast filtered by role. Never cross-team — cross-team private 1→1 only via send_message({to_team}). Auto-poke default true with quiet-guard + 30s/180s/600s retry; injects only a short wake-up hint (新邮件 from <sender>, 请调 get_inbox 查看), NOT the message body.'
-    })
-    ```
-  - [ ] **Verify GREEN:** Run the test.
+       ❯ tests/broadcast-to-role-tool-registration.test.ts (2 tests | 2 failed) 54ms
+         × broadcast_to_role MCP tool registration > tools/list exposes broadcast_to_role 44ms
+           → expected [ 'echo', 'register_agent', …(14) ] to include 'broadcast_to_role'
+         × broadcast_to_role MCP tool registration > broadcast_to_role rejects to_team via Zod strict schema 10ms
+           → expected 'MCP error -32602: Tool broadcast_to_r…' to match /to_team|unknown|unrecognized|validat…/i
+
+      ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+       FAIL  tests/broadcast-to-role-tool-registration.test.ts > broadcast_to_role MCP tool registration > tools/list exposes broadcast_to_role
+      AssertionError: expected [ 'echo', 'register_agent', …(14) ] to include 'broadcast_to_role'
+
+       FAIL  tests/broadcast-to-role-tool-registration.test.ts > broadcast_to_role MCP tool registration > broadcast_to_role rejects to_team via Zod strict schema
+      AssertionError: expected 'MCP error -32602: Tool broadcast_to_role not found' to match /to_team|unknown|unrecognized|validation/i
+
+       Test Files  1 failed (1)
+            Tests  2 failed (2)
+      ```
+      Both tests fail as expected: `broadcast_to_role` is not registered, so `tools/list` does not include it and calling it surfaces `Tool broadcast_to_role not found` (pre-schema error).
+  - [x] **GREEN:** In `src/mcp/tools.ts`, wire `BroadcastToRoleService` into the MCP tool registry.
+    Implemented via `server.registerTool('broadcast_to_role', ...)` (project-standard API) placed contiguously after the `broadcast` tool.  Schema is `z.object({ to_role, subject?, body, auto_poke? }).strict()` — strict mode rejects unknown fields such as `to_team`.  The service is instantiated once at registry setup (`broadcastToRoleSvc = new BroadcastToRoleService(db, agents, events, { poke: autoPokeImpl })`) and reused across calls, matching how `send_message` / `broadcast` share `autoPokeImpl`.
+  - [x] **Verify GREEN:** Run the test.
     - Command: `npx vitest run tests/broadcast-to-role-tool-registration.test.ts`
     - Full-suite command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ✓ tests/broadcast-to-role-tool-registration.test.ts (2 tests) 62ms
+
+       Test Files  1 passed (1)
+            Tests  2 passed (2)
       ```
-  - [ ] **REFACTOR:** Ensure tool registrations for `send_message`, `broadcast`, `broadcast_to_role` sit contiguous in tools.ts for readability.
-  - [ ] **Verify REFACTOR:** Full suite.
+  - [x] **REFACTOR:** Ensure tool registrations for `send_message`, `broadcast`, `broadcast_to_role` sit contiguous in tools.ts for readability.
+
+    Already contiguous: in `src/mcp/tools.ts` the three `server.registerTool('send_message', ...)`, `server.registerTool('broadcast', ...)`, `server.registerTool('broadcast_to_role', ...)` blocks now sit back-to-back (lines ~200–295), with a single `// <tool-name>` comment separating each block.  No move needed beyond the initial GREEN placement.
+  - [x] **Verify REFACTOR:** Full suite.
     - Command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       Test Files  2 failed | 75 passed (77)
+            Tests  2 failed | 236 passed (238)
+         Duration  10.36s
+
+      Remaining failing suites (pre-flagged carry-overs from prior tasks, not regressions of 4.3):
+        - tests/messages-schema.test.ts > creates messages table with columns and FK to events
+          (asserts legacy `team` column — messages-schema-split task; flagged at 4.1 Verify REFACTOR)
+        - tests/fanout-skip-offline.test.ts > to_role with mixed online/offline yields only online recipients
+          (legacy send_message to_role fan-out — retired by 4.2)
+
+      Net delta vs. 4.2 Verify REFACTOR baseline: +2 passing tests (the new broadcast_to_role-tool-registration suite).
+      The previously-failing tests/send-role-broadcast.test.ts is no longer present (removed as part of 4.2),
+      so the failing-file count dropped from 3 → 2.  No new failures introduced by 4.3.
       ```
   - [ ] **Commit:** `feat(mcp): register broadcast_to_role tool with strict Zod schema`
     - Staging order: test before code
