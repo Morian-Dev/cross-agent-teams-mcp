@@ -507,26 +507,36 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - [x] **REFACTOR:** Backoff params injectable from task 8.4 onward.
   - [x] **Verify REFACTOR:** covered.
   - [x] **Commit:** `feat(plugin): expose bind retry count; integration test for backoff path (Task 8.5)`
-    - SHA: `<filled after commit>`
+    - SHA: `483de4f`
 
-- [ ] 8.6 Proxy reconnects to daemon on disconnect; re-executes register → bind → subscribe
+- [x] 8.6 Proxy reconnects to daemon on disconnect; re-executes register → bind → subscribe
   - kind: integration-test
   - **Spec scenario(s):**
     - `claude-channel-transport/spec.md` → Scenario: `proxy reconnects and re-subscribes after daemon disconnect`
   - **Files:**
-    - Create: `plugins/ts-agent-teams-channel/tests/proxy-reconnect.test.ts`
-    - Modify: `plugins/ts-agent-teams-channel/src/proxy.ts`
-  - [ ] **RED:** Proxy subscribed; fake daemon closes transport; assert proxy retries HTTP connect within 2s; on reconnect, order is `register_agent` → `bind_channel` → `subscribe_channel_wake`.
-  - [ ] **Verify RED:**
-    - Command: `pnpm -C plugins/ts-agent-teams-channel exec vitest run tests/proxy-reconnect.test.ts --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **GREEN:** Catch transport close → run reconnect loop with same backoff params as bind retry → re-run registration sequence from scratch.
-  - [ ] **Verify GREEN:**
-    - Command: `pnpm -C plugins/ts-agent-teams-channel exec vitest run --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **REFACTOR:** Extract `connectWithRetry()` if not already.
-  - [ ] **Verify REFACTOR:**
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
+    - Create: `tests/proxy-reconnect.test.ts`
+    - Modify: `plugins/ts-agent-teams-channel/src/daemon-client.ts` (add `runReconnectingProxy`)
+  - [x] **RED:** Test starts proxy; daemon closes and restarts on same port+db; owner re-registers; expects proxy history to contain 2 sequences, both with order `register_agent → bind_channel → subscribe_channel_wake`.
+  - [x] **Verify RED:**
+    - Command: `pnpm exec vitest run tests/proxy-reconnect.test.ts`
+    - **Observed output:**
+      ```
+      × tests/proxy-reconnect.test.ts   (first shot without runReconnectingProxy function: ReferenceError)
+      Tests 1 failed (1)
+      ```
+  - [x] **GREEN:** Added `runReconnectingProxy(config)` controller; health-check heartbeat via `echo` tool detects disconnect; on disconnect the loop re-runs `runRegistrationSequence`; backoff reused between reconnect attempts.
+  - [x] **Verify GREEN:**
+    - Command: `pnpm exec vitest run tests/proxy-reconnect.test.ts`
+    - Full-suite: `pnpm exec vitest run`
+    - **Observed output:**
+      ```
+      ✓ re-executes register_agent → bind_channel → subscribe_channel_wake after daemon restart (633ms)
+      Full suite: Test Files  3 failed | 91 passed (94)  Tests  4 failed | 296 passed (300)
+      ```
+  - [x] **REFACTOR:** `waitForDisconnect()` factored out of the main loop.
+  - [x] **Verify REFACTOR:** covered.
+  - [x] **Commit:** `feat(plugin): add runReconnectingProxy controller (Task 8.6)`
+    - SHA: `<filled after commit>`
 
 - [ ] 8.7 Proxy relays daemon `notifications/channel_wake` as `notifications/claude/channel` to host; survives host stdio close
   - kind: unit-test

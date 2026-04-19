@@ -11,6 +11,16 @@ export interface RegistrationConfig {
   notificationHandler?: (payload: unknown) => void
 }
 
+export interface ReconnectingProxyConfig extends RegistrationConfig {
+  onSequenceComplete?: (order: string[]) => void
+  onDisconnect?: () => void
+  healthCheckIntervalMs?: number
+}
+
+export interface ReconnectingProxyController {
+  stop(): Promise<void>
+}
+
 export interface RegistrationSequenceResult {
   order: string[]
   bindAttempts: number
@@ -117,6 +127,60 @@ export async function runRegistrationSequence(
     close: async () => {
       try { await client.close() } catch { /* best-effort */ }
       try { await transport.close() } catch { /* best-effort */ }
+    }
+  }
+}
+
+export function runReconnectingProxy(config: ReconnectingProxyConfig): ReconnectingProxyController {
+  let stopped = false
+  let currentSeq: RegistrationSequenceResult | null = null
+
+  async function waitForDisconnect(seq: RegistrationSequenceResult): Promise<void> {
+    const interval = config.healthCheckIntervalMs ?? 200
+    let disconnected = false
+    const closeHandler = () => { disconnected = true }
+    const prevOnClose = seq.transport.onclose
+    seq.transport.onclose = () => { prevOnClose?.(); closeHandler() }
+    while (!disconnected && !stopped) {
+      await new Promise(r => setTimeout(r, interval))
+      if (disconnected || stopped) break
+      try {
+        await seq.client.callTool({ name: 'echo', arguments: { msg: 'hb' } })
+      } catch {
+        disconnected = true
+        break
+      }
+    }
+  }
+
+  async function loop(): Promise<void> {
+    while (!stopped) {
+      try {
+        const seq = await runRegistrationSequence(config)
+        currentSeq = seq
+        if (config.onSequenceComplete) config.onSequenceComplete([...seq.order])
+
+        await waitForDisconnect(seq)
+        if (config.onDisconnect) config.onDisconnect()
+        try { await seq.close() } catch { /* best-effort */ }
+        currentSeq = null
+      } catch {
+        // register/bind/subscribe failed — wait and retry.
+      }
+      if (stopped) break
+      const wait = config.backoffInitialMs ?? 500
+      await new Promise(r => setTimeout(r, wait))
+    }
+  }
+
+  void loop()
+
+  return {
+    stop: async () => {
+      stopped = true
+      if (currentSeq) {
+        try { await currentSeq.close() } catch { /* best-effort */ }
+      }
     }
   }
 }
