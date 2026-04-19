@@ -610,7 +610,7 @@
 
 ## 2. SSE fanout filter
 
-- [ ] 2.1 `SseFanout.emitContractEvent` filter uses `event.to_team`
+- [x] 2.1 `SseFanout.emitContractEvent` filter uses `event.to_team`
   - kind: unit-test
   - **Spec scenario(s):**
     - `mailbox/spec.md` (design-rationale: mailbox SSE pass-through) — not a direct scenario, but covered by existing `contract-subscriptions/spec.md` → Scenario: `Subscribed online agent receives push`
@@ -618,7 +618,7 @@
   - **Files:**
     - Modify: `tests/sse-fanout.test.ts`
     - Modify: `src/daemon/sse-fanout.ts`
-  - [ ] **RED:** Extend `tests/sse-fanout.test.ts` with a test that injects a synthetic event whose `from_team` differs from `to_team`, and asserts the session whose team matches `to_team` is the one receiving the push.
+  - [x] **RED:** Extend `tests/sse-fanout.test.ts` with a test that injects a synthetic event whose `from_team` differs from `to_team`, and asserts the session whose team matches `to_team` is the one receiving the push.
     ```typescript
     it('fanout filter uses event.to_team, not from_team', () => {
       const fanout = new SseFanout()
@@ -638,11 +638,33 @@
     })
     ```
     (The existing same-team test MUST continue to pass.  The new test wires the fanout through a to_team path.)
-  - [ ] **Verify RED:** Run sse-fanout tests, confirm new assertion fails under `session.team !== event.team` wording (the check may be tautological for same-team contract events; to force a real RED, temporarily have `emitContractEvent` take `from_team` parameter and filter on that; observe the fail).
+  - [x] **Verify RED:** Run sse-fanout tests, confirm new assertion fails under `session.team !== event.team` wording (the check may be tautological for same-team contract events; to force a real RED, temporarily have `emitContractEvent` take `from_team` parameter and filter on that; observe the fail).
     - Command: `npx vitest run tests/sse-fanout.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ❯ tests/sse-fanout.test.ts (2 tests | 1 failed) 9ms
+         × sse fanout > fanout filter uses event.to_team, not from_team 4ms
+           → expected +0 to be 1 // Object.is equality
+
+      ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+       FAIL  tests/sse-fanout.test.ts > sse fanout > fanout filter uses event.to_team, not from_team
+      AssertionError: expected +0 to be 1 // Object.is equality
+
+      - Expected
+      + Received
+
+      - 1
+      + 0
+
+       ❯ tests/sse-fanout.test.ts:94:29
+
+       Test Files  1 failed (1)
+            Tests  1 failed | 1 passed (2)
+
+      Note: RED is driven by `args.to_team` being undefined in the current impl — the SQL binds undefined to `team=?`, returns no subs, so no session receives. Refactor renames `args.team` → `args.to_team`.
       ```
   - [ ] **GREEN:** In `src/daemon/sse-fanout.ts`, change the method signature of `emitContractEvent` or its internal filter so the comparison is semantically "session.team === event's to_team".  Since the method's current `args.team` parameter maps to "the team the event targets" (already equivalent to `to_team` for contract events), rename `args.team` to `args.to_team` and update the comparison line:
     ```typescript
@@ -670,23 +692,42 @@
     }
     ```
     Update all callers (register-contract.ts) to pass `to_team` instead of `team`.
-  - [ ] **Verify GREEN:** Full suite green for SSE / contract subscription tests.
+  - [x] **GREEN:** Updated `src/daemon/sse-fanout.ts` (method signature + filter) and caller `src/mcp/tools.ts` (register_contract wiring) to pass `to_team`. Updated existing in-file sse-fanout test that still used `team:` shape.
+  - [x] **Verify GREEN:** Full suite green for SSE / contract subscription tests.
     - Command: `npx vitest run tests/sse-fanout.test.ts tests/contract-diff.test.ts`
     - Full-suite command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ✓ tests/sse-fanout.test.ts (2 tests) 7ms
+       ✓ tests/contract-diff.test.ts (5 tests) 1ms
+
+       Test Files  2 passed (2)
+            Tests  7 passed (7)
+         Duration  157ms
       ```
-  - [ ] **REFACTOR:** Search `src/` for any remaining `event.team` / `events.team` / `session.team !== ...team` strings and either migrate them or add a comment explaining why they're intentional.
-  - [ ] **Verify REFACTOR:** Full suite.
+  - [x] **REFACTOR:** Searched `src/` for `event.team` / `events.team` / `session.team !== ...team`. Only hit is the intentional `session.team !== args.to_team` line in `src/daemon/sse-fanout.ts:69` (by design per refactor). Updated `tests/sse-wire.test.ts` to assert the new `to_team` arg shape (was `team`).
+  - [x] **Verify REFACTOR:** Full suite.
     - Command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       Test Files  1 failed | 72 passed (73)
+            Tests  1 failed | 224 passed (225)
+
+      This task's suites (PASS):
+        - tests/sse-fanout.test.ts   (2 passed — RED new test + existing test, both GREEN under renamed arg)
+        - tests/contract-diff.test.ts (5 passed)
+        - tests/sse-wire.test.ts     (1 passed — REFACTOR: now asserts emitted[0].to_team)
+
+      Remaining failing suite (pre-existing, flagged at tasks 1.4 baseline, addressed by later messages task):
+        - tests/messages-schema.test.ts  (asserts legacy messages.team column; now from_team+to_team)
+
+      Net delta: sse-wire/sse-fanout RED+one pre-existing fail from 1.4 baseline (3 fails/4 failed tests) → 1 suite / 1 test (expected messages task).
       ```
-  - [ ] **Commit:** `refactor(sse-fanout): filter on event.to_team`
+  - [x] **Commit:** `refactor(sse-fanout): filter on event.to_team`
     - Staging order: test before code
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `0bc4151345646c23f539c5213fb8b386dc4c2ada`
 
 ## 3. send_message refactor
 
