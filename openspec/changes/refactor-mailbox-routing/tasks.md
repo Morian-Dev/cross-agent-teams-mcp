@@ -1750,9 +1750,9 @@
       The previously-failing tests/send-role-broadcast.test.ts is no longer present (removed as part of 4.2),
       so the failing-file count dropped from 3 → 2.  No new failures introduced by 4.3.
       ```
-  - [ ] **Commit:** `feat(mcp): register broadcast_to_role tool with strict Zod schema`
+  - [x] **Commit:** `feat(mcp): register broadcast_to_role tool with strict Zod schema`
     - Staging order: test before code
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `7f48b2dcb427e39b881a915421db99ba328fb76c`
 
 ## 5. get_inbox
 
