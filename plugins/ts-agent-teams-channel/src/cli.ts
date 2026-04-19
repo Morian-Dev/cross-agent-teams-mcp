@@ -1,13 +1,11 @@
 #!/usr/bin/env node
+import { randomUUID } from 'node:crypto'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createProxyServer, relayChannelWake } from './proxy.js'
 import { runReconnectingProxy } from './daemon-client.js'
-import { resolveCsid, resolveCacheDir } from './csid-store.js'
 
 interface CliArgs {
   daemonUrl: string
-  team: string
-  name: string
 }
 
 export class CliArgError extends Error {
@@ -19,8 +17,6 @@ export class CliArgError extends Error {
 
 export function parseCliArgs(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): CliArgs {
   let daemonUrl: string | undefined
-  let team: string | undefined
-  let name: string | undefined
 
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]
@@ -28,12 +24,9 @@ export function parseCliArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
     switch (flag) {
       case '--daemon-url':
         daemonUrl = next; i++; break
-      case '--agent-team':
-        team = next; i++; break
-      case '--agent-name':
-        name = next; i++; break
       default:
-        // Ignore unknown flags for forward-compat.
+        // Ignore unknown flags for forward-compat (including legacy
+        // --agent-team / --agent-name, which are no longer honored).
         break
     }
   }
@@ -47,13 +40,7 @@ export function parseCliArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
       'missing --daemon-url (or TS_AGENT_TEAMS_DAEMON_URL env var)'
     )
   }
-  if (!team || team.length === 0) {
-    throw new CliArgError('missing --agent-team')
-  }
-  if (!name || name.length === 0) {
-    throw new CliArgError('missing --agent-name')
-  }
-  return { daemonUrl, team, name }
+  return { daemonUrl }
 }
 
 export async function main(
@@ -69,19 +56,29 @@ export async function main(
     process.exit(2)
   }
 
-  const cacheDir = resolveCacheDir(env)
-  const csid = resolveCsid({ cacheDir, team: args.team, name: args.name })
+  // Fresh csid per startup — no persistence. Multi-instance safe.
+  const csid = randomUUID()
 
   const hostServer = createProxyServer()
   const stdioTransport = new StdioServerTransport()
 
   const controller = runReconnectingProxy({
     daemonUrl: args.daemonUrl,
-    team: args.team,
-    name: args.name,
     channel_session_id: csid,
     notificationHandler: (params) => {
       relayChannelWake(hostServer, params as { content: string; meta: Record<string, string> })
+    },
+    onSequenceComplete: () => {
+      // Announce csid to Claude via host-facing channel notification so Claude
+      // can call bind_channel({channel_session_id}) to bind its own agent row.
+      const content = [
+        `ts-agent-teams: your channel_session_id is ${csid}.`,
+        `Please call bind_channel({channel_session_id: "${csid}"}) to complete binding.`
+      ].join(' ')
+      relayChannelWake(hostServer, {
+        content,
+        meta: { source: 'ts_agent_teams', kind: 'startup_bind_hint' }
+      })
     }
   })
 

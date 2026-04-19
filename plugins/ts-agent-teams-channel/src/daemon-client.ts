@@ -3,8 +3,6 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 
 export interface RegistrationConfig {
   daemonUrl: string
-  team: string
-  name: string
   channel_session_id: string
   backoffInitialMs?: number
   backoffMaxMs?: number
@@ -23,8 +21,6 @@ export interface ReconnectingProxyController {
 
 export interface RegistrationSequenceResult {
   order: string[]
-  bindAttempts: number
-  lastBindResult: unknown
   lastSubscribeResult: unknown
   client: Client
   transport: StreamableHTTPClientTransport
@@ -38,12 +34,6 @@ async function parseToolResult(resp: unknown): Promise<ToolResult> {
   const text = r.content?.[0]?.text
   if (typeof text !== 'string') return {}
   try { return JSON.parse(text) as ToolResult } catch { return {} }
-}
-
-async function sleepJittered(baseMs: number): Promise<void> {
-  const jitterPct = 0.15
-  const factor = 1 + (Math.random() * 2 - 1) * jitterPct
-  return new Promise(resolve => setTimeout(resolve, Math.floor(baseMs * factor)))
 }
 
 export async function runRegistrationSequence(
@@ -63,7 +53,7 @@ export async function runRegistrationSequence(
 
   await client.connect(transport)
 
-  // 1. register_agent as proxy
+  // 1. register_agent as proxy — identity is process-local (random per pid)
   const registerResp = await client.callTool({
     name: 'register_agent',
     arguments: {
@@ -79,48 +69,19 @@ export async function runRegistrationSequence(
     throw new Error(`register_agent failed: ${JSON.stringify(regResult)}`)
   }
 
-  // 2. bind_channel with exponential backoff
-  const initial = config.backoffInitialMs ?? 500
-  const max = config.backoffMaxMs ?? 30_000
-  let delayMs = initial
-  let bindResult: ToolResult
-  const maxAttempts = 20
-  let bindAttempts = 0
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    bindAttempts++
-    const resp = await client.callTool({
-      name: 'bind_channel',
-      arguments: {
-        team: config.team,
-        name: config.name,
-        channel_session_id: config.channel_session_id
-      }
-    })
-    bindResult = await parseToolResult(resp)
-    if ('ok' in bindResult && bindResult.ok === true) break
-    if (bindResult.error !== 'agent_not_registered') {
-      throw new Error(`bind_channel failed: ${JSON.stringify(bindResult)}`)
-    }
-    await sleepJittered(delayMs)
-    delayMs = Math.min(delayMs * 2, max)
-    if (attempt === maxAttempts - 1) {
-      throw new Error('bind_channel retries exhausted')
-    }
-  }
-  order.push('bind_channel')
-
-  // 3. subscribe_channel_wake
+  // 2. subscribe_channel_wake — proxy's csid is fresh per startup
   const subResp = await client.callTool({
     name: 'subscribe_channel_wake',
     arguments: { channel_session_id: config.channel_session_id }
   })
   order.push('subscribe_channel_wake')
   const subResult = await parseToolResult(subResp)
+  if (!('ok' in subResult) || subResult.ok !== true) {
+    throw new Error(`subscribe_channel_wake failed: ${JSON.stringify(subResult)}`)
+  }
 
   return {
     order,
-    bindAttempts,
-    lastBindResult: bindResult!,
     lastSubscribeResult: subResult,
     client,
     transport,
@@ -165,7 +126,7 @@ export function runReconnectingProxy(config: ReconnectingProxyConfig): Reconnect
         try { await seq.close() } catch { /* best-effort */ }
         currentSeq = null
       } catch {
-        // register/bind/subscribe failed — wait and retry.
+        // register/subscribe failed — wait and retry.
       }
       if (stopped) break
       const wait = config.backoffInitialMs ?? 500

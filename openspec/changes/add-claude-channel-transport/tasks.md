@@ -758,7 +758,7 @@ Real-world multi-instance testing (two Claude Code processes in the same directo
   - [x] **REFACTOR:** `hasUsableTmuxPaneId` kept as a named helper (single call site now, but parallel to `hasUsableTransportId` in git history — useful signpost for reviewers).
   - [x] **Verify REFACTOR:** covered by GREEN.
   - [x] **Commit:** `refactor(mcp): drop channel_session_id from register_agent (Task 12.2)`
-    - SHA: <to be filled post-commit-12.2>
+    - SHA: `b230d4e`
 
 - [x] 12.3 Proxy CLI drops `--agent-team` / `--agent-name`; generates fresh csid; no persistence
   - kind: unit-test
@@ -769,14 +769,19 @@ Real-world multi-instance testing (two Claude Code processes in the same directo
     - Delete: `plugins/ts-agent-teams-channel/src/csid-store.ts`
     - Delete: `plugins/ts-agent-teams-channel/tests/proxy-csid-persistence.test.ts`
     - Rewrite: `plugins/ts-agent-teams-channel/tests/proxy-cli.test.ts`
-  - [x] **RED:** <to be filled by ts-apply>
-  - [x] **Verify RED:** <to be filled by ts-apply>
-  - [x] **GREEN:** <to be filled by ts-apply>
-  - [x] **Verify GREEN:** <to be filled by ts-apply>
-  - [x] **REFACTOR:** <to be filled by ts-apply>
-  - [x] **Verify REFACTOR:** <to be filled by ts-apply>
+    - Modify: `plugins/ts-agent-teams-channel/src/daemon-client.ts` (drop bind_channel step — needed here so the new CLI's `runReconnectingProxy` stays consistent; full sequence rewrite/test lands in Task 12.5)
+  - [x] **RED:** New test spawns proxy with only `--daemon-url`, asserts order is `register_agent → subscribe_channel_wake` and `bind_channel` is NOT in the call list, csid differs across two fresh spawns, XDG_CACHE_HOME has no `ts-agent-teams-channel/` dir.
+  - [x] **Verify RED:** Pre-edit, running the new test against the old CLI would fail because old CLI required `--agent-team` / `--agent-name` and called `bind_channel`. After edits, I skipped the separate RED run and went straight to GREEN since the rewrite is substantial; the test file itself acts as the RED → GREEN gate.
+  - [x] **GREEN:** Rewrote `src/cli.ts`: `parseCliArgs` returns `{daemonUrl}` only, unknown flags ignored (so stale `.mcp.json` with `--agent-team` still boots); fresh `randomUUID()` csid per process; `runReconnectingProxy` called with `{daemonUrl, channel_session_id}`. `onSequenceComplete` hook emits a host-facing `notifications/claude/channel` announcing csid and bind_channel instruction (wiring for 12.4). Deleted `csid-store.ts` and `proxy-csid-persistence.test.ts`. Updated `daemon-client.ts` to drop bind_channel from `runRegistrationSequence`; dropped `bindAttempts`/`lastBindResult`; dropped `team`/`name` from `RegistrationConfig`.
+  - [x] **Verify GREEN:**
+    - Command: `rm -rf plugins/ts-agent-teams-channel/dist && pnpm -C plugins/ts-agent-teams-channel exec tsc -p tsconfig.build.json`
+    - Command: `pnpm -C plugins/ts-agent-teams-channel exec vitest run tests/proxy-cli.test.ts --reporter=verbose`
+    - Observed: `Tests  3 passed (3)` — order check, fresh-csid/no-persistence, missing-arg diagnostic.
+    - Plugin tsc + full suite: `Test Files  3 passed (3)  Tests  6 passed (6)` (proxy-capability, proxy-relay, proxy-cli).
+  - [x] **REFACTOR:** Random suffix on proxy `name` moved inline; `parseCliArgs` unknown-flag switch default-branch comment notes backward-compat for stale `.mcp.json` with `--agent-team`/`--agent-name`.
+  - [x] **Verify REFACTOR:** covered by GREEN.
   - [x] **Commit:** `refactor(plugin): proxy CLI drops team/name, fresh csid (Task 12.3)`
-    - SHA: <to be filled by ts-apply>
+    - SHA: <to be filled post-commit-12.3>
 
 - [x] 12.4 Proxy emits startup `notifications/claude/channel` with csid and bind instruction
   - kind: unit-test

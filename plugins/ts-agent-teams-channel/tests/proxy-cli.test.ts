@@ -29,20 +29,16 @@ interface FakeDaemon {
   server: HttpServer
   port: number
   calls: RecordedCall[]
-  sessions: Map<string, { onMessage?: (m: unknown) => void }>
   close: () => Promise<void>
 }
 
-// Minimal JSON-RPC over HTTP fake daemon. Supports the four calls the proxy
-// makes on startup (initialize, register_agent, bind_channel, subscribe_channel_wake)
-// plus echo (for the health-check heartbeat). Stateless enough for our purposes.
+// Minimal JSON-RPC over HTTP fake daemon. Supports the three calls the proxy
+// makes on startup (initialize, register_agent, subscribe_channel_wake) plus
+// echo (for the heartbeat). No bind_channel — the proxy no longer calls it.
 async function startFakeDaemon(): Promise<FakeDaemon> {
   const calls: RecordedCall[] = []
-  const sessions: FakeDaemon['sessions'] = new Map()
 
   const server = createServer((req, res) => {
-    const sessionHeader = (req.headers['mcp-session-id'] as string | undefined) ?? undefined
-
     if (req.method !== 'POST') {
       res.statusCode = 405
       res.end()
@@ -78,7 +74,6 @@ async function startFakeDaemon(): Promise<FakeDaemon> {
 
       if (method === 'initialize') {
         const newSid = randomUUID()
-        sessions.set(newSid, {})
         writeJson({
           jsonrpc: '2.0',
           id,
@@ -105,13 +100,7 @@ async function startFakeDaemon(): Promise<FakeDaemon> {
           toolResult({ agent_id: randomUUID() })
           return
         }
-        if (name === 'bind_channel') {
-          toolResult({ ok: true })
-          return
-        }
         if (name === 'subscribe_channel_wake') {
-          // Do not record the session-bound sink; the proxy does not need a push
-          // from us for this test, just the ack.
           toolResult({ ok: true })
           return
         }
@@ -128,11 +117,7 @@ async function startFakeDaemon(): Promise<FakeDaemon> {
         return
       }
 
-      // Terminate request (DELETE-ish but we only speak POST) — treat unknown
-      // methods as generic no-ops so the client's close() is tolerated.
       writeJson({ jsonrpc: '2.0', id, result: {} })
-      // Sessions map cleanup is a no-op in the test.
-      void sessionHeader
     })
   })
   await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()))
@@ -142,12 +127,11 @@ async function startFakeDaemon(): Promise<FakeDaemon> {
     server,
     port,
     calls,
-    sessions,
     close: () => new Promise<void>((r) => server.close(() => r()))
   }
 }
 
-describe('proxy CLI entrypoint', () => {
+describe('proxy CLI entrypoint (self-binding)', () => {
   const cleanups: string[] = []
   const killers: ChildProcessWithoutNullStreams[] = []
   const daemons: FakeDaemon[] = []
@@ -160,19 +144,13 @@ describe('proxy CLI entrypoint', () => {
     cleanups.length = 0
   })
 
-  it('runs register_agent -> bind_channel -> subscribe_channel_wake when spawned as subprocess', async () => {
+  it('runs register_agent -> subscribe_channel_wake (no bind_channel) when spawned with only --daemon-url', async () => {
     const cliJs = await buildPluginOnce()
-    const cacheDir = tmp(); cleanups.push(cacheDir)
     const daemon = await startFakeDaemon(); daemons.push(daemon)
     const url = `http://127.0.0.1:${daemon.port}/mcp`
 
-    const proc = spawn(process.execPath, [
-      cliJs,
-      '--daemon-url', url,
-      '--agent-team', 'default',
-      '--agent-name', 'alice'
-    ], {
-      env: { ...process.env, XDG_CACHE_HOME: cacheDir },
+    const proc = spawn(process.execPath, [cliJs, '--daemon-url', url], {
+      env: { ...process.env },
       stdio: ['pipe', 'pipe', 'pipe']
     })
     killers.push(proc)
@@ -183,27 +161,23 @@ describe('proxy CLI entrypoint', () => {
     const seen = () => daemon.calls.map(c => c.name)
     while (Date.now() < deadline) {
       const names = seen()
-      if (
-        names.includes('register_agent') &&
-        names.includes('bind_channel') &&
-        names.includes('subscribe_channel_wake')
-      ) break
+      if (names.includes('register_agent') && names.includes('subscribe_channel_wake')) break
       await new Promise(r => setTimeout(r, 50))
     }
     const order = daemon.calls.map(c => c.name)
     const idxReg = order.indexOf('register_agent')
-    const idxBind = order.indexOf('bind_channel')
     const idxSub = order.indexOf('subscribe_channel_wake')
     expect(idxReg, `stderr=${Buffer.concat(stderrChunks).toString()}`).toBeGreaterThanOrEqual(0)
-    expect(idxBind).toBeGreaterThan(idxReg)
-    expect(idxSub).toBeGreaterThan(idxBind)
+    expect(idxSub).toBeGreaterThan(idxReg)
+    // bind_channel must NOT be called by the proxy — Claude does self-binding.
+    expect(order.includes('bind_channel')).toBe(false)
 
-    const bindCall = daemon.calls.find(c => c.name === 'bind_channel')!
-    expect(bindCall.args.team).toBe('default')
-    expect(bindCall.args.name).toBe('alice')
-    expect(typeof bindCall.args.channel_session_id).toBe('string')
+    // subscribe_channel_wake must carry a non-empty channel_session_id.
+    const subCall = daemon.calls.find(c => c.name === 'subscribe_channel_wake')!
+    expect(typeof subCall.args.channel_session_id).toBe('string')
+    expect((subCall.args.channel_session_id as string).length).toBeGreaterThan(0)
 
-    // Close stdio on the child to simulate Claude Code teardown.
+    // Close stdio — proxy must exit cleanly.
     proc.stdin.end()
     const exitCode: number | null = await new Promise((resolvePromise) => {
       const t = setTimeout(() => { try { proc.kill('SIGTERM') } catch { /* ignore */ } }, 5000)
@@ -212,9 +186,49 @@ describe('proxy CLI entrypoint', () => {
     expect([0, null]).toContain(exitCode)
   }, 60_000)
 
-  it('exits non-zero with diagnostic when required arg is missing', async () => {
+  it('generates a fresh channel_session_id on each startup (no persistence file written)', async () => {
     const cliJs = await buildPluginOnce()
-    const proc = spawn(process.execPath, [cliJs, '--agent-team', 'default', '--agent-name', 'alice'], {
+    const cacheDir = tmp(); cleanups.push(cacheDir)
+    const daemon1 = await startFakeDaemon(); daemons.push(daemon1)
+    const url1 = `http://127.0.0.1:${daemon1.port}/mcp`
+
+    const spawnAndCapture = async (port: number, daemon: FakeDaemon): Promise<string> => {
+      const proc = spawn(process.execPath, [cliJs, '--daemon-url', `http://127.0.0.1:${port}/mcp`], {
+        env: { ...process.env, XDG_CACHE_HOME: cacheDir },
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
+      killers.push(proc)
+      const deadline = Date.now() + 10_000
+      while (Date.now() < deadline) {
+        const sub = daemon.calls.find(c => c.name === 'subscribe_channel_wake')
+        if (sub) {
+          const csid = sub.args.channel_session_id as string
+          try { proc.kill('SIGTERM') } catch { /* ignore */ }
+          await new Promise<void>((r) => {
+            const to = setTimeout(() => { try { proc.kill('SIGKILL') } catch { /* ignore */ } ; r() }, 3000)
+            proc.once('exit', () => { clearTimeout(to); r() })
+          })
+          return csid
+        }
+        await new Promise(r => setTimeout(r, 50))
+      }
+      proc.kill('SIGKILL')
+      throw new Error('timeout waiting for subscribe_channel_wake')
+    }
+
+    const csid1 = await spawnAndCapture(daemon1.port, daemon1)
+
+    const daemon2 = await startFakeDaemon(); daemons.push(daemon2)
+    const csid2 = await spawnAndCapture(daemon2.port, daemon2)
+
+    expect(csid1).not.toBe(csid2)
+    // No persistence file should exist.
+    expect(existsSync(join(cacheDir, 'ts-agent-teams-channel'))).toBe(false)
+  }, 60_000)
+
+  it('exits non-zero with diagnostic when --daemon-url is missing', async () => {
+    const cliJs = await buildPluginOnce()
+    const proc = spawn(process.execPath, [cliJs], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, TS_AGENT_TEAMS_DAEMON_URL: '' }
     })
