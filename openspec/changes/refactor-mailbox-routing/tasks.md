@@ -203,7 +203,7 @@
     - Staging order: test file BEFORE production file
     - **Commit SHA (fill during apply):** `1f6d722aa3683ae34b900e808eb646b22fb5fced`
 
-- [ ] 1.2 Update `EventsOutbox.append` signature to require `from_team` and `to_team`
+- [x] 1.2 Update `EventsOutbox.append` signature to require `from_team` and `to_team`
   - kind: unit-test
   - **Spec scenario(s):**
     - `events-outbox/spec.md` → Scenario: `Two appends return increasing ids`
@@ -354,9 +354,9 @@
       contracts-*, register-contract, subscribe-contract, pending-contract-events,
       send-message, broadcast, get-inbox, diff-contracts, poke, sse-fanout, etc.) all pass.
       ```
-  - [ ] **Commit:** `refactor(events-outbox): append takes from_team and to_team`
+  - [x] **Commit:** `refactor(events-outbox): append takes from_team and to_team`
     - Staging order: test file BEFORE production file
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `6c98bf478582f69e140506643df0fcdba26aa56f`
 
 - [ ] 1.3 `EventsOutbox.since({team})` filters by `to_team`, excluding outbound cross-team events
   - kind: unit-test
