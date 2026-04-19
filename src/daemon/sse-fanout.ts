@@ -59,14 +59,14 @@ export class SseFanout {
 
   emitContractEvent(
     db: Database.Database,
-    args: { team: string; contract_name: string; version: number; event_id: number; diff: unknown | null }
+    args: { to_team: string; contract_name: string; version: number; event_id: number; diff: unknown | null }
   ): void {
     const subs = db.prepare(
       `SELECT agent_id FROM contract_subscriptions WHERE team=? AND contract_name=?`
-    ).all(args.team, args.contract_name) as Array<{ agent_id: string }>
+    ).all(args.to_team, args.contract_name) as Array<{ agent_id: string }>
     const subscribedSet = new Set(subs.map(s => s.agent_id))
     for (const session of this.sessions.values()) {
-      if (session.team !== args.team) continue
+      if (session.team !== args.to_team) continue
       if (!subscribedSet.has(session.agent_id)) continue
       try {
         session.sink.send({

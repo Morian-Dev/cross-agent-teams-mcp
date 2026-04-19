@@ -58,7 +58,7 @@ describe('sse fanout', () => {
     expect('version' in result).toBe(true)
 
     fanout.emitContractEvent(db, {
-      team: 'default', contract_name: 'X',
+      to_team: 'default', contract_name: 'X',
       version: (result as { version: number }).version,
       event_id: (result as { version: number; diff?: unknown }).version,
       diff: null
@@ -69,5 +69,29 @@ describe('sse fanout', () => {
     expect(sinkBroken.received.length).toBe(0)
     const ev = db.prepare(`SELECT COUNT(*) as c FROM events WHERE event_type='contract_registered'`).get() as { c: number }
     expect(ev.c).toBe(1)
+  })
+
+  it('fanout filter uses event.to_team, not from_team', () => {
+    const dir = tmp(); cleanups.push(dir)
+    const db = openDb(join(dir, 'data.db')); applySchema(db)
+    insertAgent(db, { agent_id: 'sess-A', team: 'alpha', model: 'm', role: 'r', name: 'sess-A' })
+    insertAgent(db, { agent_id: 'sess-B', team: 'beta', model: 'm', role: 'r', name: 'sess-B' })
+    db.prepare(
+      `INSERT INTO contract_subscriptions (agent_id, team, contract_name, subscribed_at)
+       VALUES (?,?,?,?)`
+    ).run('sess-B', 'beta', 'X', new Date().toISOString())
+
+    const fanout = new SseFanout()
+    const recvAlpha: Array<Record<string, unknown>> = []
+    const recvBeta: Array<Record<string, unknown>> = []
+    const sinkAlpha: SseSink = { send: m => recvAlpha.push(m), sendHeartbeat: () => {}, close: () => {} }
+    const sinkBeta: SseSink = { send: m => recvBeta.push(m), sendHeartbeat: () => {}, close: () => {} }
+    fanout.attach('sess-A', 'alpha', sinkAlpha)
+    fanout.attach('sess-B', 'beta', sinkBeta)
+
+    fanout.emitContractEvent(db, { to_team: 'beta', contract_name: 'X', version: 1, event_id: 1, diff: null })
+
+    expect(recvBeta.length).toBe(1)
+    expect(recvAlpha.length).toBe(0)
   })
 })

@@ -378,7 +378,7 @@ export function registerBusinessTools(
         if ('version' in res && res._meta && fanout) {
           try {
             fanout.emitContractEvent(db, {
-              team: res._meta.team,
+              to_team: res._meta.team,
               contract_name: res.name,
               version: res.version,
               event_id: res._meta.event_id,

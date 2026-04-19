@@ -58,7 +58,7 @@ describe('SSE fanout wired into register_contract', () => {
       expect(emitted.length).toBe(1)
       expect(emitted[0].contract_name).toBe('X')
       expect(emitted[0].version).toBe(1)
-      expect(emitted[0].team).toBe('default')
+      expect(emitted[0].to_team).toBe('default')
       expect(typeof emitted[0].event_id).toBe('number')
     } finally {
       await publisherClient.close()
