@@ -8,6 +8,7 @@ import { AgentsRepo } from '../src/storage/agents-repo.js'
 import { EventsOutbox } from '../src/storage/events-outbox.js'
 import { SendMessageService, type AutoPokeFn, type AutoPokeSkipReason } from '../src/mcp/send-message.js'
 import { __setCapturePaneTail, __resetCapturePaneTail } from '../src/mcp/poke-guard.js'
+import { insertAgent } from './helpers/insert-agent.js'
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'atm-sm-autopoke-'))
 
@@ -56,8 +57,8 @@ describe('send_message auto_poke integration', () => {
     const { svc, db, pokeCalls, cleanup } = setupService({ paneState: { '%2': 'idle' } })
     cleanups.push(cleanup)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' })
-    agents.register({ agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' })
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' , name: 'A' })
+    insertAgent(db, { agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' , name: 'B' })
 
     const r = await svc.send({ from: 'A', to_agent_id: 'B', body: 'hi' })
     if ('error' in r) throw new Error('expected success')
@@ -74,8 +75,8 @@ describe('send_message auto_poke integration', () => {
     const { svc, db, pokeCalls, cleanup } = setupService()
     cleanups.push(cleanup)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' })
-    agents.register({ agent_id: 'B', model: 'm', role: 'worker' }) // no pane
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' , name: 'A' })
+    insertAgent(db, { agent_id: 'B', model: 'm', role: 'worker' , name: 'B' }) // no pane
 
     const r = await svc.send({ from: 'A', to_agent_id: 'B', body: 'hi' })
     if ('error' in r) throw new Error('expected success')
@@ -92,8 +93,8 @@ describe('send_message auto_poke integration', () => {
     const { svc, db, pokeCalls, cleanup } = setupService({ paneState: { '%2': 'idle' } })
     cleanups.push(cleanup)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' })
-    agents.register({ agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' })
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' , name: 'A' })
+    insertAgent(db, { agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' , name: 'B' })
 
     const r = await svc.send({ from: 'A', to_agent_id: 'B', body: 'hi', auto_poke: false })
     if ('error' in r) throw new Error('expected success')
@@ -109,9 +110,9 @@ describe('send_message auto_poke integration', () => {
     })
     cleanups.push(cleanup)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' })
-    agents.register({ agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' })
-    agents.register({ agent_id: 'C', model: 'm', role: 'worker', tmux_pane_id: '%3' })
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' , name: 'A' })
+    insertAgent(db, { agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' , name: 'B' })
+    insertAgent(db, { agent_id: 'C', model: 'm', role: 'worker', tmux_pane_id: '%3' , name: 'C' })
 
     const start = Date.now()
     const r = await svc.send({ from: 'A', to_role: 'worker', body: 'hi' })
@@ -136,8 +137,8 @@ describe('send_message auto_poke integration', () => {
     const { svc, db, pokeCalls, cleanup } = setupService({ paneState: { '%2': 'active' } })
     cleanups.push(cleanup)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' })
-    agents.register({ agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' })
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' , name: 'A' })
+    insertAgent(db, { agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' , name: 'B' })
 
     const r = await svc.send({ from: 'A', to_agent_id: 'B', body: 'hi' })
     if ('error' in r) throw new Error('expected success')
@@ -165,8 +166,8 @@ describe('send_message auto_poke integration', () => {
     }
     const svc = new SendMessageService(db, agents, events, { poke: throwingPoke })
 
-    agents.register({ agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' })
-    agents.register({ agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' })
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' , name: 'A' })
+    insertAgent(db, { agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' , name: 'B' })
 
     const r = await svc.send({ from: 'A', to_agent_id: 'B', body: 'hi' })
     if ('error' in r) throw new Error('expected success, not error')
@@ -181,7 +182,7 @@ describe('send_message auto_poke integration', () => {
     const { svc, db, pokeCalls, cleanup } = setupService({ paneState: { '%1': 'idle' } })
     cleanups.push(cleanup)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' })
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' , name: 'A' })
 
     const r = await svc.send({ from: 'A', to_agent_id: 'A', body: 'hi' })
     if ('error' in r) throw new Error('expected success')

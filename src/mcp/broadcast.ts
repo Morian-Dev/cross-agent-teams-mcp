@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
-import type { AgentsRepo } from '../storage/agents-repo.js'
+import { ONLINE_MS, type AgentsRepo } from '../storage/agents-repo.js'
 import type { SendMessageService } from './send-message.js'
 import { fanoutAutoPoke } from './auto-poke-fanout.js'
 import type { AutoPokeSkipReason, FanoutDeps } from './auto-poke-fanout.js'
@@ -43,14 +43,15 @@ export class BroadcastService {
   async broadcast(input: BroadcastInput): Promise<BroadcastResult> {
     const fromRow = this.agents.findById(input.from)
     if (!fromRow) return { error: 'unknown_recipient' }
-    const rows = this.db.prepare('SELECT agent_id, tmux_pane_id FROM agents WHERE team=? AND agent_id != ?')
-      .all(fromRow.team, input.from) as RecipientPokeRow[]
+    const cutoffIso = new Date(Date.now() - ONLINE_MS).toISOString()
+    const rows = this.db.prepare('SELECT agent_id, tmux_pane_id FROM agents WHERE team=? AND agent_id != ? AND last_seen_at > ?')
+      .all(fromRow.team, input.from, cutoffIso) as RecipientPokeRow[]
     if (rows.length === 0) return { error: 'unknown_recipient' }
     const recipients = rows.map(r => r.agent_id)
     const baseId = randomUUID()
     const inserted = this.insertBroadcast(fromRow.team, input.from, recipients, input.body, input.subject, baseId)
 
-    if (input.auto_poke !== true) {
+    if (input.auto_poke === false) {
       return { ...inserted, recipients, poked: false, retry_scheduled: false }
     }
 

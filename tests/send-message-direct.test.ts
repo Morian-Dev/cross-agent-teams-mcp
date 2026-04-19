@@ -7,6 +7,7 @@ import { applySchema } from '../src/storage/schema.js'
 import { AgentsRepo } from '../src/storage/agents-repo.js'
 import { EventsOutbox } from '../src/storage/events-outbox.js'
 import { SendMessageService } from '../src/mcp/send-message.js'
+import { insertAgent } from './helpers/insert-agent.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-'))
 
@@ -18,8 +19,8 @@ describe('send_message direct', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'A', model: 'm', role: 'backend' })
-    agents.register({ agent_id: 'B', model: 'm', role: 'frontend' })
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'backend' , name: 'A' })
+    insertAgent(db, { agent_id: 'B', model: 'm', role: 'frontend' , name: 'B' })
     return { db, svc: new SendMessageService(db, agents, new EventsOutbox(db)) }
   }
 

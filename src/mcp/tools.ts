@@ -28,29 +28,56 @@ function toText(value: unknown): TextContent {
   return { content: [{ type: 'text', text: JSON.stringify(value) }] }
 }
 
-export function registerBusinessTools(
-  server: McpServer,
-  db: Database.Database,
-  getCallerAgentId: () => string | undefined,
-  fanout?: SseFanout
-): void {
-  const agents = new AgentsRepo(db)
-  const events = new EventsOutbox(db)
-  const registerSvc = new RegisterAgentService(db)
+export function buildAutoPokeHint(
+  row: { name?: string | null } | undefined,
+  fromAgentId: string
+): string {
+  const dn = row?.name
+  const sender = typeof dn === 'string' && dn.length > 0
+    ? `${dn} (${fromAgentId})`
+    : fromAgentId.slice(0, 8)
+  return `新邮件 from ${sender}, 请调 get_inbox 查看`
+}
 
-  const autoPokeImpl: import('./auto-poke-fanout.js').AutoPokeFn = async (args) => {
+export function createAutoPokeImpl(
+  db: Database.Database,
+  _agents: AgentsRepo
+): import('./auto-poke-fanout.js').AutoPokeFn {
+  return async (args) => {
+    const row = db
+      .prepare('SELECT name FROM agents WHERE agent_id=?')
+      .get(args.fromAgentId) as { name: string | null } | undefined
+    const hint = buildAutoPokeHint(row, args.fromAgentId)
     const res = await poke(
       { db, callerAgentId: args.fromAgentId },
-      { target_agent_id: args.targetAgentId, prompt: args.body }
+      { target_agent_id: args.targetAgentId, prompt: hint }
     )
     if ('ok' in res && res.ok) return { ok: true }
-    // Classify downstream poke errors into skip reasons
     const err = (res as { error?: string }).error
     if (err === 'tmux_unavailable') return { ok: false, reason: 'tmux_unavailable' }
     if (err === 'tmux_pane_not_set') return { ok: false, reason: 'no_pane' }
     if (err === 'self_poke_denied') return { ok: false, reason: 'self' }
     return { ok: false, reason: 'guard_failed' }
   }
+}
+
+export interface RegisterSuccessHook {
+  (agent_id: string, team: string): void
+}
+
+export function registerBusinessTools(
+  server: McpServer,
+  db: Database.Database,
+  getCallerAgentId: () => string | undefined,
+  fanout?: SseFanout,
+  onRegisterSuccess?: RegisterSuccessHook,
+  getSessionId?: () => string | undefined
+): void {
+  const agents = new AgentsRepo(db)
+  const events = new EventsOutbox(db)
+  const registerSvc = new RegisterAgentService(db)
+
+  const autoPokeImpl = createAutoPokeImpl(db, agents)
 
   const sendSvc = new SendMessageService(db, agents, events, { poke: autoPokeImpl })
   const broadcastSvc = new BroadcastService(db, agents, sendSvc, { poke: autoPokeImpl })
@@ -96,6 +123,8 @@ export function registerBusinessTools(
       title: 'Register agent',
       description: [
         'Register this session as an agent in a team.',
+        'Calling this tool again with the same `(team, name, role)` identity reuses the existing',
+        '`agent_id` and refreshes `tmux_pane_id` and `model`; no duplicate row is created.',
         'BEFORE calling this tool, you MUST first check whether this process is running inside tmux.',
         'Run your shell tool with `echo "$TMUX_PANE"` (this env var is set per-pane by tmux and is',
         "the RELIABLE way to get your own pane id). Do NOT use `tmux display-message -p '#{pane_id}'`",
@@ -112,28 +141,31 @@ export function registerBusinessTools(
       ].join(' '),
       inputSchema: {
         model: z.string(),
-        role: z.string(),
-        display_name: z.string().optional(),
+        name: z.string().min(1).refine(v => v.trim().length > 0, { message: 'name must not be empty' }),
+        role: z.string().optional(),
         team: z.string().optional(),
         tmux_pane_id: z.string().optional()
       }
     },
-    async (args: { model: string; role: string; display_name?: string; team?: string; tmux_pane_id?: string }) => {
-      const sid = caller()
-      if (!sid) return toText({ error: 'unknown_agent' })
+    async (args: { model: string; name: string; role?: string; team?: string; tmux_pane_id?: string }) => {
+      // connection_id for collision detection must be the stable session id,
+      // NOT agentIdHolder.current (which becomes the agent_id after success).
+      const connectionId = getSessionId?.() ?? caller()
+      if (!connectionId) return toText({ error: 'unknown_agent' })
       return run(() => {
         const res = registerSvc.register({
-          agent_id: sid,
-          connection_id: sid,
+          connection_id: connectionId,
           model: args.model,
+          name: args.name,
           role: args.role,
-          display_name: args.display_name,
           team: args.team,
           tmux_pane_id: args.tmux_pane_id
         })
-        if ('team' in res) {
-          if (fanout) {
-            try { fanout.rebind(sid, res.team) } catch { /* best-effort */ }
+        if ('agent_id' in res) {
+          if (onRegisterSuccess) {
+            try { onRegisterSuccess(res.agent_id, res.team) } catch { /* best-effort */ }
+          } else if (fanout) {
+            try { fanout.rebind(res.agent_id, res.team) } catch { /* best-effort */ }
           }
           const provided = typeof args.tmux_pane_id === 'string' && args.tmux_pane_id.trim().length > 0
           if (!provided) {
@@ -179,7 +211,11 @@ export function registerBusinessTools(
         'no_pane, guard_failed, tmux_unavailable, self).  When the quiet-guard reports guard_failed,',
         'the daemon schedules 3 background retries with backoff (30s / 3min / 10min); retries stop',
         'early if the recipient comes online.  Response fields retry_scheduled:bool and',
-        'retry_delays_s:[30,180,600] indicate the backoff schedule.'
+        'retry_delays_s:[30,180,600] indicate the backoff schedule.',
+        'Auto-poke injects ONLY a SHORT wake-up hint (format: `新邮件 from {sender}, 请调 get_inbox 查看`).',
+        "The message body is never injected into the recipient's pane — callers retrieve bodies via `get_inbox`.",
+        'Online filter: role-based routing (to_role) skips agents whose last_seen_at is older than 5 min (idle > 5 min = offline).',
+        'to_agent_id direct sends are NOT filtered — offline targets still receive the mailbox row and rely on offline delivery on next get_inbox.'
       ].join(' '),
       inputSchema: {
         to_agent_id: z.string().optional(),
@@ -202,16 +238,18 @@ export function registerBusinessTools(
     {
       title: 'Broadcast message',
       description: [
-        'Broadcasts to all other agents in the team.  Does NOT auto-poke by default (pass',
-        'auto_poke:true to poke every eligible pane after a per-pane quiet-guard); the default',
-        'keeps team-wide messages quiet.  When auto_poke is enabled, each recipient\'s pane is',
-        'checked for idleness in parallel and only idle panes are poked; the message is always',
-        'persisted to every recipient\'s mailbox regardless.  Response includes poked and',
-        'poke_skip_reasons (reasons: no_pane, guard_failed, tmux_unavailable, self).  When',
-        'auto_poke:true is set and a recipient\'s guard reports guard_failed, the daemon schedules',
-        '3 background retries with backoff (30s / 3min / 10min); retries stop early if the',
-        'recipient comes online.  Response fields retry_scheduled:bool and',
-        'retry_delays_s:[30,180,600] indicate the backoff schedule.'
+        'Broadcasts to all other agents in the team.  Auto-pokes every eligible recipient by',
+        'default (per-pane parallel quiet-guard checks idleness; only idle panes are poked); the',
+        'message is always persisted to every recipient\'s mailbox regardless.  Pass',
+        'auto_poke:false to opt out and deliver pure mailbox without any tmux side-effect.',
+        'Response includes poked and poke_skip_reasons (reasons: no_pane, guard_failed,',
+        'tmux_unavailable, self), and — when guard_failed recipients are queued —',
+        'retry_scheduled:bool plus retry_delays_s:[30,180,600] indicating the 3-attempt',
+        'background backoff (30s / 3min / 10min); retries stop early if the recipient comes',
+        'online.',
+        'Auto-poke injects ONLY a SHORT wake-up hint (format: `新邮件 from {sender}, 请调 get_inbox 查看`).',
+        "The message body is never injected into the recipient's pane — callers retrieve bodies via `get_inbox`.",
+        'Online filter: broadcast skips agents whose last_seen_at is older than 5 min (idle > 5 min = offline); such recipients are excluded from both the mailbox fan-out and auto-poke.'
       ].join(' '),
       inputSchema: {
         subject: z.string().optional(),

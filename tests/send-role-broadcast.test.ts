@@ -8,6 +8,7 @@ import { AgentsRepo } from '../src/storage/agents-repo.js'
 import { EventsOutbox } from '../src/storage/events-outbox.js'
 import { SendMessageService } from '../src/mcp/send-message.js'
 import { BroadcastService } from '../src/mcp/broadcast.js'
+import { insertAgent } from './helpers/insert-agent.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-'))
 
@@ -19,9 +20,9 @@ describe('role fan-out and broadcast', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'A', model: 'm', role: 'backend' })
-    agents.register({ agent_id: 'F1', model: 'm', role: 'frontend' })
-    agents.register({ agent_id: 'F2', model: 'm', role: 'frontend' })
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'backend' , name: 'A' })
+    insertAgent(db, { agent_id: 'F1', model: 'm', role: 'frontend' , name: 'F1' })
+    insertAgent(db, { agent_id: 'F2', model: 'm', role: 'frontend' , name: 'F2' })
     const svc = new SendMessageService(db, agents, new EventsOutbox(db))
     const r = await svc.send({ from: 'A', to_role: 'frontend', body: 'hi', auto_poke: false })
     if ('error' in r) throw new Error('expected success')
@@ -35,9 +36,9 @@ describe('role fan-out and broadcast', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'A', model: 'm', role: 'r' })
-    agents.register({ agent_id: 'B', model: 'm', role: 'r' })
-    agents.register({ agent_id: 'C', model: 'm', role: 'r' })
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'r' , name: 'A' })
+    insertAgent(db, { agent_id: 'B', model: 'm', role: 'r' , name: 'B' })
+    insertAgent(db, { agent_id: 'C', model: 'm', role: 'r' , name: 'C' })
     const send = new SendMessageService(db, agents, new EventsOutbox(db))
     const svc = new BroadcastService(db, agents, send)
     const r = await svc.broadcast({ from: 'A', body: 'all' })

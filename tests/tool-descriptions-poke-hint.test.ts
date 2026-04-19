@@ -46,20 +46,39 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     expect(d).toMatch(/retry_delays_s/)
   })
 
-  it('broadcast description states does NOT auto-poke by default and explains opt-in', async () => {
+  it('broadcast description states auto-poke is default-on and explains auto_poke:false opt-out', async () => {
     const tools = await listTools()
     const tool = tools.find(t => t.name === 'broadcast')
     expect(tool).toBeDefined()
     const d = tool!.description!
     expect(d).toMatch(/poke/i)
-    expect(d).toMatch(/not auto-poke|does NOT auto-poke|does not auto-poke/i)
-    expect(d).toMatch(/auto_poke/)
+    expect(d).toMatch(/auto-poke/i)
+    expect(d).toMatch(/default/i)
+    expect(d).toMatch(/auto_poke:\s*false/i)
     expect(d).toMatch(/quiet-guard|guard/i)
     expect(d).toMatch(/poked/)
     expect(d).toMatch(/poke_skip_reasons/)
     expect(d).toMatch(/retry|backoff/i)
     expect(d).toMatch(/retry_scheduled/)
     expect(d).toMatch(/retry_delays_s/)
+  })
+
+  it('send_message description states auto-poke injects only a short hint, not the body', async () => {
+    const tools = await listTools()
+    const tool = tools.find(t => t.name === 'send_message')
+    const d = tool!.description!
+    expect(d).toMatch(/only.*short.*hint|短.*提醒|only.*hint/i)
+    expect(d).toMatch(/get_inbox/)
+    expect(d).toMatch(/新邮件 from/)
+  })
+
+  it('broadcast description states auto-poke injects only a short hint, not the body', async () => {
+    const tools = await listTools()
+    const tool = tools.find(t => t.name === 'broadcast')
+    const d = tool!.description!
+    expect(d).toMatch(/only.*short.*hint|短.*提醒|only.*hint/i)
+    expect(d).toMatch(/get_inbox/)
+    expect(d).toMatch(/新邮件 from/)
   })
 
   it('send_message and broadcast tool schemas expose auto_poke as optional boolean', async () => {
@@ -139,5 +158,29 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     expect(d).toMatch(/pane id/i)
     expect(d).toMatch(/not a tmux client|errors|error/i)
     expect(d).toMatch(/skip/i)
+  })
+
+  it('register_agent description states identity reuse on (team, name, role)', async () => {
+    const tools = await listTools()
+    const tool = tools.find(t => t.name === 'register_agent')
+    const d = tool!.description!
+    expect(d).toMatch(/reuse|reuses/i)
+    expect(d).toMatch(/team.*name.*role|\(team, name, role\)/i)
+    expect(d).toMatch(/tmux_pane_id/)
+  })
+
+  it('send_message description documents the fan-out online filter and to_agent_id exception', async () => {
+    const tools = await listTools()
+    const tool = tools.find(t => t.name === 'send_message')
+    const d = tool!.description!
+    expect(d).toMatch(/offline|5 min|idle/i)
+    expect(d).toMatch(/to_agent_id/i)
+  })
+
+  it('broadcast description documents the fan-out online filter', async () => {
+    const tools = await listTools()
+    const tool = tools.find(t => t.name === 'broadcast')
+    const d = tool!.description!
+    expect(d).toMatch(/offline|5 min|idle/i)
   })
 })

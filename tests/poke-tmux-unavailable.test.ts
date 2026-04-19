@@ -25,7 +25,7 @@ async function connectClient(host: string, port: number): Promise<{ c: Client; t
 async function register(c: Client, args: { role?: string; team?: string; tmux_pane_id?: string } = {}): Promise<string> {
   const resp = await c.callTool({
     name: 'register_agent',
-    arguments: { model: 'opus-4-7', role: args.role ?? 'dev', team: args.team, tmux_pane_id: args.tmux_pane_id }
+    arguments: { name: 'tester-7', model: 'opus-4-7', role: args.role ?? 'dev', team: args.team, tmux_pane_id: args.tmux_pane_id }
   })
   const obj = await parseTool(resp)
   return obj.agent_id as string

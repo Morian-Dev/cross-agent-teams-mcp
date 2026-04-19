@@ -8,6 +8,7 @@ import { AgentsRepo } from '../src/storage/agents-repo.js'
 import { EventsOutbox } from '../src/storage/events-outbox.js'
 import { RegisterContractService } from '../src/mcp/register-contract.js'
 import { SubscribeContractService } from '../src/mcp/subscribe-contract.js'
+import { insertAgent } from './helpers/insert-agent.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-'))
 
@@ -27,7 +28,7 @@ describe('subscribe_contract', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'A', model: 'm', role: 'r' })
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'r' , name: 'A' })
     const sub = new SubscribeContractService(db, agents)
     const r1 = sub.subscribe({ caller: 'A', name: 'X' })
     expect(r1).toEqual({ ok: true, current_version: null })
@@ -45,7 +46,7 @@ describe('subscribe_contract', () => {
     {
       const db = openDb(path); applySchema(db)
       const agents = new AgentsRepo(db)
-      agents.register({ agent_id: 'A', model: 'm', role: 'r' })
+      insertAgent(db, { agent_id: 'A', model: 'm', role: 'r' , name: 'A' })
       new SubscribeContractService(db, agents).subscribe({ caller: 'A', name: 'X' })
       db.close()
     }

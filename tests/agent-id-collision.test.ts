@@ -106,10 +106,10 @@ describe('agent_id collision (credential-based)', () => {
     const a1 = freshAgent(); const a2 = freshAgent()
     const sid = await initSession('127.0.0.1', port, a1, 'Bearer ownerToken')
 
-    const res1 = await callRegister('127.0.0.1', port, a1, sid, { model: 'm', role: 'r' }, 'Bearer ownerToken')
+    const res1 = await callRegister('127.0.0.1', port, a1, sid, { model: 'm', role: 'r', name: 'alice' }, 'Bearer ownerToken')
     expect(res1.status).toBe(200)
 
-    const res2 = await callRegister('127.0.0.1', port, a2, sid, { model: 'm', role: 'r' }, 'Bearer imposterToken')
+    const res2 = await callRegister('127.0.0.1', port, a2, sid, { model: 'm', role: 'r', name: 'alice' }, 'Bearer imposterToken')
     expect(res2.status).toBe(409)
     expect(JSON.parse(res2.body)).toEqual({ error: 'agent_id_collision' })
 
@@ -121,12 +121,12 @@ describe('agent_id collision (credential-based)', () => {
     const a1 = freshAgent(); const a2 = freshAgent()
     const sid = await initSession('127.0.0.1', port, a1, 'Bearer ownerToken')
 
-    const res1 = await callRegister('127.0.0.1', port, a1, sid, { model: 'm', role: 'r' }, 'Bearer ownerToken')
+    const res1 = await callRegister('127.0.0.1', port, a1, sid, { model: 'm', role: 'r', name: 'alice' }, 'Bearer ownerToken')
     expect(res1.status).toBe(200)
 
     // OLD SEMANTICS (pre-fix) expected 409 here because of different TCP sockets.
     // NEW SEMANTICS: same Authorization -> no collision. Guard against regression by asserting 200.
-    const res2 = await callRegister('127.0.0.1', port, a2, sid, { model: 'm', role: 'r', display_name: 'alice' }, 'Bearer ownerToken')
+    const res2 = await callRegister('127.0.0.1', port, a2, sid, { model: 'm', role: 'r', name: 'alice' }, 'Bearer ownerToken')
     expect(res2.status).toBe(200)
     const body = parseJsonOrSSE(res2)
     const reg = JSON.parse(body.result.content[0].text)

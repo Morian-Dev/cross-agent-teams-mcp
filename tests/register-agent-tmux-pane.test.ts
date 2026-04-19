@@ -25,7 +25,7 @@ describe('register_agent tmux_pane_id integration', () => {
 
     const regResp = await client.callTool({
       name: 'register_agent',
-      arguments: { model: 'opus-4-7', role: 'frontend', tmux_pane_id: '%42', team: 'default' }
+      arguments: { model: 'opus-4-7', role: 'frontend', name: 'alice', tmux_pane_id: '%42', team: 'default' }
     })
     const regText = (regResp.content as Array<{ text: string }>)[0].text
     const reg = JSON.parse(regText) as { agent_id?: string; error?: string }
@@ -57,8 +57,8 @@ describe('register_agent tmux_pane_id integration', () => {
     }
     const A = await makeClient()
     const B = await makeClient()
-    const regA = JSON.parse(((await A.c.callTool({ name: 'register_agent', arguments: { model: 'opus-4-7', role: 'frontend', tmux_pane_id: '%42' } })).content as Array<{ text: string }>)[0].text) as { agent_id: string }
-    const regB = JSON.parse(((await B.c.callTool({ name: 'register_agent', arguments: { model: 'gpt-5', role: 'reviewer' } })).content as Array<{ text: string }>)[0].text) as { agent_id: string }
+    const regA = JSON.parse(((await A.c.callTool({ name: 'register_agent', arguments: { model: 'opus-4-7', role: 'frontend', name: 'alice', tmux_pane_id: '%42' } })).content as Array<{ text: string }>)[0].text) as { agent_id: string }
+    const regB = JSON.parse(((await B.c.callTool({ name: 'register_agent', arguments: { model: 'gpt-5', role: 'reviewer', name: 'bob' } })).content as Array<{ text: string }>)[0].text) as { agent_id: string }
     const list = JSON.parse(((await A.c.callTool({ name: 'list_agents', arguments: {} })).content as Array<{ text: string }>)[0].text) as { agents: Array<{ agent_id: string; tmux_pane_id: string | null }> }
     const a = list.agents.find(x => x.agent_id === regA.agent_id)
     const b = list.agents.find(x => x.agent_id === regB.agent_id)

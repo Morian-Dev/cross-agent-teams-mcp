@@ -8,6 +8,7 @@ import { AgentsRepo } from '../src/storage/agents-repo.js'
 import { EventsOutbox } from '../src/storage/events-outbox.js'
 import { SendMessageService } from '../src/mcp/send-message.js'
 import { GetInboxService } from '../src/mcp/get-inbox.js'
+import { insertAgent } from './helpers/insert-agent.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-'))
 
@@ -19,8 +20,8 @@ describe('get_inbox', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'A', model: 'm', role: 'backend' })
-    agents.register({ agent_id: 'B', model: 'm', role: 'frontend' })
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'backend' , name: 'A' })
+    insertAgent(db, { agent_id: 'B', model: 'm', role: 'frontend' , name: 'B' })
     const send = new SendMessageService(db, agents, new EventsOutbox(db))
     for (let i = 0; i < n; i++) await send.send({ from: 'A', to_agent_id: 'B', body: `msg-${i}`, auto_poke: false })
     return new GetInboxService(db, agents)

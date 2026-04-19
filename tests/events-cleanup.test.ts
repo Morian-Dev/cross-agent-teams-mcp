@@ -8,6 +8,7 @@ import { AgentsRepo } from '../src/storage/agents-repo.js'
 import { EventsOutbox } from '../src/storage/events-outbox.js'
 import { RegisterContractService } from '../src/mcp/register-contract.js'
 import { runCleanup } from '../src/daemon/cleanup.js'
+import { insertAgent } from './helpers/insert-agent.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-'))
 
@@ -27,7 +28,7 @@ describe('events cleanup', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'A', model: 'm', role: 'r' })
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'r' , name: 'A' })
     seedEvents(db, 'default', 100, 8)
     db.prepare('UPDATE agents SET last_processed_event_id=? WHERE agent_id=?').run(50, 'A')
     runCleanup(db, { maxAgeDays: 7, now: new Date() })
@@ -39,7 +40,7 @@ describe('events cleanup', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'Stale', model: 'm', role: 'r' })
+    insertAgent(db, { agent_id: 'Stale', model: 'm', role: 'r' , name: 'Stale' })
     const oldTs = new Date(Date.now() - 60 * 60 * 1000).toISOString()
     db.prepare('UPDATE agents SET last_seen_at=? WHERE agent_id=?').run(oldTs, 'Stale')
     seedEvents(db, 'default', 100, 8)
@@ -52,7 +53,7 @@ describe('events cleanup', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'A', model: 'm', role: 'r' })
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'r' , name: 'A' })
     const reg = new RegisterContractService(db, agents, new EventsOutbox(db))
     reg.register({ caller: 'A', name: 'X', schema: { type: 'object' } })
     db.prepare('UPDATE contracts SET registered_at=? WHERE name=?')

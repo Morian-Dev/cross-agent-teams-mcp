@@ -9,6 +9,7 @@ import { EventsOutbox } from '../src/storage/events-outbox.js'
 import { RegisterContractService } from '../src/mcp/register-contract.js'
 import { SubscribeContractService } from '../src/mcp/subscribe-contract.js'
 import { PendingContractEventsService } from '../src/mcp/pending-contract-events.js'
+import { insertAgent } from './helpers/insert-agent.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-'))
 
@@ -20,8 +21,8 @@ describe('offline subscription catchup', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'S', model: 'm', role: 'r' })
-    agents.register({ agent_id: 'A', model: 'm', role: 'r' })
+    insertAgent(db, { agent_id: 'S', model: 'm', role: 'r' , name: 'S' })
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'r' , name: 'A' })
     new SubscribeContractService(db, agents).subscribe({ caller: 'S', name: 'X' })
 
     const currentCursor = 0

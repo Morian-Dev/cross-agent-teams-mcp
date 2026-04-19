@@ -8,6 +8,7 @@ import { AgentsRepo } from '../src/storage/agents-repo.js'
 import { EventsOutbox } from '../src/storage/events-outbox.js'
 import { TaskAddService } from '../src/mcp/task-add.js'
 import { TaskListService } from '../src/mcp/task-list.js'
+import { insertAgent } from './helpers/insert-agent.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-'))
 
@@ -19,8 +20,8 @@ describe('task_list', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'A', model: 'm', role: 'r', team: 'alpha' })
-    agents.register({ agent_id: 'X', model: 'm', role: 'r', team: 'beta' })
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'r', team: 'alpha' , name: 'A' })
+    insertAgent(db, { agent_id: 'X', model: 'm', role: 'r', team: 'beta' , name: 'X' })
     const add = new TaskAddService(db, agents, new EventsOutbox(db))
     add.add({ caller: 'A', title: 'a1' })
     add.add({ caller: 'A', title: 'a2' })

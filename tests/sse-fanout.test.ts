@@ -9,6 +9,7 @@ import { EventsOutbox } from '../src/storage/events-outbox.js'
 import { RegisterContractService } from '../src/mcp/register-contract.js'
 import { SubscribeContractService } from '../src/mcp/subscribe-contract.js'
 import { SseFanout, type SseSink } from '../src/daemon/sse-fanout.js'
+import { insertAgent } from './helpers/insert-agent.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-'))
 
@@ -36,9 +37,9 @@ describe('sse fanout', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'Sub', model: 'm', role: 'r' })
-    agents.register({ agent_id: 'NoSub', model: 'm', role: 'r' })
-    agents.register({ agent_id: 'Broken', model: 'm', role: 'r' })
+    insertAgent(db, { agent_id: 'Sub', model: 'm', role: 'r' , name: 'Sub' })
+    insertAgent(db, { agent_id: 'NoSub', model: 'm', role: 'r' , name: 'NoSub' })
+    insertAgent(db, { agent_id: 'Broken', model: 'm', role: 'r' , name: 'Broken' })
 
     const fanout = new SseFanout()
     const sinkSub = makeSink()

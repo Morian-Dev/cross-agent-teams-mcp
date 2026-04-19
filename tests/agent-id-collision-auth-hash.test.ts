@@ -106,14 +106,14 @@ describe('agent_id_collision auth-hash semantics', () => {
     const agent2 = freshAgent()
     const sid = await initSession('127.0.0.1', port, agent1, 'Bearer tokenX')
 
-    const res1 = await callRegister('127.0.0.1', port, agent1, sid, { model: 'opus-4-7', role: 'frontend' }, 'Bearer tokenX')
+    const res1 = await callRegister('127.0.0.1', port, agent1, sid, { model: 'opus-4-7', role: 'frontend', name: 'alice' }, 'Bearer tokenX')
     expect(res1.status).toBe(200)
     const body1 = parseJsonOrSSE(res1)
     const reg1 = JSON.parse(body1.result.content[0].text)
     expect(reg1.agent_id).toBeDefined()
 
     // Second call: same token, same session id, FRESH TCP socket (separate agent, keepAlive=false)
-    const res2 = await callRegister('127.0.0.1', port, agent2, sid, { model: 'opus-4-7', role: 'frontend', tmux_pane_id: '%42' }, 'Bearer tokenX')
+    const res2 = await callRegister('127.0.0.1', port, agent2, sid, { model: 'opus-4-7', role: 'frontend', name: 'alice', tmux_pane_id: '%42' }, 'Bearer tokenX')
     expect(res2.status).toBe(200)
     const body2 = parseJsonOrSSE(res2)
     const reg2 = JSON.parse(body2.result.content[0].text)
@@ -131,10 +131,10 @@ describe('agent_id_collision auth-hash semantics', () => {
     const agent2 = freshAgent()
     const sid = await initSession('127.0.0.1', port, agent1, 'Bearer tokenX')
 
-    const res1 = await callRegister('127.0.0.1', port, agent1, sid, { model: 'opus-4-7', role: 'frontend' }, 'Bearer tokenX')
+    const res1 = await callRegister('127.0.0.1', port, agent1, sid, { model: 'opus-4-7', role: 'frontend', name: 'alice' }, 'Bearer tokenX')
     expect(res1.status).toBe(200)
 
-    const res2 = await callRegister('127.0.0.1', port, agent2, sid, { model: 'opus-4-7', role: 'reviewer' }, 'Bearer tokenY')
+    const res2 = await callRegister('127.0.0.1', port, agent2, sid, { model: 'opus-4-7', role: 'reviewer', name: 'alice' }, 'Bearer tokenY')
     expect(res2.status).toBe(409)
     expect(JSON.parse(res2.body)).toEqual({ error: 'agent_id_collision' })
 
@@ -147,13 +147,13 @@ describe('agent_id_collision auth-hash semantics', () => {
     const agent2 = freshAgent()
     const sid = await initSession('127.0.0.1', port, agent1)
 
-    const res1 = await callRegister('127.0.0.1', port, agent1, sid, { model: 'opus-4-7', role: 'frontend' })
+    const res1 = await callRegister('127.0.0.1', port, agent1, sid, { model: 'opus-4-7', role: 'frontend', name: 'alice' })
     expect(res1.status).toBe(200)
     const body1 = parseJsonOrSSE(res1)
     const reg1 = JSON.parse(body1.result.content[0].text)
     expect(reg1.agent_id).toBeDefined()
 
-    const res2 = await callRegister('127.0.0.1', port, agent2, sid, { model: 'opus-4-7', role: 'frontend' })
+    const res2 = await callRegister('127.0.0.1', port, agent2, sid, { model: 'opus-4-7', role: 'frontend', name: 'alice' })
     expect(res2.status).toBe(200)
     const body2 = parseJsonOrSSE(res2)
     const reg2 = JSON.parse(body2.result.content[0].text)

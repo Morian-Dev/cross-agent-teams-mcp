@@ -7,6 +7,7 @@ import { applySchema } from '../src/storage/schema.js'
 import { AgentsRepo } from '../src/storage/agents-repo.js'
 import { EventsOutbox } from '../src/storage/events-outbox.js'
 import { RegisterContractService } from '../src/mcp/register-contract.js'
+import { insertAgent } from './helpers/insert-agent.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-'))
 
@@ -18,7 +19,7 @@ describe('register_contract concurrent', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'A', model: 'm', role: 'r' })
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'r' , name: 'A' })
     const svc = new RegisterContractService(db, agents, new EventsOutbox(db))
     const N = 100
     const results = await Promise.all(

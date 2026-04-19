@@ -52,33 +52,35 @@ describe('phase 2 three-agent end-to-end', () => {
       // register_agent for each
       const regA = parseTool(await agentA.client.callTool({
         name: 'register_agent',
-        arguments: { model: 'opus', role: 'backend', display_name: 'alice' }
+        arguments: { model: 'opus', role: 'backend', name: 'alice' }
       }))
       const regB = parseTool(await agentB.client.callTool({
         name: 'register_agent',
-        arguments: { model: 'sonnet', role: 'frontend', display_name: 'bob' }
+        arguments: { model: 'sonnet', role: 'frontend', name: 'bob' }
       }))
       const regC = parseTool(await agentC.client.callTool({
         name: 'register_agent',
-        arguments: { model: 'gpt', role: 'qa', display_name: 'carol' }
+        arguments: { model: 'gpt', role: 'qa', name: 'carol' }
       }))
-      expect(regA.agent_id).toBe(agentA.sessionId)
-      expect(regB.agent_id).toBe(agentB.sessionId)
-      expect(regC.agent_id).toBe(agentC.sessionId)
+      expect(typeof regA.agent_id).toBe('string')
+      expect(typeof regB.agent_id).toBe('string')
+      expect(typeof regC.agent_id).toBe('string')
+      // agent_id is now decoupled from session id — it's a stable identity UUID.
+      expect(regA.agent_id).not.toBe(agentA.sessionId)
       expect(regA.team).toBe('default')
 
       // list_agents sees all three
       const listA = parseTool(await agentA.client.callTool({ name: 'list_agents', arguments: {} }))
       const ids = listA.agents.map((a: { agent_id: string }) => a.agent_id).sort()
-      expect(ids).toEqual([agentA.sessionId, agentB.sessionId, agentC.sessionId].sort())
+      expect(ids).toEqual([regA.agent_id, regB.agent_id, regC.agent_id].sort())
 
       // broadcast from A → recipients = [B, C]
       const bcast = parseTool(await agentA.client.callTool({
         name: 'broadcast',
         arguments: { body: 'all-hands' }
       }))
-      expect(new Set(bcast.recipients)).toEqual(new Set([agentB.sessionId, agentC.sessionId]))
-      expect(bcast.recipients).not.toContain(agentA.sessionId)
+      expect(new Set(bcast.recipients)).toEqual(new Set([regB.agent_id, regC.agent_id]))
+      expect(bcast.recipients).not.toContain(regA.agent_id)
 
       // B and C each see the broadcast in their inbox
       const inboxB = parseTool(await agentB.client.callTool({ name: 'get_inbox', arguments: {} }))

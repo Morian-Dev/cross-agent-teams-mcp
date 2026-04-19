@@ -9,6 +9,8 @@ import { EventsOutbox } from '../src/storage/events-outbox.js'
 import { SendMessageService, type AutoPokeFn, type AutoPokeSkipReason } from '../src/mcp/send-message.js'
 import { BroadcastService } from '../src/mcp/broadcast.js'
 import { __setCapturePaneTail, __resetCapturePaneTail } from '../src/mcp/poke-guard.js'
+import { clearAllRetries } from '../src/mcp/poke-retry.js'
+import { insertAgent } from './helpers/insert-agent.js'
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'atm-bcast-autopoke-'))
 
@@ -44,58 +46,78 @@ function setupService(opts?: { paneState?: Record<string, 'idle' | 'active'> }):
   return { svc, db, pokeCalls, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
 }
 
-describe('broadcast auto_poke opt-in integration', () => {
+describe('broadcast auto_poke default-on integration', () => {
   const cleanups: Array<() => void> = []
   beforeEach(() => { process.env.POKE_QUIET_MS = '100' })
   afterEach(() => {
     cleanups.forEach(c => c()); cleanups.length = 0
     __resetCapturePaneTail()
     delete process.env.POKE_QUIET_MS
+    clearAllRetries()
   })
 
-  it('default broadcast (auto_poke omitted) does not poke anyone, no skip_reasons, retry_scheduled:false', async () => {
+  it('default broadcast (auto_poke omitted) pokes every idle pane in parallel', async () => {
     const { svc, db, pokeCalls, cleanup } = setupService()
     cleanups.push(cleanup)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'A', model: 'm', role: 'lead', tmux_pane_id: '%1' })
-    agents.register({ agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' })
-    agents.register({ agent_id: 'C', model: 'm', role: 'worker', tmux_pane_id: '%3' })
-    agents.register({ agent_id: 'D', model: 'm', role: 'worker', tmux_pane_id: '%4' })
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'lead', tmux_pane_id: '%1' , name: 'A' })
+    insertAgent(db, { agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' , name: 'B' })
+    insertAgent(db, { agent_id: 'C', model: 'm', role: 'worker', tmux_pane_id: '%3' , name: 'C' })
+    insertAgent(db, { agent_id: 'D', model: 'm', role: 'worker', tmux_pane_id: '%4' , name: 'D' })
 
     const r = await svc.broadcast({ from: 'A', body: 'status update' })
     if ('error' in r) throw new Error('expected success')
 
     expect(r.recipients.sort()).toEqual(['B', 'C', 'D'])
-    expect(r.poked).toBe(false)
-    expect(r.poke_skip_reasons).toBeUndefined()
-    expect(pokeCalls.length).toBe(0)
+    expect(r.poked).toBe(true)
+    expect(pokeCalls.length).toBe(3)
+    expect(pokeCalls.map(c => c.target).sort()).toEqual(['B', 'C', 'D'])
+    const reasons = r.poke_skip_reasons ?? []
+    expect(reasons.length).toBe(0)
     expect(r.retry_scheduled).toBe(false)
     expect(r.retry_delays_s).toBeUndefined()
   })
 
-  it('explicit auto_poke:true with mixed panes: pokes idle ones, skip_reasons lists only no_pane/guard_failed', async () => {
+  it('explicit auto_poke:false reverts to pure mailbox delivery', async () => {
+    const { svc, db, pokeCalls, cleanup } = setupService()
+    cleanups.push(cleanup)
+    const agents = new AgentsRepo(db)
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'lead', tmux_pane_id: '%1' , name: 'A' })
+    insertAgent(db, { agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' , name: 'B' })
+    insertAgent(db, { agent_id: 'C', model: 'm', role: 'worker', tmux_pane_id: '%3' , name: 'C' })
+
+    const r = await svc.broadcast({ from: 'A', body: 'quiet note', auto_poke: false })
+    if ('error' in r) throw new Error('expected success')
+
+    expect(r.recipients.sort()).toEqual(['B', 'C'])
+    expect(r.poked).toBe(false)
+    expect(pokeCalls.length).toBe(0)
+    expect(r.poke_skip_reasons).toBeUndefined()
+    expect(r.retry_scheduled).toBe(false)
+    expect(r.retry_delays_s).toBeUndefined()
+  })
+
+  it('default broadcast with mixed pane states reports per-recipient skip reasons and schedules retry for guard_failed', async () => {
     const { svc, db, pokeCalls, cleanup } = setupService({
-      paneState: { '%2': 'idle', '%3': 'idle' }
+      paneState: { '%2': 'idle', '%3': 'active' }
     })
     cleanups.push(cleanup)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'A', model: 'm', role: 'lead', tmux_pane_id: '%1' })
-    agents.register({ agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' })
-    agents.register({ agent_id: 'C', model: 'm', role: 'worker', tmux_pane_id: '%3' })
-    agents.register({ agent_id: 'D', model: 'm', role: 'worker' }) // no pane
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'lead', tmux_pane_id: '%1' , name: 'A' })
+    insertAgent(db, { agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' , name: 'B' })
+    insertAgent(db, { agent_id: 'C', model: 'm', role: 'worker', tmux_pane_id: '%3' , name: 'C' })
+    insertAgent(db, { agent_id: 'D', model: 'm', role: 'worker' , name: 'D' }) // no pane
 
-    const r = await svc.broadcast({ from: 'A', body: 'urgent', auto_poke: true })
+    const r = await svc.broadcast({ from: 'A', body: 'urgent' })
     if ('error' in r) throw new Error('expected success')
 
     expect(r.recipients.sort()).toEqual(['B', 'C', 'D'])
-    expect(r.poked).toBe(true)
-    expect(pokeCalls.map(c => c.target).sort()).toEqual(['B', 'C'])
+    expect(pokeCalls.map(c => c.target).sort()).toEqual(['B'])
     const reasons = r.poke_skip_reasons ?? []
+    expect(reasons).toContainEqual({ agent_id: 'C', reason: 'guard_failed' as AutoPokeSkipReason })
     expect(reasons).toContainEqual({ agent_id: 'D', reason: 'no_pane' as AutoPokeSkipReason })
-    expect(reasons.some(x => x.reason === 'guard_failed')).toBe(false)
-    // No guard_failed → no retry
-    expect(r.retry_scheduled).toBe(false)
-    expect(r.retry_delays_s).toBeUndefined()
+    expect(r.retry_scheduled).toBe(true)
+    expect(r.retry_delays_s).toEqual([30, 180, 600])
   })
 
   it('explicit auto_poke:true with active pane: guard_failed → retry_scheduled:true, delays=[30,180,600]', async () => {
@@ -104,8 +126,8 @@ describe('broadcast auto_poke opt-in integration', () => {
     })
     cleanups.push(cleanup)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'A', model: 'm', role: 'lead', tmux_pane_id: '%1' })
-    agents.register({ agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' })
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'lead', tmux_pane_id: '%1' , name: 'A' })
+    insertAgent(db, { agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' , name: 'B' })
 
     const r = await svc.broadcast({ from: 'A', body: 'urgent', auto_poke: true })
     if ('error' in r) throw new Error('expected success')
@@ -116,7 +138,5 @@ describe('broadcast auto_poke opt-in integration', () => {
     expect(reasons).toContainEqual({ agent_id: 'B', reason: 'guard_failed' as AutoPokeSkipReason })
     expect(r.retry_scheduled).toBe(true)
     expect(r.retry_delays_s).toEqual([30, 180, 600])
-    const { clearAllRetries } = await import('../src/mcp/poke-retry.js')
-    clearAllRetries()
   })
 })

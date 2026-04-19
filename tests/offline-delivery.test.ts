@@ -8,6 +8,7 @@ import { AgentsRepo } from '../src/storage/agents-repo.js'
 import { EventsOutbox } from '../src/storage/events-outbox.js'
 import { SendMessageService } from '../src/mcp/send-message.js'
 import { GetInboxService } from '../src/mcp/get-inbox.js'
+import { insertAgent } from './helpers/insert-agent.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-'))
 
@@ -19,8 +20,8 @@ describe('offline delivery', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'A', model: 'm', role: 'backend' })
-    agents.register({ agent_id: 'B', model: 'm', role: 'frontend' })
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'backend' , name: 'A' })
+    insertAgent(db, { agent_id: 'B', model: 'm', role: 'frontend' , name: 'B' })
     const old = new Date(Date.now() - 60 * 60 * 1000).toISOString()
     db.prepare('UPDATE agents SET last_seen_at=? WHERE agent_id=?').run(old, 'B')
 

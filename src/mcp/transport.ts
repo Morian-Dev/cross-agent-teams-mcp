@@ -5,7 +5,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { randomUUID, createHash } from 'node:crypto'
 import { echoSchema, echoHandler } from './echo.js'
 import { registerBusinessTools, type AgentIdHolder } from './tools.js'
-import type { SseFanout } from '../daemon/sse-fanout.js'
+import type { SseFanout, SseSink } from '../daemon/sse-fanout.js'
 
 interface Session {
   transport: StreamableHTTPServerTransport
@@ -24,40 +24,62 @@ export function mountMcp(app: FastifyInstance, db: Database.Database, fanout: Ss
     const server = new McpServer({ name: 'ts-agent-teams', version: '0.1.0' })
     const agentIdHolder: AgentIdHolder = { current: undefined }
     server.registerTool('echo', { title: 'Echo', description: 'Return the input', inputSchema: echoSchema }, echoHandler as any)
-    registerBusinessTools(server, db, () => agentIdHolder.current, fanout)
+
+    let sessionIdForCaller: string | undefined
+    // `caller()` returns the session id before register_agent succeeds (to serve as
+    // a stable connection_id), and the bound agent_id after register succeeds.
+    const getCallerAgentId = (): string | undefined =>
+      agentIdHolder.current ?? sessionIdForCaller
+
+    const sink: SseSink = {
+      send(msg: Record<string, unknown>): void {
+        const payload = {
+          jsonrpc: '2.0' as const,
+          method: 'notifications/contract_event',
+          params: msg
+        }
+        void transport.send(payload).catch(() => { /* no active GET stream yet */ })
+      },
+      sendHeartbeat(): void {
+        void transport.send({
+          jsonrpc: '2.0' as const,
+          method: 'notifications/heartbeat',
+          params: {}
+        }).catch(() => { /* no active GET stream yet */ })
+      },
+      close(): void { /* transport.onclose handles lifecycle */ }
+    }
+
+    const onRegisterSuccess = (agent_id: string, team: string): void => {
+      // Detach any prior sink registered under this agent_id (e.g. from a previous
+      // session that reused the same identity) before attaching the new one.
+      try { fanout.detach(agent_id) } catch { /* ignore */ }
+      // If this session had previously bound a different agent_id (e.g. role change
+      // mid-session), detach that too.
+      if (agentIdHolder.current && agentIdHolder.current !== agent_id) {
+        try { fanout.detach(agentIdHolder.current) } catch { /* ignore */ }
+      }
+      fanout.attach(agent_id, team, sink)
+      agentIdHolder.current = agent_id
+    }
+
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sid: string) => {
-        agentIdHolder.current = sid
+        sessionIdForCaller = sid
         sessions.set(sid, { transport, server, sessionId: sid, agentIdHolder })
-        const sink = {
-          send(msg: Record<string, unknown>): void {
-            const payload = {
-              jsonrpc: '2.0' as const,
-              method: 'notifications/contract_event',
-              params: msg
-            }
-            void transport.send(payload).catch(() => { /* no active GET stream yet */ })
-          },
-          sendHeartbeat(): void {
-            void transport.send({
-              jsonrpc: '2.0' as const,
-              method: 'notifications/heartbeat',
-              params: {}
-            }).catch(() => { /* no active GET stream yet */ })
-          },
-          close(): void { /* transport.onclose handles lifecycle */ }
-        }
-        fanout.attach(sid, 'default', sink)
       }
     })
     transport.onclose = () => {
+      if (agentIdHolder.current) {
+        try { fanout.detach(agentIdHolder.current) } catch { /* ignore */ }
+      }
       if (transport.sessionId) {
-        fanout.detach(transport.sessionId)
         sessions.delete(transport.sessionId)
         sessionOwners.delete(transport.sessionId)
       }
     }
+    registerBusinessTools(server, db, getCallerAgentId, fanout, onRegisterSuccess, () => sessionIdForCaller)
     server.connect(transport)
     return { transport, server, sessionId: '', agentIdHolder }
   }
@@ -96,11 +118,15 @@ export function mountMcp(app: FastifyInstance, db: Database.Database, fanout: Ss
       }
     }
 
-    // Spoofed from_agent_id on tools/call -> 403
+    // Spoofed from_agent_id on tools/call -> 403. Compare against the session's
+    // currently bound agent_id (post register_agent), NOT the raw MCP session id.
     if (session && body?.method === 'tools/call') {
       const claimed = body.params?.arguments?.from_agent_id
-      if (typeof claimed === 'string' && claimed !== session.sessionId) {
-        return reply.code(403).send({ error: 'identity_mismatch' })
+      if (typeof claimed === 'string') {
+        const current = session.agentIdHolder.current
+        if (current === undefined || claimed !== current) {
+          return reply.code(403).send({ error: 'identity_mismatch' })
+        }
       }
     }
 

@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
-import type { AgentsRepo } from '../storage/agents-repo.js'
+import { ONLINE_MS, type AgentsRepo } from '../storage/agents-repo.js'
 import type { EventsOutbox } from '../storage/events-outbox.js'
 import { fanoutAutoPoke } from './auto-poke-fanout.js'
 import type { AutoPokeSkipReason, FanoutDeps } from './auto-poke-fanout.js'
@@ -62,8 +62,9 @@ export class SendMessageService {
       recipientRows = [rcpt]
       to_role = null
     } else {
-      const rows = this.db.prepare('SELECT agent_id, tmux_pane_id FROM agents WHERE role=? AND team=?')
-        .all(input.to_role!, team) as RecipientPokeRow[]
+      const cutoffIso = new Date(Date.now() - ONLINE_MS).toISOString()
+      const rows = this.db.prepare('SELECT agent_id, tmux_pane_id FROM agents WHERE role=? AND team=? AND last_seen_at > ?')
+        .all(input.to_role!, team, cutoffIso) as RecipientPokeRow[]
       if (rows.length === 0) return { error: 'unknown_recipient' }
       recipientRows = rows
       to_role = input.to_role!

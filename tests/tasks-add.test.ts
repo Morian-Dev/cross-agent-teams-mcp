@@ -7,6 +7,7 @@ import { applySchema } from '../src/storage/schema.js'
 import { AgentsRepo } from '../src/storage/agents-repo.js'
 import { EventsOutbox } from '../src/storage/events-outbox.js'
 import { TaskAddService } from '../src/mcp/task-add.js'
+import { insertAgent } from './helpers/insert-agent.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-'))
 
@@ -27,7 +28,7 @@ describe('task_add', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'A', model: 'm', role: 'r' })
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'r' , name: 'A' })
     const svc = new TaskAddService(db, agents, new EventsOutbox(db))
     const r = svc.add({ caller: 'A', title: 'write docs' })
     if ('error' in r) throw new Error('expected success')

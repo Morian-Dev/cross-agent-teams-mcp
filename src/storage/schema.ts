@@ -14,13 +14,14 @@ const DDL = [
     agent_id TEXT PRIMARY KEY,
     team TEXT NOT NULL,
     role TEXT NOT NULL,
-    display_name TEXT,
+    name TEXT NOT NULL,
     model TEXT,
     registered_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
     last_processed_event_id INTEGER NOT NULL DEFAULT 0,
     tmux_pane_id TEXT
   )`,
+  `CREATE INDEX IF NOT EXISTS agents_identity_idx ON agents(team, name, role)`,
   `CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY,
     event_id INTEGER NOT NULL REFERENCES events(event_id),
@@ -68,12 +69,4 @@ const DDL = [
 
 export function applySchema(db: Database.Database): void {
   for (const sql of DDL) db.exec(sql)
-  ensureAgentsHasTmuxPaneId(db)
-}
-
-function ensureAgentsHasTmuxPaneId(db: Database.Database): void {
-  const cols = db.pragma('table_info(agents)') as Array<{ name: string }>
-  if (!cols.some(c => c.name === 'tmux_pane_id')) {
-    db.exec(`ALTER TABLE agents ADD COLUMN tmux_pane_id TEXT`)
-  }
 }

@@ -26,6 +26,10 @@ export class SseFanout {
   }
 
   attach(agent_id: string, team: string, sink: SseSink): void {
+    const prior = this.sessions.get(agent_id)
+    if (prior && prior.sink !== sink) {
+      try { prior.sink.close() } catch { /* ignore */ }
+    }
     const wasEmpty = this.sessions.size === 0
     this.sessions.set(agent_id, { agent_id, team, sink })
     if (wasEmpty) this.startHeartbeat()

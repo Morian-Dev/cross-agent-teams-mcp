@@ -9,6 +9,7 @@ import { EventsOutbox } from '../src/storage/events-outbox.js'
 import { RegisterContractService } from '../src/mcp/register-contract.js'
 import { GetContractService } from '../src/mcp/get-contract.js'
 import { DiffContractsService } from '../src/mcp/diff-contracts.js'
+import { insertAgent } from './helpers/insert-agent.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-'))
 
@@ -20,7 +21,7 @@ describe('get_contract and diff_contracts', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const agents = new AgentsRepo(db)
-    agents.register({ agent_id: 'A', model: 'm', role: 'r' })
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'r' , name: 'A' })
     const reg = new RegisterContractService(db, agents, new EventsOutbox(db))
     return { db, agents, reg,
       get: new GetContractService(db, agents),

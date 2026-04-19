@@ -6,6 +6,7 @@ import { openDb } from '../src/storage/db.js'
 import { applySchema } from '../src/storage/schema.js'
 import { AgentsRepo } from '../src/storage/agents-repo.js'
 import { ensureCallerMatches, IdentityMismatchError } from '../src/mcp/identity.js'
+import { insertAgent } from './helpers/insert-agent.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-'))
 
@@ -26,7 +27,7 @@ describe('identity guard and touch', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const repo = new AgentsRepo(db)
-    repo.register({ agent_id: 'sess-A', model: 'm', role: 'r' })
+    insertAgent(db, { agent_id: 'sess-A', model: 'm', role: 'r' , name: 'sess-A' })
     const old = new Date(Date.now() - 60 * 60 * 1000).toISOString()
     db.prepare('UPDATE agents SET last_seen_at=? WHERE agent_id=?').run(old, 'sess-A')
     repo.touch('sess-A')
