@@ -16,6 +16,7 @@ export interface AgentListRow {
   name: string
   model: string | null
   tmux_pane_id: string | null
+  channel_session_id: string | null
   last_seen_at: string
   online: boolean
 }
@@ -60,8 +61,11 @@ export class AgentsRepo {
 
   list(args: { team: string }): AgentListRow[] {
     const rows = this.db.prepare(
-      `SELECT agent_id, role, name, model, tmux_pane_id, last_seen_at FROM agents WHERE team=? ORDER BY registered_at ASC`
-    ).all(args.team) as Array<{ agent_id: string; role: string; name: string; model: string | null; tmux_pane_id: string | null; last_seen_at: string }>
+      `SELECT agent_id, role, name, model, tmux_pane_id, channel_session_id, last_seen_at FROM agents WHERE team=? ORDER BY registered_at ASC`
+    ).all(args.team) as Array<{
+      agent_id: string; role: string; name: string; model: string | null;
+      tmux_pane_id: string | null; channel_session_id: string | null; last_seen_at: string
+    }>
     const nowMs = Date.now()
     return rows.map(r => ({ ...r, online: nowMs - new Date(r.last_seen_at).getTime() < ONLINE_MS }))
   }

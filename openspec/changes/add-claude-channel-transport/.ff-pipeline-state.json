@@ -1,0 +1,9 @@
+{
+  "change": "add-claude-channel-transport",
+  "phase": "apply",
+  "iteration": 1,
+  "max_iterations": 3,
+  "last_critical_types": [],
+  "history": [],
+  "updated_at": "2026-04-19T00:00:00Z"
+}

@@ -72,27 +72,38 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - [x] **REFACTOR:** `trimUsable()` extracted as module-level helper at the first use site; single call site currently (will be reused in later tasks).
   - [x] **Verify REFACTOR:** n/a (no behavior change).
   - [x] **Commit:** `feat(storage): persist channel_session_id on register (Task 2.1)`
-    - SHA: `<filled after commit>`
+    - SHA: `8cd033e`
 
-- [ ] 2.2 `AgentsRepo.list()` includes `channel_session_id` in each row; `AgentListRow` type extended
+- [x] 2.2 `AgentsRepo.list()` includes `channel_session_id` in each row; `AgentListRow` type extended
   - kind: unit-test
   - **Spec scenario(s):**
     - `agent-registry/spec.md` → Scenario: `list_agents surfaces channel_session_id`
   - **Files:**
     - Create: `tests/agents-repo-list-channel-session-id.test.ts`
     - Modify: `src/storage/agents-repo.ts`
-  - [ ] **RED:** Insert two agents (one with csid, one with NULL), call `list({team})`, expect entries carry `channel_session_id: string | null`.
-  - [ ] **Verify RED:**
+  - [x] **RED:** Two agents (alice w/ csid, bob w/o) in list output carry `channel_session_id`.
+  - [x] **Verify RED:**
     - Command: `pnpm exec vitest run tests/agents-repo-list-channel-session-id.test.ts --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **GREEN:** Add `channel_session_id: string | null` to `AgentListRow`; extend the SELECT column list and row type cast.
-  - [ ] **Verify GREEN:**
+    - **Observed output:**
+      ```
+      FAIL > list() returns channel_session_id for each agent (string or null)
+      expect(aRow?.channel_session_id).toBe('csid-abc')   — received undefined (not in list)
+      Tests  1 failed (1)
+      ```
+  - [x] **GREEN:** Added `channel_session_id: string | null` to `AgentListRow`; extended SELECT to include column.
+  - [x] **Verify GREEN:**
     - Command: `pnpm exec vitest run tests/agents-repo-list-channel-session-id.test.ts --reporter=verbose`
-    - Full-suite: `pnpm exec vitest run --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **REFACTOR:** None.
-  - [ ] **Verify REFACTOR:**
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
+    - Full-suite: `pnpm exec vitest run`
+    - **Observed output:**
+      ```
+      ✓ 1/1 test pass
+      Full suite: Test Files  3 failed | 80 passed (83)  Tests  4 failed | 261 passed (265)
+      (same 4 pre-existing poke failures)
+      ```
+  - [x] **REFACTOR:** None.
+  - [x] **Verify REFACTOR:** n/a.
+  - [x] **Commit:** `feat(storage): surface channel_session_id in list (Task 2.2)`
+    - SHA: `<filled after commit>`
 
 ## 3. `register_agent` MCP tool: schema + hint rule
 
