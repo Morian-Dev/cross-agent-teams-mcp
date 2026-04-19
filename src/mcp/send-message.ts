@@ -33,6 +33,8 @@ interface SuccessResult {
 export type SendResult =
   | SuccessResult
   | { error: 'unknown_recipient' }
+  | { error: 'ambiguous_recipient' }
+  | { error: 'missing_recipient' }
 
 interface RecipientPokeRow {
   agent_id: string
@@ -56,6 +58,7 @@ export class SendMessageService {
   async send(input: SendInput): Promise<SendResult> {
     const hasId = typeof input.to_agent_id === 'string' && input.to_agent_id.length > 0
     const hasName = typeof input.to_agent_name === 'string' && input.to_agent_name.length > 0
+    if (hasId && hasName) return { error: 'ambiguous_recipient' }
     const fromRow = this.agents.findById(input.from)
     if (!fromRow) return { error: 'unknown_recipient' }
     const fromTeam = fromRow.team
