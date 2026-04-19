@@ -103,29 +103,38 @@ Dependency order: storage schema (1) → repo (2) → register_agent wiring (3) 
   - [x] **REFACTOR:** None.
   - [x] **Verify REFACTOR:** n/a.
   - [x] **Commit:** `feat(storage): surface channel_session_id in list (Task 2.2)`
-    - SHA: `<filled after commit>`
+    - SHA: `4294792`
 
 ## 3. `register_agent` MCP tool: schema + hint rule
 
-- [ ] 3.1 `RegisterAgentService` passes `channel_session_id` through to repo
+- [x] 3.1 `RegisterAgentService` passes `channel_session_id` through to repo
   - kind: unit-test
   - **Spec scenario(s):**
     - `agent-registry/spec.md` → Scenario: `register_agent persists channel_session_id when provided on create`
   - **Files:**
     - Create: `tests/register-agent-service-channel-session-id.test.ts`
     - Modify: `src/mcp/register-agent.ts`
-  - [ ] **RED:** Service input `{connection_id, model, name, role, team, channel_session_id}` leads to agents row with persisted csid.  Expected failure: service `RegisterInput` has no csid field.
-  - [ ] **Verify RED:**
+  - [x] **RED:** Service forwards csid → agents row has persisted value.
+  - [x] **Verify RED:**
     - Command: `pnpm exec vitest run tests/register-agent-service-channel-session-id.test.ts --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **GREEN:** Extend `RegisterInput` and forward to `repo.register()`.
-  - [ ] **Verify GREEN:**
+    - **Observed output:**
+      ```
+      FAIL > forwards channel_session_id to repo and persists it
+      expect(row.channel_session_id).toBe('csid-xyz')   — received null
+      ```
+  - [x] **GREEN:** Extended service `RegisterInput` with `channel_session_id?: string`; forward to `repo.register()`.
+  - [x] **Verify GREEN:**
     - Command: `pnpm exec vitest run tests/register-agent-service-channel-session-id.test.ts --reporter=verbose`
-    - Full-suite: `pnpm exec vitest run --reporter=verbose`
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
-  - [ ] **REFACTOR:** None.
-  - [ ] **Verify REFACTOR:**
-    - **Observed output (fill during apply):** `<to be filled by ts-apply>`
+    - Full-suite: `pnpm exec vitest run`
+    - **Observed output:**
+      ```
+      ✓ 1/1 pass
+      Full suite: Test Files  3 failed | 81 passed (84)  Tests  4 failed | 262 passed (266)
+      ```
+  - [x] **REFACTOR:** None.
+  - [x] **Verify REFACTOR:** n/a.
+  - [x] **Commit:** `feat(mcp): forward channel_session_id through RegisterAgentService (Task 3.1)`
+    - SHA: `<filled after commit>`
 
 - [ ] 3.2 `register_agent` tool accepts `channel_session_id` in Zod schema; hint rule extended
   - kind: unit-test
