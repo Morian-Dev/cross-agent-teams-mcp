@@ -1894,7 +1894,7 @@
 
 ## 6. Tool descriptions
 
-- [ ] 6.1 Update MCP tool descriptions for `send_message`, `broadcast`, `broadcast_to_role`
+- [x] 6.1 Update MCP tool descriptions for `send_message`, `broadcast`, `broadcast_to_role`
   - kind: unit-test
   - **Spec scenario(s):**
     - `mailbox/spec.md` → Scenario: `send_message tool description mentions the other two tools and cross-team constraint`
@@ -1904,7 +1904,7 @@
   - **Files:**
     - Modify: `tests/tool-descriptions-poke-hint.test.ts`
     - Modify: `src/mcp/tools.ts`
-  - [ ] **RED:** Extend `tests/tool-descriptions-poke-hint.test.ts` with assertions on all three tools:
+  - [x] **RED:** Extend `tests/tool-descriptions-poke-hint.test.ts` with assertions on all three tools:
     ```typescript
     it('send_message description mentions broadcast/broadcast_to_role and cross-team constraint', async () => {
       const tools = await listTools()
@@ -1936,13 +1936,22 @@
       expect(d).toMatch(/get_inbox/)
     })
     ```
-  - [ ] **Verify RED:** Test fails because descriptions don't yet reference new tools / cross-team rules.
+  - [x] **Verify RED:** Test fails because descriptions don't yet reference new tools / cross-team rules.
     - Command: `npx vitest run tests/tool-descriptions-poke-hint.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       Test Files  1 failed (1)
+            Tests  3 failed | 15 passed (18)
+
+      Failures (all three new assertions from this task):
+        × send_message description mentions broadcast/broadcast_to_role and cross-team constraint
+          → expected description to match /broadcast_to_role/
+        × broadcast description states same-team scope and points at broadcast_to_role
+          → expected description to match /same[- ]?team|同.*team|team[- ]wide/i
+        × broadcast_to_role description states same-team constraint and references send_message for cross-team
+          → expected description to match /auto_poke/
       ```
-  - [ ] **GREEN:** Rewrite descriptions in `src/mcp/tools.ts`:
+  - [x] **GREEN:** Rewrite descriptions in `src/mcp/tools.ts`:
     ```typescript
     // send_message description (concatenated string constant):
     const SEND_MESSAGE_DESC = [
@@ -1967,23 +1976,47 @@
       'Auto-poke default true with quiet-guard + 30s/180s/600s retry; injects only a SHORT wake-up hint, not the message body.  Recipients read via get_inbox.'
     ].join(' ')
     ```
-  - [ ] **Verify GREEN:** Tool description test passes.
+  - [x] **Verify GREEN:** Tool description test passes.
     - Command: `npx vitest run tests/tool-descriptions-poke-hint.test.ts`
     - Full-suite command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      tests/tool-descriptions-poke-hint.test.ts + tests/auto-poke-hint-format.test.ts:
+       Test Files  2 passed (2)
+            Tests  24 passed (24)
+
+      All three new assertions (send_message / broadcast / broadcast_to_role cross-references + cross-team rule) pass.
+      Pre-existing assertions (auto-poke defaults, quiet-guard, retry schedule, 新邮件 from <sender> hint, get_inbox, online filter) remain GREEN.
       ```
-  - [ ] **REFACTOR:** Check description string lengths stay under MCP's practical 400-char range for good LLM readability; if close to that, trim.  Ensure hint-format test `tests/auto-poke-hint-format.test.ts` still green.
-  - [ ] **Verify REFACTOR:** Full suite.
+  - [x] **REFACTOR:** Check description string lengths stay under MCP's practical 400-char range for good LLM readability; if close to that, trim.  Ensure hint-format test `tests/auto-poke-hint-format.test.ts` still green.
+
+    Lengths after moderate trim:
+      - send_message: 684 chars (down from 826)
+      - broadcast: 459 chars (down from 500)
+      - broadcast_to_role: 384 chars (already within)
+
+    send_message and broadcast remain over 400 chars because each must continue to satisfy all pre-existing RED regexes from tasks 3.4/4.1/4.3 (auto_poke, poked, poke_skip_reasons, retry, retry_scheduled, retry_delays_s, 新邮件 from, get_inbox, offline/5 min, to_agent_id) plus the four new regexes from this task.  Further trim would break those checks.  Extracted strings to named constants SEND_MESSAGE_DESC / BROADCAST_DESC / BROADCAST_TO_ROLE_DESC at top of tools.ts for readability.
+  - [x] **Verify REFACTOR:** Full suite.
     - Command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       Test Files  2 failed | 75 passed (77)
+            Tests  2 failed | 241 passed (243)
+         Duration  10.24s
+
+      This task's suites (PASS):
+        - tests/tool-descriptions-poke-hint.test.ts  (18 tests; 3 new + 15 pre-existing)
+        - tests/auto-poke-hint-format.test.ts        (6 tests, still green)
+
+      Remaining failing suites (pre-flagged carry-overs, tracked by messages-schema task — NOT in scope of 6.1):
+        - tests/messages-schema.test.ts   (asserts legacy `team` column; now `from_team`+`to_team`)
+        - tests/fanout-skip-offline.test.ts  (calls send with `to_role`, which 3.1 zod schema now strictly rejects)
+
+      Net delta vs. 5.1 baseline: description changes did not introduce new regressions; failure count holds at the known 2 carry-overs (previously 3 at 4.1, dropped to 2 after send-role-broadcast was retired).
       ```
-  - [ ] **Commit:** `docs(mcp): update send_message/broadcast/broadcast_to_role descriptions`
+  - [x] **Commit:** `docs(mcp): update send_message/broadcast/broadcast_to_role descriptions`
     - Staging order: test before code
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `e20721e00be0bdc78afe6df471fdf46e9633d3f3`
 
 ## Scenario Coverage Matrix
 
