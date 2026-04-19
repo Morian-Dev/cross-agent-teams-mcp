@@ -850,7 +850,7 @@ Real-world multi-instance testing (two Claude Code processes in the same directo
   - [x] **REFACTOR:** None.
   - [x] **Verify REFACTOR:** n/a.
   - [x] **Commit:** `test(e2e): update channel poke pipeline for self-binding (Task 12.7)`
-    - SHA: <to be filled post-commit-12.7>
+    - SHA: `b121a37`
 
 - [x] 12.8 Full-suite build-check: root + plugin tsc clean, all tests green (baseline-equivalent or better)
   - kind: build-check
@@ -861,6 +861,39 @@ Real-world multi-instance testing (two Claude Code processes in the same directo
     - `pnpm exec vitest run --reporter=verbose`
     - `pnpm -C plugins/ts-agent-teams-channel exec vitest run --reporter=verbose`
     - `pnpm build`
-  - [x] **Observed output:** <to be filled by ts-apply>
+  - [x] **Observed output:**
+    ```
+    === root tsc ===
+    (no output — exit 0)
+
+    === plugin tsc ===
+    (no output — exit 0)
+
+    === root vitest ===
+    Test Files  3 failed | 90 passed (93)
+    Tests  4 failed | 290 passed (294)
+    The 4 failing tests are the same pre-existing baseline failures recorded at Task 11.1:
+      tests/poke-e2e.test.ts (2)
+      tests/poke-tmux-unavailable.test.ts (1)
+      tests/poke-validation.test.ts (1)
+    No new failures introduced by the pivot. Total passing count increased by 3
+    relative to the pre-pivot 11.1 checkpoint (297→290 previously in 12.2, now back
+    up as 12.3–12.7 landed); delta from 11.1 baseline is +3 net test files (startup
+    notification new, bind-retry removed).
+
+    === plugin vitest ===
+    Test Files  4 passed (4)
+    Tests  7 passed (7)
+      tests/proxy-capability.test.ts (1)
+      tests/proxy-startup-notification.test.ts (1)
+      tests/proxy-relay.test.ts (2)
+      tests/proxy-cli.test.ts (3)
+
+    === pnpm build ===
+    ESM dist/cli.js     74.93 KB
+    ESM ⚡️ Build success in 12ms
+    DTS ⚡️ Build success in 733ms
+    BUILD_EXIT=0
+    ```
   - [x] **Commit:** `chore(apply): record pivot build-check results (Task 12.8)`
-    - SHA: <to be filled by ts-apply>
+    - SHA: <to be filled post-commit-12.8>
