@@ -1,0 +1,16 @@
+{
+  "change": "add-auto-poke-on-broadcast",
+  "phase": "done",
+  "iteration": 1,
+  "max_iterations": 3,
+  "last_critical_types": [],
+  "history": [
+    { "iteration": 1, "phase": "init", "status": "ok", "at": "2026-04-19T00:00:00Z" },
+    { "iteration": 1, "phase": "apply", "status": "partial", "reason": "manual-verify archive-order gate pending: add-auto-poke-on-send not yet archived to main spec (non-blocking for review/verify)", "at": "2026-04-19T00:30:00Z" },
+    { "iteration": 1, "phase": "resume", "status": "ok", "reason": "user continued past partial — archive gate will be revisited before /ts-archive-os", "at": "2026-04-19T00:35:00Z" },
+    { "iteration": 1, "phase": "review", "status": "warn", "reason": "0 critical / 4 warning", "at": "2026-04-19T00:50:00Z" },
+    { "iteration": 1, "phase": "verify", "status": "pass", "at": "2026-04-19T01:05:00Z" },
+    { "iteration": 1, "phase": "sync", "status": "ok", "reason": "no standalone sync command in openspec CLI; archive will handle spec update", "at": "2026-04-19T01:05:30Z" }
+  ],
+  "updated_at": "2026-04-19T01:05:30Z"
+}

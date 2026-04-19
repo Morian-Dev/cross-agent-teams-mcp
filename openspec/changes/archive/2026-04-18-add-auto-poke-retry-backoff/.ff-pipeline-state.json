@@ -1,0 +1,16 @@
+{
+  "change": "add-auto-poke-retry-backoff",
+  "phase": "archive",
+  "iteration": 1,
+  "max_iterations": 3,
+  "last_critical_types": [],
+  "history": [
+    { "iteration": 1, "phase": "init", "status": "ok", "at": "2026-04-18T14:50:37Z" },
+    { "iteration": 1, "phase": "apply", "status": "ok", "at": "2026-04-18T15:05:00Z" },
+    { "iteration": 1, "phase": "apply-fixup", "status": "ok", "at": "2026-04-18T15:10:00Z" },
+    { "iteration": 1, "phase": "review", "status": "warn", "at": "2026-04-18T15:15:00Z" },
+    { "iteration": 1, "phase": "verify", "status": "pass", "at": "2026-04-18T15:20:00Z" },
+    { "iteration": 1, "phase": "sync", "status": "ok", "reason": "openspec 1.2.0 combines sync+archive; direct to archive", "at": "2026-04-18T15:20:30Z" }
+  ],
+  "updated_at": "2026-04-18T15:20:30Z"
+}

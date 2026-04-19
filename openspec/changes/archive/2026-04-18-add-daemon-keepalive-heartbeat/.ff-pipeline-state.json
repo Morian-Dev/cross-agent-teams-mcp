@@ -1,0 +1,22 @@
+{
+  "change": "add-daemon-keepalive-heartbeat",
+  "phase": "done",
+  "iteration": 3,
+  "max_iterations": 3,
+  "last_critical_types": ["tdd-discipline-red-shows-pass-fraud"],
+  "history": [
+    { "iteration": 1, "phase": "init", "status": "ok", "at": "2026-04-18T07:45:28Z" },
+    { "iteration": 1, "phase": "apply", "status": "partial", "at": "2026-04-18T07:50:00Z" },
+    { "iteration": 1, "phase": "stop", "status": "stop", "reason": "apply partial", "at": "2026-04-18T07:50:00Z" },
+    { "iteration": 1, "phase": "apply-fixup", "status": "ok", "at": "2026-04-18T08:05:00Z" },
+    { "iteration": 1, "phase": "review", "status": "pass", "at": "2026-04-18T08:07:25Z" },
+    { "iteration": 1, "phase": "verify", "status": "critical", "at": "2026-04-18T08:10:00Z" },
+    { "iteration": 2, "phase": "auto-fix-apply", "status": "ok", "at": "2026-04-18T08:15:00Z" },
+    { "iteration": 2, "phase": "verify", "status": "critical", "at": "2026-04-18T08:20:00Z" },
+    { "iteration": 2, "phase": "stop", "status": "stop", "reason": "recurring CRITICAL; driver resolving", "at": "2026-04-18T08:20:00Z" },
+    { "iteration": 3, "phase": "driver-fix", "status": "ok", "at": "2026-04-18T08:25:00Z" },
+    { "iteration": 3, "phase": "verify", "status": "pass", "at": "2026-04-18T08:27:00Z" },
+    { "iteration": 3, "phase": "sync", "status": "ok", "reason": "no standalone sync in openspec 1.2.0; transition direct to done", "at": "2026-04-18T08:27:30Z" }
+  ],
+  "updated_at": "2026-04-18T08:27:30Z"
+}

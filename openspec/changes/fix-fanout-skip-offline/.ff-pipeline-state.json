@@ -1,0 +1,15 @@
+{
+  "change": "fix-fanout-skip-offline",
+  "phase": "done",
+  "iteration": 1,
+  "max_iterations": 3,
+  "last_critical_types": [],
+  "history": [
+    { "iteration": 1, "phase": "init", "status": "ok", "at": "2026-04-19T04:00:00Z" },
+    { "iteration": 1, "phase": "apply", "status": "ok", "reason": "187/187 tests pass; 6 tasks complete with evidence; build succeeds", "at": "2026-04-19T04:20:00Z" },
+    { "iteration": 1, "phase": "review", "status": "pass", "reason": "0 warn / 0 critical; all 7 scenarios covered", "at": "2026-04-19T04:35:00Z" },
+    { "iteration": 1, "phase": "verify", "status": "pass", "at": "2026-04-19T04:50:00Z" },
+    { "iteration": 1, "phase": "sync", "status": "ok", "reason": "no standalone sync command in openspec CLI; archive will handle spec update", "at": "2026-04-19T04:50:30Z" }
+  ],
+  "updated_at": "2026-04-19T04:50:30Z"
+}
