@@ -69,6 +69,23 @@ describe('send_message by name — same-team resolution', () => {
     expect(resp).toEqual({ error: 'unknown_recipient' })
   })
 
+  it('cross-team send via to_agent_name persists correct from_team/to_team', async () => {
+    const { svc, db } = setup()
+    insertAgent(db, { agent_id: 'uuid-A', team: 'alpha', role: 'backend', name: 'alice' })
+    insertAgent(db, { agent_id: 'uuid-B-beta', team: 'beta', role: 'frontend', name: 'bob' })
+    const resp = await svc.send({
+      from: 'uuid-A', to_agent_name: 'bob', to_team: 'beta', body: 'hi', auto_poke: false
+    })
+    if ('error' in resp) throw new Error(`expected success, got ${resp.error}`)
+    expect(resp.recipients).toEqual(['uuid-B-beta'])
+    const m = db.prepare(`SELECT from_team, to_team, to_agent_id, event_id FROM messages WHERE id=?`).get(resp.message_id) as
+      { from_team: string; to_team: string; to_agent_id: string; event_id: number }
+    expect(m).toEqual({ from_team: 'alpha', to_team: 'beta', to_agent_id: 'uuid-B-beta', event_id: resp.event_id })
+    const e = db.prepare(`SELECT from_team, to_team FROM events WHERE event_id=?`).get(resp.event_id) as
+      { from_team: string; to_team: string }
+    expect(e).toEqual({ from_team: 'alpha', to_team: 'beta' })
+  })
+
   it('returns ambiguous_recipient when both to_agent_id and to_agent_name given', async () => {
     const { svc, db } = setup()
     insertAgent(db, { agent_id: 'uuid-A', team: 'default', role: 'backend', name: 'alice' })
