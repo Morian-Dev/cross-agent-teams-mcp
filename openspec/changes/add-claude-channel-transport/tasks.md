@@ -833,7 +833,7 @@ Real-world multi-instance testing (two Claude Code processes in the same directo
     args: [".../plugins/ts-agent-teams-channel/dist/cli.js", "--daemon-url", "http://127.0.0.1:9100/mcp"]
     ```
   - [x] **Commit:** `chore(mcp.json): drop team/name args from channel proxy entry (Task 12.6)`
-    - SHA: <to be filled post-commit-12.6>
+    - SHA: `ef3f188`
 
 - [x] 12.7 End-to-end: daemon + proxy + mock host — poke triggers channel; Claude-side `bind_channel({csid})` works without team/name
   - kind: integration-test
@@ -841,14 +841,16 @@ Real-world multi-instance testing (two Claude Code processes in the same directo
     - `claude-channel-transport/spec.md` → Scenario: `end-to-end poke via channel transport`
   - **Files:**
     - Rewrite: `tests/e2e-channel-poke.test.ts`
-  - [x] **RED:** <to be filled by ts-apply>
-  - [x] **Verify RED:** <to be filled by ts-apply>
-  - [x] **GREEN:** <to be filled by ts-apply>
-  - [x] **Verify GREEN:** <to be filled by ts-apply>
-  - [x] **REFACTOR:** <to be filled by ts-apply>
-  - [x] **Verify REFACTOR:** <to be filled by ts-apply>
+  - [x] **RED:** The old test expected order `register_agent → bind_channel → subscribe_channel_wake`; after 12.1/12.3, this failed with `bind_channel failed: {"error":"forbidden_role"}`. New test uses `{csid}` signature and Claude-side bind call.
+  - [x] **Verify RED:** Observed in 12.2 full-suite run.
+  - [x] **GREEN:** Rewrote e2e: bob (non-proxy) registers → proxy `runRegistrationSequence` (register → subscribe) → bob calls `bind_channel({csid})` → alice pokes bob → channel notification lands on host with `transport_used:'claude-channel'`.
+  - [x] **Verify GREEN:**
+    - Command: `pnpm exec vitest run tests/e2e-channel-poke.test.ts --reporter=verbose`
+    - Observed: `Tests  1 passed (1)`.
+  - [x] **REFACTOR:** None.
+  - [x] **Verify REFACTOR:** n/a.
   - [x] **Commit:** `test(e2e): update channel poke pipeline for self-binding (Task 12.7)`
-    - SHA: <to be filled by ts-apply>
+    - SHA: <to be filled post-commit-12.7>
 
 - [x] 12.8 Full-suite build-check: root + plugin tsc clean, all tests green (baseline-equivalent or better)
   - kind: build-check

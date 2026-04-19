@@ -16,7 +16,7 @@ async function parseTool(resp: unknown): Promise<Record<string, unknown>> {
   return JSON.parse(r.content[0].text)
 }
 
-describe('e2e channel poke', () => {
+describe('e2e channel poke (self-binding)', () => {
   const cleanups: string[] = []
   afterEach(() => {
     cleanups.forEach(d => rmSync(d, { recursive: true, force: true }))
@@ -24,12 +24,12 @@ describe('e2e channel poke', () => {
     vi.restoreAllMocks()
   })
 
-  it('poke triggers notifications/claude/channel on proxy host and no tmux command runs', async () => {
+  it('Claude-side bind_channel({csid}) + poke triggers notifications/claude/channel on proxy host with no tmux', async () => {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
     const url = `http://${host}:${port}/mcp`
 
-    // Bob (owner) registers.
+    // Bob (owner) registers on the daemon — this is the Claude host identity.
     const bobT = new StreamableHTTPClientTransport(new URL(url))
     const bobC = new Client({ name: 'bob', version: '0.0.0' })
     await bobC.connect(bobT)
@@ -40,8 +40,8 @@ describe('e2e channel poke', () => {
     const bob = await parseTool(bobResp)
     expect(bob.agent_id).toBeDefined()
 
-    // Set up the proxy's host-facing McpServer with a fake host client,
-    // and start the daemon-side registration sequence that forwards wakes.
+    // Proxy host-facing McpServer wired to a fake Claude host client, so we can
+    // observe the notifications/claude/channel relay.
     const proxyServer = createProxyServer()
     const [hostT, proxyServerT] = InMemoryTransport.createLinkedPair()
     await proxyServer.connect(proxyServerT)
@@ -52,20 +52,29 @@ describe('e2e channel poke', () => {
     }
     await hostClient.connect(hostT)
 
+    // Proxy runs its daemon-side registration sequence (register_agent →
+    // subscribe_channel_wake) — no bind_channel, no team/name.
+    const csid = 'csid-bob-e2e'
     const seq = await runRegistrationSequence({
       daemonUrl: url,
-      team: 'default',
-      name: 'bob',
-      channel_session_id: 'csid-bob',
+      channel_session_id: csid,
       backoffInitialMs: 10,
       backoffMaxMs: 50,
       notificationHandler: (params) => {
         relayChannelWake(proxyServer, params as { content: string; meta: Record<string, string> })
       }
     })
-    expect(seq.order).toEqual(['register_agent', 'bind_channel', 'subscribe_channel_wake'])
+    expect(seq.order).toEqual(['register_agent', 'subscribe_channel_wake'])
 
-    // Alice (peer) registers and calls poke.
+    // Bob (Claude host) calls bind_channel({csid}) — self-binding.
+    const bindResp = await bobC.callTool({
+      name: 'bind_channel',
+      arguments: { channel_session_id: csid }
+    })
+    const bindObj = await parseTool(bindResp)
+    expect(bindObj).toEqual({ ok: true })
+
+    // Alice (peer) registers and pokes Bob.
     const aliceT = new StreamableHTTPClientTransport(new URL(url))
     const aliceC = new Client({ name: 'alice', version: '0.0.0' })
     await aliceC.connect(aliceT)
@@ -81,11 +90,10 @@ describe('e2e channel poke', () => {
     expect(pokeObj).toMatchObject({
       ok: true,
       transport_used: 'claude-channel',
-      channel_session_id: 'csid-bob'
+      channel_session_id: csid
     })
 
-    // Allow notification to propagate through daemon fanout → proxy client
-    // → relayChannelWake → host in-memory transport.
+    // Allow notification to propagate.
     const deadline = Date.now() + 2000
     while (hostNotifs.length === 0 && Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 20))
@@ -94,9 +102,7 @@ describe('e2e channel poke', () => {
     expect(hostNotifs[0].method).toBe('notifications/claude/channel')
     expect(hostNotifs[0].params).toMatchObject({ content: 'check inbox' })
 
-    // Sanity: no tmux sidecar process was invoked — the channel short-circuit
-    // means dispatchPoke never touched the tmux branch. We infer this from the
-    // response envelope (which would carry pane_id / pane_tail_* if tmux ran).
+    // No tmux envelope fields on the poke response.
     expect(pokeObj.pane_id).toBeUndefined()
     expect(pokeObj.pane_tail_before).toBeUndefined()
     expect(pokeObj.pane_tail_after).toBeUndefined()
