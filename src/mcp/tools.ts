@@ -79,7 +79,8 @@ export function buildAutoPokeHint(
 
 export function createAutoPokeImpl(
   db: Database.Database,
-  _agents: AgentsRepo
+  _agents: AgentsRepo,
+  channelWakeFanout?: ChannelWakeFanout
 ): import('./auto-poke-fanout.js').AutoPokeFn {
   return async (args) => {
     const row = db
@@ -87,13 +88,14 @@ export function createAutoPokeImpl(
       .get(args.fromAgentId) as { name: string | null } | undefined
     const hint = buildAutoPokeHint(row, args.fromAgentId)
     const res = await poke(
-      { db, callerAgentId: args.fromAgentId, allowCrossTeam: true },
+      { db, callerAgentId: args.fromAgentId, allowCrossTeam: true, channelWakeFanout },
       { target_agent_id: args.targetAgentId, prompt: hint }
     )
     if ('ok' in res && res.ok) return { ok: true }
     const err = (res as { error?: string }).error
     if (err === 'tmux_unavailable') return { ok: false, reason: 'tmux_unavailable' }
     if (err === 'tmux_pane_not_set') return { ok: false, reason: 'no_pane' }
+    if (err === 'no_transport_available') return { ok: false, reason: 'no_pane' }
     if (err === 'self_poke_denied') return { ok: false, reason: 'self' }
     return { ok: false, reason: 'guard_failed' }
   }
@@ -121,7 +123,7 @@ export function registerBusinessTools(
   const events = new EventsOutbox(db)
   const registerSvc = new RegisterAgentService(db)
 
-  const autoPokeImpl = createAutoPokeImpl(db, agents)
+  const autoPokeImpl = createAutoPokeImpl(db, agents, channelWakeFanout)
 
   const sendSvc = new SendMessageService(db, agents, events, { poke: autoPokeImpl })
   const broadcastSvc = new BroadcastService(db, agents, sendSvc, { poke: autoPokeImpl })
@@ -511,7 +513,7 @@ export function registerBusinessTools(
     async (args: { target_agent_id: string; prompt: string }) => {
       const who = requireAgent()
       const callerAgentId = typeof who === 'string' ? who : null
-      const result = await poke({ db, callerAgentId }, args)
+      const result = await poke({ db, callerAgentId, channelWakeFanout }, args)
       touchIfRegistered()
       return toText(result)
     }

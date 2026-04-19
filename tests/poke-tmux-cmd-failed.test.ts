@@ -48,7 +48,8 @@ describe('poke tmux_cmd_failed with stage info', () => {
 
     expect(result).toEqual({
       error: 'tmux_cmd_failed',
-      detail: { stage: 'load_buffer', stderr: 'unexpected-x' }
+      detail: { stage: 'load_buffer', stderr: 'unexpected-x' },
+      transport_used: 'tmux-poke'
     })
 
     db.close()

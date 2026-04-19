@@ -7,6 +7,7 @@ import { insertAgent } from './helpers/insert-agent.js'
 vi.mock('../src/mcp/poke.js', () => ({
   poke: vi.fn(async (_deps: unknown, _input: { target_agent_id: string; prompt: string }) => ({
     ok: true as const,
+    transport_used: 'tmux-poke' as const,
     pane_id: '%mock',
     pane_tail_before: '',
     pane_tail_after: ''
@@ -49,7 +50,7 @@ function setupService(opts?: { paneState?: Record<string, 'idle' | 'active'> }):
   const pokeCalls: PokeCall[] = []
   vi.mocked(pokeMock).mockImplementation(async (_deps: unknown, input: { target_agent_id: string; prompt: string }) => {
     pokeCalls.push({ target: input.target_agent_id, prompt: input.prompt })
-    return { ok: true as const, pane_id: '%mock', pane_tail_before: '', pane_tail_after: '' }
+    return { ok: true as const, transport_used: 'tmux-poke' as const, pane_id: '%mock', pane_tail_before: '', pane_tail_after: '' }
   })
 
   const svc = new SendMessageService(db, agents, events, {

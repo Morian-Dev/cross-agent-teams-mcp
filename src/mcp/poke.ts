@@ -7,12 +7,15 @@ import {
   pasteBuffer,
   sendEnter
 } from '../daemon/tmux-cli.js'
+import type { ChannelWakeFanout } from '../daemon/channel-wake-fanout.js'
+import { dispatchPoke, type TmuxPokeResult } from './transport-dispatch.js'
 
 // allowCrossTeam is for internal auto-poke callers only; MCP tool entry MUST NOT pass it.
 export interface PokeDeps {
   db: Database.Database
   callerAgentId: string | null
   allowCrossTeam?: boolean
+  channelWakeFanout?: ChannelWakeFanout
 }
 
 export interface PokeInput {
@@ -21,13 +24,25 @@ export interface PokeInput {
 }
 
 export type PokeResult =
-  | { ok: true; pane_id: string; pane_tail_before: string; pane_tail_after: string }
-  | { error: string; detail?: unknown }
+  | {
+      ok: true
+      transport_used: 'claude-channel'
+      channel_session_id: string
+    }
+  | {
+      ok: true
+      transport_used: 'tmux-poke'
+      pane_id: string
+      pane_tail_before: string
+      pane_tail_after: string
+    }
+  | { error: string; detail?: unknown; transport_used?: 'tmux-poke' }
 
 interface TargetRow {
   agent_id: string
   team: string
   tmux_pane_id: string | null
+  channel_session_id: string | null
 }
 
 export const PROMPT_MAX_BYTES = 8192
@@ -74,6 +89,25 @@ async function runStage<T>(stage: TmuxStage, fn: () => Promise<T>): Promise<T> {
   }
 }
 
+async function tmuxPokeImpl(args: { pane_id: string; content: string }): Promise<TmuxPokeResult> {
+  if (!(await isTmuxAvailable())) {
+    return { error: 'tmux_unavailable', detail: 'tmux binary not available on PATH' }
+  }
+  const bufName = `poke-${randomBytes(3).toString('hex')}`
+  try {
+    const pane_tail_before = await runStage('capture_before', () => capturePaneTail(args.pane_id, TAIL_LINES))
+    await runStage('load_buffer', () => loadBuffer(bufName, args.content))
+    await runStage('paste_buffer', () => pasteBuffer(bufName, args.pane_id))
+    await delay(PASTE_SETTLE_MS)
+    await runStage('send_keys', () => sendEnter(args.pane_id))
+    await delay(PASTE_SETTLE_MS)
+    const pane_tail_after = await runStage('capture_after', () => capturePaneTail(args.pane_id, TAIL_LINES))
+    return { ok: true, pane_tail_before, pane_tail_after }
+  } catch (e) {
+    return classifyTmuxError(e as StageError)
+  }
+}
+
 export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult> {
   if (!deps.callerAgentId) return { error: 'unknown_agent' }
 
@@ -83,7 +117,7 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
   }
 
   const target = deps.db
-    .prepare(`SELECT agent_id, team, tmux_pane_id FROM agents WHERE agent_id = ?`)
+    .prepare(`SELECT agent_id, team, tmux_pane_id, channel_session_id FROM agents WHERE agent_id = ?`)
     .get(input.target_agent_id) as TargetRow | undefined
   if (!target) return { error: 'unknown_target' }
 
@@ -97,26 +131,28 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
     return { error: 'cross_team_denied' }
   }
 
-  if (!target.tmux_pane_id) return { error: 'tmux_pane_not_set' }
-
-  if (!(await isTmuxAvailable())) {
-    return { error: 'tmux_unavailable', detail: 'tmux binary not available on PATH' }
+  // If no ChannelWakeFanout is available (e.g., legacy callers), fall back to
+  // a disabled fanout so the dispatcher uniformly treats channel as unsubscribed.
+  const fanout = deps.channelWakeFanout
+  if (!fanout) {
+    // Legacy tmux-only path preserved when no fanout supplied by caller.
+    if (!target.tmux_pane_id) return { error: 'tmux_pane_not_set' }
+    const tr = await tmuxPokeImpl({ pane_id: target.tmux_pane_id, content: input.prompt })
+    if ('ok' in tr && tr.ok) {
+      return {
+        ok: true,
+        transport_used: 'tmux-poke',
+        pane_id: target.tmux_pane_id,
+        pane_tail_before: tr.pane_tail_before,
+        pane_tail_after: tr.pane_tail_after
+      }
+    }
+    return { ...(tr as { error: string; detail?: unknown }), transport_used: 'tmux-poke' }
   }
 
-  const paneId = target.tmux_pane_id
-  const bufName = `poke-${randomBytes(3).toString('hex')}`
-
-  try {
-    const pane_tail_before = await runStage('capture_before', () => capturePaneTail(paneId, TAIL_LINES))
-    await runStage('load_buffer', () => loadBuffer(bufName, input.prompt))
-    await runStage('paste_buffer', () => pasteBuffer(bufName, paneId))
-    await delay(PASTE_SETTLE_MS)
-    await runStage('send_keys', () => sendEnter(paneId))
-    await delay(PASTE_SETTLE_MS)
-    const pane_tail_after = await runStage('capture_after', () => capturePaneTail(paneId, TAIL_LINES))
-    return { ok: true, pane_id: paneId, pane_tail_before, pane_tail_after }
-  } catch (e) {
-    const stageErr = e as StageError
-    return classifyTmuxError(stageErr)
-  }
+  return dispatchPoke(
+    { channelWakeFanout: fanout, tmuxPoke: tmuxPokeImpl },
+    { channel_session_id: target.channel_session_id, tmux_pane_id: target.tmux_pane_id },
+    { content: input.prompt, meta: {} }
+  )
 }

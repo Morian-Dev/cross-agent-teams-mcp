@@ -7,6 +7,7 @@ import { insertAgent } from './helpers/insert-agent.js'
 vi.mock('../src/mcp/poke.js', () => ({
   poke: vi.fn(async (_deps: unknown, _input: { target_agent_id: string; prompt: string }) => ({
     ok: true as const,
+    transport_used: 'tmux-poke' as const,
     pane_id: '%mock',
     pane_tail_before: '',
     pane_tail_after: ''
