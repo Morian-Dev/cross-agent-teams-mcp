@@ -8,9 +8,11 @@ import {
   sendEnter
 } from '../daemon/tmux-cli.js'
 
+// allowCrossTeam is for internal auto-poke callers only; MCP tool entry MUST NOT pass it.
 export interface PokeDeps {
   db: Database.Database
   callerAgentId: string | null
+  allowCrossTeam?: boolean
 }
 
 export interface PokeInput {
@@ -91,7 +93,9 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
     .prepare(`SELECT team FROM agents WHERE agent_id = ?`)
     .get(deps.callerAgentId) as { team: string } | undefined
   if (!callerRow) return { error: 'unknown_agent' }
-  if (callerRow.team !== target.team) return { error: 'cross_team_denied' }
+  if (callerRow.team !== target.team && !deps.allowCrossTeam) {
+    return { error: 'cross_team_denied' }
+  }
 
   if (!target.tmux_pane_id) return { error: 'tmux_pane_not_set' }
 
