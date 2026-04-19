@@ -3,13 +3,15 @@ import type Database from 'better-sqlite3'
 const DDL = [
   `CREATE TABLE IF NOT EXISTS events (
     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    team TEXT NOT NULL,
+    from_team TEXT NOT NULL,
+    to_team TEXT NOT NULL,
     event_type TEXT NOT NULL,
     actor_agent_id TEXT,
     payload TEXT NOT NULL,
     created_at TEXT NOT NULL
   )`,
-  `CREATE INDEX IF NOT EXISTS idx_events_team_eventid ON events(team, event_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_events_from_team_eventid ON events(from_team, event_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_events_to_team_eventid ON events(to_team, event_id)`,
   `CREATE TABLE IF NOT EXISTS agents (
     agent_id TEXT PRIMARY KEY,
     team TEXT NOT NULL,
@@ -25,7 +27,8 @@ const DDL = [
   `CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY,
     event_id INTEGER NOT NULL REFERENCES events(event_id),
-    team TEXT NOT NULL,
+    from_team TEXT NOT NULL,
+    to_team TEXT NOT NULL,
     from_agent_id TEXT NOT NULL,
     to_agent_id TEXT,
     to_role TEXT,
