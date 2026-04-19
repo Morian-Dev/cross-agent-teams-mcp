@@ -53,13 +53,14 @@ export async function runRegistrationSequence(
 
   await client.connect(transport)
 
-  // 1. register_agent as proxy — identity is process-local (random per pid)
+  // 1. register_agent as proxy — identity keyed on pid, stable across reconnects
+  // so the (team, name) ON CONFLICT upsert reuses the same row instead of spamming new rows
   const registerResp = await client.callTool({
     name: 'register_agent',
     arguments: {
       model: 'proxy',
       role: '__channel_proxy__',
-      name: `channel-proxy-${process.pid}-${Math.floor(Math.random() * 1e6)}`,
+      name: `channel-proxy-${process.pid}`,
       team: 'default'
     }
   })
