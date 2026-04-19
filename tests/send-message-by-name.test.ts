@@ -44,6 +44,31 @@ describe('send_message by name — same-team resolution', () => {
     expect(count.c).toBe(0)
   })
 
+  it('returns unknown_recipient when to_agent_name does not exist in resolved team', async () => {
+    const { svc, db } = setup()
+    insertAgent(db, { agent_id: 'uuid-A', team: 'default', role: 'backend', name: 'alice' })
+    const resp = await svc.send({ from: 'uuid-A', to_agent_name: 'ghost', body: 'hi', auto_poke: false })
+    expect(resp).toEqual({ error: 'unknown_recipient' })
+  })
+
+  it('returns unknown_recipient when to_agent_name misses in explicit cross-team', async () => {
+    const { svc, db } = setup()
+    insertAgent(db, { agent_id: 'uuid-A', team: 'alpha', role: 'backend', name: 'alice' })
+    insertAgent(db, { agent_id: 'uuid-B', team: 'alpha', role: 'frontend', name: 'bob' })
+    const resp = await svc.send({ from: 'uuid-A', to_agent_name: 'bob', to_team: 'beta', body: 'hi', auto_poke: false })
+    expect(resp).toEqual({ error: 'unknown_recipient' })
+    const evCount = db.prepare(`SELECT COUNT(*) AS c FROM events`).get() as { c: number }
+    expect(evCount.c).toBe(0)
+  })
+
+  it('lookup is case-sensitive — Bob !== bob', async () => {
+    const { svc, db } = setup()
+    insertAgent(db, { agent_id: 'uuid-A', team: 'default', role: 'backend', name: 'alice' })
+    insertAgent(db, { agent_id: 'uuid-B', team: 'default', role: 'frontend', name: 'Bob' })
+    const resp = await svc.send({ from: 'uuid-A', to_agent_name: 'bob', body: 'hi', auto_poke: false })
+    expect(resp).toEqual({ error: 'unknown_recipient' })
+  })
+
   it('returns ambiguous_recipient when both to_agent_id and to_agent_name given', async () => {
     const { svc, db } = setup()
     insertAgent(db, { agent_id: 'uuid-A', team: 'default', role: 'backend', name: 'alice' })
