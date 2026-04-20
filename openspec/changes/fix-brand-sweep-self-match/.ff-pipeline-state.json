@@ -1,0 +1,9 @@
+{
+  "change": "fix-brand-sweep-self-match",
+  "phase": "propose",
+  "iteration": 1,
+  "max_iterations": 3,
+  "last_critical_types": [],
+  "history": [],
+  "updated_at": "2026-04-20T12:00:00Z"
+}
