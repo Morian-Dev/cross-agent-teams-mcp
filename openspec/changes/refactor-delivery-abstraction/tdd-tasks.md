@@ -277,7 +277,7 @@
           Tests  29 passed (29)
     ```
 - [x] **Commit:** `test(lib): close scenario coverage for delivery-spec (Task 1.5)`
-  - **Commit SHA:** `5e53d79`
+  - **Commit SHA:** `f86b6cb`
 
 ## TDD for 2.1 Update `src/storage/schema.ts` to include `delivery_kind TEXT NOT NULL DEFAULT 'none'` and `delivery_payload TEXT` in the `CREATE TABLE agents` statement for fresh databases
 - kind: unit-test
