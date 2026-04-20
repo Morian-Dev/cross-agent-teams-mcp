@@ -228,8 +228,8 @@
      Test Files  1 passed (1)
           Tests  18 passed (18)
     ```
-- [ ] **Commit:** `feat(lib): implement validateDeliveryForWrite (Task 1.4)`
-  - **Commit SHA:** ``
+- [x] **Commit:** `feat(lib): implement validateDeliveryForWrite (Task 1.4)`
+  - **Commit SHA:** `216c176`
 
 ## TDD for 1.5 Unit tests in `tests/delivery-spec.test.ts` covering serialize / parse roundtrip for each kind, corrupt payload, and validator accept/reject cases from `agent-delivery/spec.md`
 - kind: unit-test
