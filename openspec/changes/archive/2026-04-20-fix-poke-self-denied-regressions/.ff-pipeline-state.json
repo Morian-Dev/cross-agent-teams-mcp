@@ -1,0 +1,15 @@
+{
+  "change": "fix-poke-self-denied-regressions",
+  "phase": "done",
+  "iteration": 1,
+  "max_iterations": 3,
+  "last_critical_types": [],
+  "history": [
+    { "iteration": 1, "phase": "propose", "status": "ok", "at": "2026-04-20T11:25:00Z" },
+    { "iteration": 1, "phase": "apply", "status": "ok", "at": "2026-04-20T11:35:00Z" },
+    { "iteration": 1, "phase": "review", "status": "pass", "at": "2026-04-20T11:40:00Z" },
+    { "iteration": 1, "phase": "verify", "status": "pass", "at": "2026-04-20T11:45:00Z" },
+    { "iteration": 1, "phase": "sync", "status": "ok", "at": "2026-04-20T11:46:00Z" }
+  ],
+  "updated_at": "2026-04-20T11:46:00Z"
+}
