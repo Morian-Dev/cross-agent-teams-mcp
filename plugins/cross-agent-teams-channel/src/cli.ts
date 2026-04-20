@@ -32,12 +32,12 @@ export function parseCliArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
   }
 
   if (!daemonUrl || daemonUrl.length === 0) {
-    daemonUrl = env.TS_AGENT_TEAMS_DAEMON_URL
+    daemonUrl = env.CROSS_AGENT_TEAMS_MCP_DAEMON_URL
   }
 
   if (!daemonUrl || daemonUrl.length === 0) {
     throw new CliArgError(
-      'missing --daemon-url (or TS_AGENT_TEAMS_DAEMON_URL env var)'
+      'missing --daemon-url (or CROSS_AGENT_TEAMS_MCP_DAEMON_URL env var)'
     )
   }
   return { daemonUrl }

@@ -230,7 +230,7 @@ describe('proxy CLI entrypoint (self-binding)', () => {
     const cliJs = await buildPluginOnce()
     const proc = spawn(process.execPath, [cliJs], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, TS_AGENT_TEAMS_DAEMON_URL: '' }
+      env: { ...process.env, CROSS_AGENT_TEAMS_MCP_DAEMON_URL: '' }
     })
     killers.push(proc)
     const stderrChunks: Buffer[] = []
@@ -241,6 +241,6 @@ describe('proxy CLI entrypoint (self-binding)', () => {
     })
     expect(exitCode).not.toBe(0)
     const stderr = Buffer.concat(stderrChunks).toString()
-    expect(stderr).toMatch(/daemon-url|daemon_url|TS_AGENT_TEAMS_DAEMON_URL/i)
+    expect(stderr).toMatch(/daemon-url|daemon_url|CROSS_AGENT_TEAMS_MCP_DAEMON_URL/i)
   }, 20_000)
 })
