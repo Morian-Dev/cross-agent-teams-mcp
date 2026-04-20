@@ -10,7 +10,7 @@ describe('DeliverySpec discriminated union shape', () => {
   it('accepts kind none with no payload fields', () => {
     const spec: DeliverySpec = { kind: 'none' };
     expect(spec.kind).toBe('none');
-    expectTypeOf(spec).toMatchTypeOf<{ kind: 'none' }>();
+    expectTypeOf(spec).toExtend<{ kind: 'none' }>();
   });
 
   it('accepts kind claude-channel with channel_session_id', () => {
@@ -45,13 +45,19 @@ describe('DeliverySpec discriminated union shape', () => {
   });
 
   it('narrows kind via discriminated field', () => {
-    const spec: DeliverySpec = { kind: 'claude-channel', channel_session_id: 'csid-xyz' };
-    if (spec.kind === 'none') {
-      expect(false).toBe(true);
-    } else if (spec.kind === 'claude-channel') {
-      expect(spec.channel_session_id).toBe('csid-xyz');
-    } else {
-      expect(spec.kind).toBe('codex-appserver');
-    }
+    const describe = (spec: DeliverySpec): string => {
+      if (spec.kind === 'none') return 'none';
+      if (spec.kind === 'claude-channel') return spec.channel_session_id;
+      return spec.thread_id;
+    };
+    expect(describe({ kind: 'none' })).toBe('none');
+    expect(describe({ kind: 'claude-channel', channel_session_id: 'csid-xyz' })).toBe('csid-xyz');
+    expect(
+      describe({
+        kind: 'codex-appserver',
+        thread_id: '00000000-0000-0000-0000-000000000000',
+        ws_url: 'ws://x',
+      }),
+    ).toBe('00000000-0000-0000-0000-000000000000');
   });
 });
