@@ -21,10 +21,10 @@ async function connectClient(host: string, port: number): Promise<{ c: Client; t
   return { c, t }
 }
 
-async function register(c: Client, args: { role?: string; team?: string; tmux_pane_id?: string } = {}): Promise<string> {
+async function register(c: Client, args: { name?: string; role?: string; team?: string; tmux_pane_id?: string } = {}): Promise<string> {
   const resp = await c.callTool({
     name: 'register_agent',
-    arguments: { name: 'tester-8', model: 'opus-4-7', role: args.role ?? 'dev', team: args.team, tmux_pane_id: args.tmux_pane_id }
+    arguments: { name: args.name ?? 'tester-8', model: 'opus-4-7', role: args.role ?? 'dev', team: args.team, tmux_pane_id: args.tmux_pane_id }
   })
   const obj = await parseTool(resp)
   return obj.agent_id as string
@@ -86,12 +86,12 @@ describe('poke validation', () => {
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
     const A = await connectClient(host, port)
     const B = await connectClient(host, port)
-    await register(A.c, { role: 'caller' })
-    const targetId = await register(B.c, { role: 'target' })
+    await register(A.c, { name: 'tester-8-caller', role: 'caller' })
+    const targetId = await register(B.c, { name: 'tester-8-target', role: 'target' })
 
     const resp = await A.c.callTool({ name: 'poke', arguments: { target_agent_id: targetId, prompt: 'p' } })
     const obj = await parseTool(resp)
-    expect(obj).toEqual({ error: 'tmux_pane_not_set' })
+    expect(obj).toEqual({ error: 'no_transport_available', detail: { channel_subscribed: false, tmux_pane_set: false } })
 
     await A.t.terminateSession(); await B.t.terminateSession()
     await A.c.close(); await B.c.close()
