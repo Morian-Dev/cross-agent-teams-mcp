@@ -214,14 +214,14 @@ Ordering: task 1 must precede 6/7/8 (directory rename unblocks sub-package edits
 
 ## 4. Daemon MCP server identity reports cross-agent-teams-mcp
 
-- [ ] 4.1 The McpServer constructor in `src/mcp/transport.ts` declares `name: 'cross-agent-teams-mcp'`
+- [x] 4.1 The McpServer constructor in `src/mcp/transport.ts` declares `name: 'cross-agent-teams-mcp'`
   - kind: integration-test
   - **Spec scenario(s):**
     - `daemon-core/spec.md` → Scenario: initialize serverInfo.name reports new brand
   - **Files:**
     - Create: `tests/daemon-server-name.test.ts`
     - Modify: `src/mcp/transport.ts`
-  - [ ] **INTEGRATION-RED:** Write failing integration test — `tests/daemon-server-name.test.ts`
+  - [x] **INTEGRATION-RED:** Write failing integration test — `tests/daemon-server-name.test.ts`
     - Behavior under test: after MCP `initialize`, the client sees `serverInfo.name === 'cross-agent-teams-mcp'`
     - Expected failure reason: current constructor sets `name: 'ts-agent-teams'`, so the assertion fails
     ```ts
@@ -252,44 +252,69 @@ Ordering: task 1 must precede 6/7/8 (directory rename unblocks sub-package edits
       }, 15_000)
     })
     ```
-  - [ ] **Verify RED:** Run the test, confirm failure
+  - [x] **Verify RED:** Run the test, confirm failure
     - Command: `pnpm vitest run tests/daemon-server-name.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ❯ tests/daemon-server-name.test.ts (1 test | 1 failed) 45ms
+         × daemon MCP server identity > reports cross-agent-teams-mcp during initialize 45ms
+           → expected 'ts-agent-teams' to be 'cross-agent-teams-mcp' // Object.is equality
+
+       FAIL  tests/daemon-server-name.test.ts > daemon MCP server identity > reports cross-agent-teams-mcp during initialize
+      AssertionError: expected 'ts-agent-teams' to be 'cross-agent-teams-mcp' // Object.is equality
+
+      Expected: "cross-agent-teams-mcp"
+      Received: "ts-agent-teams"
+
+       Test Files  1 failed (1)
+            Tests  1 failed (1)
       ```
-  - [ ] **INTEGRATION-GREEN:** Update `src/mcp/transport.ts` line 30
+  - [x] **INTEGRATION-GREEN:** Update `src/mcp/transport.ts` line 30
     ```ts
     const server = new McpServer({ name: 'cross-agent-teams-mcp', version: '0.1.0' })
     ```
-  - [ ] **Verify GREEN:** Re-run the new test and the full suite; both green
+  - [x] **Verify GREEN:** Re-run the new test and the full suite; both green
     - Command: `pnpm vitest run tests/daemon-server-name.test.ts`
     - Full-suite command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      # pnpm vitest run tests/daemon-server-name.test.ts
+       ✓ tests/daemon-server-name.test.ts (1 test) 40ms
+       Test Files  1 passed (1)
+            Tests  1 passed (1)
+
+      # pnpm test (full suite)
+       Test Files  3 failed | 94 passed (97)
+            Tests  4 failed | 304 passed (308)
+         Duration  13.07s
+      Note: the 4 failures are the pre-existing baseline in poke-e2e / poke-tmux-unavailable / poke-validation, unrelated to this task.
       ```
-  - [ ] **REFACTOR:** None — single-token rename
-  - [ ] **Verify REFACTOR:** Re-run full suite
+  - [x] **REFACTOR:** None — single-token rename
+  - [x] **Verify REFACTOR:** Re-run full suite
     - Command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       Test Files  3 failed | 94 passed (97)
+            Tests  4 failed | 304 passed (308)
+         Duration  13.07s
+      Same baseline as Verify GREEN; no new regressions.
       ```
-  - [ ] **Commit:** `refactor(mcp): rename daemon server identity to cross-agent-teams-mcp`
+  - [x] **Commit:** `refactor(mcp): rename daemon server identity to cross-agent-teams-mcp`
     - Staging order: test file BEFORE production file
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `77613386f57a1094498bf80613eced01015d75c0`
 
 ## 5. Daemon tool descriptions and register_agent hint carry new brand
 
-- [ ] 5.1 `tools/list` and the `register_agent` hint mention `cross-agent-teams-mcp` and not `ts-agent-teams`
+- [x] 5.1 `tools/list` and the `register_agent` hint mention `cross-agent-teams-mcp` and not `ts-agent-teams`
   - kind: integration-test
   - **Spec scenario(s):**
     - `daemon-core/spec.md` → Scenario: Brand-sweep grep returns zero matches
   - **Files:**
     - Create: `tests/daemon-brand-in-tool-text.test.ts`
     - Modify: `src/mcp/tools.ts`
-  - [ ] **INTEGRATION-RED:** Write failing integration test — `tests/daemon-brand-in-tool-text.test.ts`
+  - [x] **INTEGRATION-RED:** Write failing integration test — `tests/daemon-brand-in-tool-text.test.ts`
     - Behavior under test: after the daemon is up, every returned tool description and the `register_agent` hint for a no-tmux caller contain no `ts-agent-teams` substring and at least one mention of `cross-agent-teams-mcp`
     - Expected failure reason: current `tools.ts` lines 219/525/553 embed `ts-agent-teams` literals; the assertion rejecting that substring fails
     ```ts
@@ -328,13 +353,28 @@ Ordering: task 1 must precede 6/7/8 (directory rename unblocks sub-package edits
       }, 15_000)
     })
     ```
-  - [ ] **Verify RED:** Run the test, confirm failure
+  - [x] **Verify RED:** Run the test, confirm failure
     - Command: `pnpm vitest run tests/daemon-brand-in-tool-text.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ❯ tests/daemon-brand-in-tool-text.test.ts (1 test | 1 failed) 52ms
+         × daemon brand in tool text > no tool description contains legacy ts-agent-teams 52ms
+           → expected 'Bind the caller session\'s agent row …' not to contain 'ts-agent-teams'
+
+      ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+       FAIL  tests/daemon-brand-in-tool-text.test.ts > daemon brand in tool text > no tool description contains legacy ts-agent-teams
+      AssertionError: expected 'Bind the caller session\'s agent row …' not to contain 'ts-agent-teams'
+
+      Expected: "ts-agent-teams"
+      Received: "Bind the caller session's agent row to a channel_session_id produced by the ts-agent-teams channel proxy. Call this after receiving a startup <channel> notification from the proxy announcing your csid. Rejects proxy callers (role=__channel_proxy__). Rejects unknown csid (no live proxy sink attached)."
+
+       Test Files  1 failed (1)
+            Tests  1 failed (1)
       ```
-  - [ ] **INTEGRATION-GREEN:** Replace the three brand sites in `src/mcp/tools.ts`
+  - [x] **INTEGRATION-GREEN:** Replace the three brand sites in `src/mcp/tools.ts`
     - Line 219 (`register_agent` hint): swap every `ts-agent-teams` for `cross-agent-teams-mcp` (covers two mentions: the channel-plugin name and the tool family)
     - Line 525 (`bind_channel` description): `…produced by the cross-agent-teams-mcp channel proxy.`
     - Line 553 (internal tool description): `Internal tool reserved for the cross-agent-teams-mcp channel proxy.`
@@ -342,27 +382,39 @@ Ordering: task 1 must precede 6/7/8 (directory rename unblocks sub-package edits
     // representative replacements — exact strings depend on surrounding text but every
     // occurrence of the literal token `ts-agent-teams` in tools.ts becomes `cross-agent-teams-mcp`
     ```
-  - [ ] **Verify GREEN:** Re-run the new test and the full suite
+  - [x] **Verify GREEN:** Re-run the new test and the full suite
     - Command: `pnpm vitest run tests/daemon-brand-in-tool-text.test.ts`
     - Full-suite command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ✓ tests/daemon-brand-in-tool-text.test.ts (1 test) 49ms
+
+       Test Files  1 passed (1)
+            Tests  1 passed (1)
+
+      # pnpm test (baseline = 4 pre-existing failures, unchanged)
+       Test Files  3 failed | 95 passed (98)
+            Tests  4 failed | 305 passed (309)
+      # failures: tests/poke-e2e.test.ts (2), tests/poke-tmux-unavailable.test.ts (1), tests/poke-validation.test.ts (1)
       ```
-  - [ ] **REFACTOR:** None — textual rename only
-  - [ ] **Verify REFACTOR:** Re-run full suite
+  - [x] **REFACTOR:** None — textual rename only
+  - [x] **Verify REFACTOR:** Re-run full suite
     - Command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       Test Files  3 failed | 95 passed (98)
+            Tests  4 failed | 305 passed (309)
+      # identical 4-failure baseline set
       ```
-  - [ ] **Commit:** `refactor(tools): purge legacy brand from tool descriptions and hints`
+  - [x] **Commit:** `refactor(tools): purge legacy brand from tool descriptions and hints`
     - Staging order: test file BEFORE production file
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `01527e29c97d7d1b2467e8d4d78ecbbe96df42ba`
 
 ## 6. Channel proxy MCP server + client names
 
-- [ ] 6.1 `createProxyServer()` declares `name: 'cross-agent-teams-channel'`, and the outbound Client declares `name: 'cross-agent-teams-proxy'`
+- [x] 6.1 `createProxyServer()` declares `name: 'cross-agent-teams-channel'`, and the outbound Client declares `name: 'cross-agent-teams-proxy'`
   - kind: unit-test
   - **Spec scenario(s):**
     - `claude-channel-transport/spec.md` → Scenario: proxy serverInfo.name reports new brand to host
@@ -370,7 +422,7 @@ Ordering: task 1 must precede 6/7/8 (directory rename unblocks sub-package edits
     - Create: `plugins/cross-agent-teams-channel/tests/proxy-server-name.test.ts`
     - Modify: `plugins/cross-agent-teams-channel/src/proxy.ts`
     - Modify: `plugins/cross-agent-teams-channel/src/daemon-client.ts`
-  - [ ] **RED:** Write failing test — `plugins/cross-agent-teams-channel/tests/proxy-server-name.test.ts`
+  - [x] **RED:** Write failing test — `plugins/cross-agent-teams-channel/tests/proxy-server-name.test.ts`
     - Behavior under test: connect a fake MCP client to the proxy server over InMemoryTransport and assert serverInfo.name reflects the new brand
     - Expected failure reason: current proxy.ts declares `name: 'ts-agent-teams-channel'`
     ```ts
@@ -392,13 +444,16 @@ Ordering: task 1 must precede 6/7/8 (directory rename unblocks sub-package edits
       })
     })
     ```
-  - [ ] **Verify RED:** Run the test, confirm failure
+  - [x] **Verify RED:** Run the test, confirm failure
     - Command: `pnpm vitest run plugins/cross-agent-teams-channel/tests/proxy-server-name.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      FAIL tests/proxy-server-name.test.ts > channel proxy server identity > serverInfo.name is cross-agent-teams-channel
+      AssertionError: expected 'ts-agent-teams-channel' to be 'cross-agent-teams-channel'
+      Test Files  1 failed (1)
+      Tests  1 failed (1)
       ```
-  - [ ] **GREEN:** Update proxy.ts line 5 and daemon-client.ts line 44
+  - [x] **GREEN:** Update proxy.ts line 5 and daemon-client.ts line 44
     ```ts
     // plugins/cross-agent-teams-channel/src/proxy.ts
     return new McpServer(
@@ -410,27 +465,28 @@ Ordering: task 1 must precede 6/7/8 (directory rename unblocks sub-package edits
     // plugins/cross-agent-teams-channel/src/daemon-client.ts (around line 44)
     const client = new Client({ name: 'cross-agent-teams-proxy', version: '0.1.0' })
     ```
-  - [ ] **Verify GREEN:** Re-run the new test and the full suite
+  - [x] **Verify GREEN:** Re-run the new test and the full suite
     - Command: `pnpm vitest run plugins/cross-agent-teams-channel/tests/proxy-server-name.test.ts`
     - Full-suite command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      plugin test: Test Files 1 passed (1); Tests 1 passed (1)
+      root pnpm test: Test Files 3 failed | 95 passed (98); Tests 4 failed | 305 passed (309) — baseline (poke-e2e x2, poke-tmux-unavailable, poke-validation)
       ```
-  - [ ] **REFACTOR:** None — the change is a two-token substitution
-  - [ ] **Verify REFACTOR:** Re-run full suite
+  - [x] **REFACTOR:** None — the change is a two-token substitution
+  - [x] **Verify REFACTOR:** Re-run full suite
     - Command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      Test Files 3 failed | 95 passed (98); Tests 4 failed | 305 passed (309) — baseline unchanged
       ```
-  - [ ] **Commit:** `refactor(channel-plugin): rename MCP server and client identity`
+  - [x] **Commit:** `refactor(channel-plugin): rename MCP server and client identity`
     - Staging order: test file BEFORE production files
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `21e71e508714e45082e2477351ea4907e92d0092`
 
 ## 7. Channel proxy CLI reads CROSS_AGENT_TEAMS_MCP_DAEMON_URL
 
-- [ ] 7.1 `parseCliArgs` honors `CROSS_AGENT_TEAMS_MCP_DAEMON_URL` and the missing-arg diagnostic mentions it
+- [x] 7.1 `parseCliArgs` honors `CROSS_AGENT_TEAMS_MCP_DAEMON_URL` and the missing-arg diagnostic mentions it
   - kind: unit-test
   - **Spec scenario(s):**
     - `claude-channel-transport/spec.md` → Scenario: proxy honors CROSS_AGENT_TEAMS_MCP_DAEMON_URL env var when flag omitted
@@ -439,7 +495,7 @@ Ordering: task 1 must precede 6/7/8 (directory rename unblocks sub-package edits
     - Create: `plugins/cross-agent-teams-channel/tests/proxy-cli-env-var.test.ts`
     - Modify: `plugins/cross-agent-teams-channel/src/cli.ts`
     - Modify: `plugins/cross-agent-teams-channel/tests/proxy-cli.test.ts` (update regex on line 244 and env wipe on line 233)
-  - [ ] **RED:** Write failing test — `plugins/cross-agent-teams-channel/tests/proxy-cli-env-var.test.ts`
+  - [x] **RED:** Write failing test — `plugins/cross-agent-teams-channel/tests/proxy-cli-env-var.test.ts`
     - Behavior under test: when `--daemon-url` is absent, `parseCliArgs` reads `CROSS_AGENT_TEAMS_MCP_DAEMON_URL` and IGNORES the legacy `TS_AGENT_TEAMS_DAEMON_URL`; when neither is set, error message mentions `CROSS_AGENT_TEAMS_MCP_DAEMON_URL`
     - Expected failure reason: current code reads `TS_AGENT_TEAMS_DAEMON_URL`, so the positive-case assertion returns the wrong URL and the diagnostic-regex assertion rejects the legacy name
     ```ts
@@ -471,13 +527,20 @@ Ordering: task 1 must precede 6/7/8 (directory rename unblocks sub-package edits
       })
     })
     ```
-  - [ ] **Verify RED:** Run the test, confirm failure
+  - [x] **Verify RED:** Run the test, confirm failure
     - Command: `pnpm vitest run plugins/cross-agent-teams-channel/tests/proxy-cli-env-var.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      Test Files  1 failed (1)
+      Tests  3 failed (3)
+      - reads CROSS_AGENT_TEAMS_MCP_DAEMON_URL when flag is absent:
+        expected 'http://legacy:8787' to be 'http://example:8787'
+      - ignores legacy TS_AGENT_TEAMS_DAEMON_URL when new var is missing:
+        expected function to throw an error, but it didn't
+      - diagnostic mentions CROSS_AGENT_TEAMS_MCP_DAEMON_URL:
+        expected 'missing --daemon-url (or TS_AGENT_TEAMS_DAEMON_URL env var)' to match /CROSS_AGENT_TEAMS_MCP_DAEMON_URL/
       ```
-  - [ ] **GREEN:** Update `plugins/cross-agent-teams-channel/src/cli.ts`
+  - [x] **GREEN:** Update `plugins/cross-agent-teams-channel/src/cli.ts`
     ```ts
     // around line 35 — env var lookup
     if (!daemonUrl || daemonUrl.length === 0) {
@@ -493,27 +556,29 @@ Ordering: task 1 must precede 6/7/8 (directory rename unblocks sub-package edits
     Also update `proxy-cli.test.ts`:
     - line 233: `env: { ...process.env, CROSS_AGENT_TEAMS_MCP_DAEMON_URL: '' }` (and any other TS_* wipe in that test)
     - line 244: `expect(stderr).toMatch(/daemon-url|daemon_url|CROSS_AGENT_TEAMS_MCP_DAEMON_URL/i)`
-  - [ ] **Verify GREEN:** Re-run new test plus the updated proxy-cli test; both pass
+  - [x] **Verify GREEN:** Re-run new test plus the updated proxy-cli test; both pass
     - Command: `pnpm vitest run plugins/cross-agent-teams-channel/tests/proxy-cli-env-var.test.ts plugins/cross-agent-teams-channel/tests/proxy-cli.test.ts`
     - Full-suite command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      Plugin scoped: Test Files 2 passed (2), Tests 6 passed (6)
+      Full suite: Test Files 3 failed | 95 passed (98), Tests 4 failed | 305 passed (309)
+        — 4 failures are baseline (poke-e2e x2, poke-tmux-unavailable x1, poke-validation x1)
       ```
-  - [ ] **REFACTOR:** None — textual rename only
-  - [ ] **Verify REFACTOR:** Re-run full suite
+  - [x] **REFACTOR:** None — textual rename only
+  - [x] **Verify REFACTOR:** Re-run full suite
     - Command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      Test Files 3 failed | 95 passed (98), Tests 4 failed | 305 passed (309) — baseline only
       ```
-  - [ ] **Commit:** `feat(channel-plugin): rename CLI env var to CROSS_AGENT_TEAMS_MCP_DAEMON_URL`
+  - [x] **Commit:** `feat(channel-plugin): rename CLI env var to CROSS_AGENT_TEAMS_MCP_DAEMON_URL`
     - Staging order: new test + updated assertion test BEFORE production cli.ts change
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `23f3206a5c4f9603166d27efea028a88b4fb4cea`
 
 ## 8. Channel proxy startup hint content uses new brand
 
-- [ ] 8.1 The startup `notifications/claude/channel` payload (content + meta.source) mentions `cross-agent-teams-mcp`, not `ts-agent-teams`
+- [x] 8.1 The startup `notifications/claude/channel` payload (content + meta.source) mentions `cross-agent-teams-mcp`, not `ts-agent-teams`
   - kind: unit-test
   - **Spec scenario(s):**
     - `claude-channel-transport/spec.md` → Scenario: proxy emits startup channel notification with csid and bind instruction
@@ -521,7 +586,8 @@ Ordering: task 1 must precede 6/7/8 (directory rename unblocks sub-package edits
   - **Files:**
     - Modify: `plugins/cross-agent-teams-channel/tests/proxy-startup-notification.test.ts` (update assertions first — this is the RED)
     - Modify: `plugins/cross-agent-teams-channel/src/cli.ts`
-  - [ ] **RED:** Strengthen assertions in the existing startup-notification test so they reject the legacy brand
+  - Adaptation: Extracted the inline startup-hint builder in `cli.ts` to an exported pure function `buildStartupHint(csid)` via a preliminary no-behavior-change refactor commit `3b374a9` so the RED test can import and exercise the production builder rather than re-constructing the payload tautologically in the test body.
+  - [x] **RED:** Strengthen assertions in the existing startup-notification test so they reject the legacy brand
     - Behavior under test: the relayed notification content and meta.source use the new brand
     - Expected failure reason: current cli.ts startup hint emits `ts-agent-teams: your channel_session_id is …` with `meta: { source: 'ts_agent_teams' }` — the new assertions would reject those literals
     ```ts
@@ -541,13 +607,16 @@ Ordering: task 1 must precede 6/7/8 (directory rename unblocks sub-package edits
     expect(params.content).not.toContain('ts-agent-teams')
     expect(params.meta.source).toBe('cross_agent_teams_mcp')
     ```
-  - [ ] **Verify RED:** Run the updated test against current production code, confirm failure
+  - [x] **Verify RED:** Run the updated test against current production code, confirm failure
     - Command: `pnpm vitest run plugins/cross-agent-teams-channel/tests/proxy-startup-notification.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      × proxy startup channel notification > emits a claude/channel notification containing csid and bind_channel instruction
+        AssertionError: expected 'ts-agent-teams: your channel_session_…' to contain 'cross-agent-teams-mcp'
+        at tests/proxy-startup-notification.test.ts:35:28
+      Test Files  1 failed (1); Tests  1 failed (1)
       ```
-  - [ ] **GREEN:** Update `plugins/cross-agent-teams-channel/src/cli.ts` (around lines 55, 75-82) so the production code now matches the asserted payload
+  - [x] **GREEN:** Update `plugins/cross-agent-teams-channel/src/cli.ts` (around lines 55, 75-82) so the production code now matches the asserted payload
     ```ts
     // around line 55 — stderr prefix on arg-parse failure
     process.stderr.write(`cross-agent-teams-proxy: ${msg}\n`)
@@ -564,41 +633,43 @@ Ordering: task 1 must precede 6/7/8 (directory rename unblocks sub-package edits
       meta: { source: 'cross_agent_teams_mcp', kind: 'startup_bind_hint' }
     })
     ```
-  - [ ] **Verify GREEN:** Re-run the updated test and the full suite
+  - [x] **Verify GREEN:** Re-run the updated test and the full suite
     - Command: `pnpm vitest run plugins/cross-agent-teams-channel/tests/proxy-startup-notification.test.ts`
     - Full-suite command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      Plugin scoped: Test Files 1 passed (1); Tests 1 passed (1)
+      Full suite: Test Files 3 failed | 95 passed (98), Tests 4 failed | 305 passed (309)
+        — 4 failures are baseline (poke-e2e x2, poke-tmux-unavailable x1, poke-validation x1)
       ```
-  - [ ] **REFACTOR:** None — textual rename only
-  - [ ] **Verify REFACTOR:** Re-run full suite
+  - [x] **REFACTOR:** None — textual rename only
+  - [x] **Verify REFACTOR:** Re-run full suite
     - Command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      Test Files 3 failed | 95 passed (98), Tests 4 failed | 305 passed (309) — baseline only
       ```
-  - [ ] **Commit:** `refactor(channel-plugin): rename brand in startup hint content`
+  - [x] **Commit:** `refactor(channel-plugin): rename brand in startup hint content`
     - Staging order: test assertions BEFORE cli.ts edits
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `dd645af`
 
 ## 9. Brand sync across docs, opencode.json, .gitignore
 
-- [ ] 9.1 Replace every legacy brand mention in the active docs/config files
+- [x] 9.1 Replace every legacy brand mention in the active docs/config files
   - kind: skip-doc-only
   - **Spec scenario(s):**
     - `daemon-core/spec.md` → Scenario: Brand-sweep grep returns zero matches
-  - [ ] **SKIP:** skip-doc-only — pure textual brand sync in docs and config files; no runtime contract of its own beyond what Task 10's brand-sweep enforces.  Files touched: `docs/configs/README.md`, `docs/configs/claude-code.md`, `docs/configs/codex-cli.md`, `docs/configs/opencode.md`, `opencode.json`, `.gitignore` (line 62: `.cross-agent-teams-mcp-test/`).  Replace every `ts-agent-teams` with `cross-agent-teams-mcp` in each file; in `opencode.json` the MCP key becomes `"cross-agent-teams-mcp"`.
+  - [x] **SKIP:** skip-doc-only — pure textual brand sync in docs and config files; no runtime contract of its own beyond what Task 10's brand-sweep enforces.  Files touched: `docs/configs/README.md`, `docs/configs/claude-code.md`, `docs/configs/codex-cli.md`, `docs/configs/opencode.md`, `opencode.json`, `.gitignore` (line 62: `.cross-agent-teams-mcp-test/`).  Replace every `ts-agent-teams` with `cross-agent-teams-mcp` in each file; in `opencode.json` the MCP key becomes `"cross-agent-teams-mcp"`.
 
 ## 10. Final brand-sweep gate
 
-- [ ] 10.1 A test that fails if any active source file still contains the legacy brand word
+- [x] 10.1 A test that fails if any active source file still contains the legacy brand word
   - kind: integration-test
   - **Spec scenario(s):**
     - `daemon-core/spec.md` → Scenario: Brand-sweep grep returns zero matches
   - **Files:**
     - Create: `tests/brand-sweep.test.ts`
-  - [ ] **INTEGRATION-RED:** Write the sweep test before any other rename task lands (or re-confirm failure after tasks 1-9 by temporarily reverting a single file)
+  - [x] **INTEGRATION-RED:** Write the sweep test before any other rename task lands (or re-confirm failure after tasks 1-9 by temporarily reverting a single file)
     - Behavior under test: a shell `grep -r 'ts-agent-teams'` over the active paths returns no matches
     - Expected failure reason: before tasks 1-9 land, every active source file still carries the legacy brand
     ```ts
@@ -638,30 +709,54 @@ Ordering: task 1 must precede 6/7/8 (directory rename unblocks sub-package edits
       })
     })
     ```
-  - [ ] **Verify RED:** Run the sweep, confirm non-empty hits (expected before tasks 1-9)
+  - [x] **Verify RED:** Run the sweep, confirm non-empty hits (expected before tasks 1-9)
     - Command: `pnpm vitest run tests/brand-sweep.test.ts`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+      # RED re-confirmed by temporarily appending a throwaway comment
+      # `// ts-agent-teams-legacy-token-DO-NOT-COMMIT` to src/cli.ts, then reverting.
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ❯ tests/brand-sweep.test.ts (1 test | 1 failed) 61ms
+         × brand sweep > no active source file contains the legacy ts-agent-teams brand 61ms
+           → unexpected legacy brand hits:
+      src/cli.ts:34:// ts-agent-teams-legacy-token-DO-NOT-COMMIT
+      : expected 'src/cli.ts:34:// ts-agent-teams-legac…' to be '' // Object.is equality
+
+       Test Files  1 failed (1)
+            Tests  1 failed (1)
+      # src/cli.ts reverted with `git checkout -- src/cli.ts`; `git diff src/cli.ts` empty.
       ```
-  - [ ] **INTEGRATION-GREEN:** By the time this task's GREEN step runs, tasks 1-9 have already been committed — no new production code is needed here.  Re-run the sweep and confirm zero hits
-  - [ ] **Verify GREEN:** Run the sweep and the full suite
+  - [x] **INTEGRATION-GREEN:** By the time this task's GREEN step runs, tasks 1-9 have already been committed — no new production code is needed here.  Re-run the sweep and confirm zero hits
+  - [x] **Verify GREEN:** Run the sweep and the full suite
     - Command: `pnpm vitest run tests/brand-sweep.test.ts`
     - Full-suite command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       RUN  v2.1.9 /Users/jtianling/workspace/agent-teams-mcp-workspace/agent-teams-mcp-tdd-spec
+
+       ✓ tests/brand-sweep.test.ts (1 test) 60ms
+
+       Test Files  1 passed (1)
+            Tests  1 passed (1)
+
+      # pnpm test (baseline = 4 pre-existing failures, unchanged)
+       Test Files  3 failed | 96 passed (99)
+            Tests  4 failed | 306 passed (310)
+      # failures: tests/poke-e2e.test.ts (2), tests/poke-tmux-unavailable.test.ts (1), tests/poke-validation.test.ts (1)
       ```
-  - [ ] **REFACTOR:** None — pure assertion
-  - [ ] **Verify REFACTOR:** Re-run full suite
+  - [x] **REFACTOR:** None — pure assertion
+  - [x] **Verify REFACTOR:** Re-run full suite
     - Command: `pnpm test`
     - **Observed output (fill during apply):**
       ```
-      <to be filled by ts-apply>
+       Test Files  3 failed | 96 passed (99)
+            Tests  4 failed | 306 passed (310)
+      # identical 4-failure baseline set
       ```
-  - [ ] **Commit:** `test(brand-sweep): assert no legacy ts-agent-teams remains in active source`
+  - [x] **Commit:** `test(brand-sweep): assert no legacy ts-agent-teams remains in active source`
     - Staging order: test file is the only artifact
-    - **Commit SHA (fill during apply):** `<to be filled by ts-apply>`
+    - **Commit SHA (fill during apply):** `3a7602195c16f5ce86a587055cd9501193539cb6`
 
 ## Scenario Coverage Matrix
 
@@ -673,7 +768,7 @@ Ordering: task 1 must precede 6/7/8 (directory rename unblocks sub-package edits
 | `daemon-core` | PID file lifecycle → Fresh startup writes pid file | Task 3.1 | `tests/daemon-home-dir-rename.test.ts` (fill during apply) |
 | `daemon-core` | PID file lifecycle → Stale pid file (process dead) | Task 3.1 | existing pid-lifecycle tests (unchanged, covered by home-dir path) |
 | `daemon-core` | PID file lifecycle → Live daemon already running | Task 3.1 | existing pid-lifecycle tests (unchanged, covered by home-dir path) |
-| `claude-channel-transport` | Channel proxy MCP server identity → proxy serverInfo.name reports new brand to host | Task 6.1 | `plugins/cross-agent-teams-channel/tests/proxy-server-name.test.ts` (fill during apply) |
+| `claude-channel-transport` | Channel proxy MCP server identity → proxy serverInfo.name reports new brand to host | Task 6.1 | `plugins/cross-agent-teams-channel/tests/proxy-server-name.test.ts` |
 | `claude-channel-transport` | Channel proxy startup sequence → proxy generates fresh csid on every startup | Task 8.1 | `plugins/cross-agent-teams-channel/tests/proxy-startup-notification.test.ts` (existing, reused) |
 | `claude-channel-transport` | Channel proxy startup sequence → proxy emits startup channel notification with csid and bind instruction | Task 8.1 | `plugins/cross-agent-teams-channel/tests/proxy-startup-notification.test.ts` (existing, assertions updated) |
 | `claude-channel-transport` | Channel proxy startup sequence → proxy honors CROSS_AGENT_TEAMS_MCP_DAEMON_URL env var when flag omitted | Task 7.1 | `plugins/cross-agent-teams-channel/tests/proxy-cli-env-var.test.ts` (fill during apply) |
