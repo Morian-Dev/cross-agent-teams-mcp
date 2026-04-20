@@ -22,10 +22,10 @@ async function connectClient(host: string, port: number): Promise<{ c: Client; t
   return { c, t }
 }
 
-async function register(c: Client, args: { role?: string; team?: string; tmux_pane_id?: string } = {}): Promise<string> {
+async function register(c: Client, args: { name?: string; role?: string; team?: string; tmux_pane_id?: string } = {}): Promise<string> {
   const resp = await c.callTool({
     name: 'register_agent',
-    arguments: { name: 'tester-7', model: 'opus-4-7', role: args.role ?? 'dev', team: args.team, tmux_pane_id: args.tmux_pane_id }
+    arguments: { name: args.name ?? 'tester-7', model: 'opus-4-7', role: args.role ?? 'dev', team: args.team, tmux_pane_id: args.tmux_pane_id }
   })
   const obj = await parseTool(resp)
   return obj.agent_id as string
@@ -46,8 +46,8 @@ describe('poke tmux_unavailable', () => {
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
     const A = await connectClient(host, port)
     const B = await connectClient(host, port)
-    await register(A.c, { role: 'caller' })
-    const targetId = await register(B.c, { role: 'target', tmux_pane_id: '%42' })
+    await register(A.c, { name: 'tester-7-caller', role: 'caller' })
+    const targetId = await register(B.c, { name: 'tester-7-target', role: 'target', tmux_pane_id: '%42' })
 
     const resp = await A.c.callTool({ name: 'poke', arguments: { target_agent_id: targetId, prompt: 'hi' } })
     const obj = await parseTool(resp)
