@@ -335,7 +335,7 @@
           Tests  3 passed (3)
     ```
 - [x] **Commit:** `feat(storage): add delivery_kind/delivery_payload columns to agents DDL (Task 2.1)`
-  - **Commit SHA:** `f189f18`
+  - **Commit SHA:** `9aae562`
 
 ## TDD for 2.2 Add idempotent startup migration in the schema bootstrap path: detect missing columns via `PRAGMA table_info('agents')`, run `ALTER TABLE agents ADD COLUMN delivery_kind ...` and `ALTER TABLE agents ADD COLUMN delivery_payload TEXT` only when missing, wrapped in a transaction
 - kind: integration-test
