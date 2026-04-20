@@ -113,6 +113,35 @@ describe('migration: delivery columns', () => {
     db.close()
   })
 
+  it('leaves legacy channel_session_id column and its values untouched after migration and backfill', () => {
+    const dir = tmp(); cleanups.push(dir)
+    const dbPath = join(dir, 'data.db')
+    const db = openDb(dbPath)
+    createOldSchemaAgents(db)
+    db.prepare(`INSERT INTO agents (agent_id, team, role, name, registered_at, last_seen_at, channel_session_id)
+      VALUES ('a1', 'teamA', 'dev', 'alice', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'csid-abc')`).run()
+    db.prepare(`INSERT INTO agents (agent_id, team, role, name, registered_at, last_seen_at, channel_session_id)
+      VALUES ('a2', 'teamA', 'dev', 'bob', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL)`).run()
+
+    applySchema(db)
+
+    const cols = db.pragma('table_info(agents)') as Array<{ name: string; type: string; notnull: number; dflt_value: string | null }>
+    const legacy = cols.find(c => c.name === 'channel_session_id')
+    expect(legacy).toBeDefined()
+    expect(legacy?.type).toBe('TEXT')
+    expect(legacy?.notnull).toBe(0)
+
+    const row1 = db.prepare(`SELECT channel_session_id FROM agents WHERE agent_id = ?`).get('a1') as { channel_session_id: string | null }
+    expect(row1.channel_session_id).toBe('csid-abc')
+    const row2 = db.prepare(`SELECT channel_session_id FROM agents WHERE agent_id = ?`).get('a2') as { channel_session_id: string | null }
+    expect(row2.channel_session_id).toBeNull()
+
+    applySchema(db)
+    const row1After = db.prepare(`SELECT channel_session_id FROM agents WHERE agent_id = ?`).get('a1') as { channel_session_id: string | null }
+    expect(row1After.channel_session_id).toBe('csid-abc')
+    db.close()
+  })
+
   it('backfill is idempotent: running applySchema again does not overwrite existing delivery data', () => {
     const dir = tmp(); cleanups.push(dir)
     const dbPath = join(dir, 'data.db')

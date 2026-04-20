@@ -435,23 +435,47 @@
   - `agent-registry/spec.md` → Scenario: `Startup migration leaves channel_session_id column untouched`
 - **Files:**
   - Modify: `tests/migration-delivery-columns.test.ts`
-- [ ] **INTEGRATION-RED:** Add a case: seed rows with `channel_session_id='csid-abc'`; after migration, assert the legacy column's value is still `'csid-abc'` (not cleared, not rewritten).
-- [ ] **Verify RED:** run the targeted test; confirm failure if legacy column handling is broken
+- [x] **INTEGRATION-RED:** Add a case: seed rows with `channel_session_id='csid-abc'`; after migration, assert the legacy column's value is still `'csid-abc'` (not cleared, not rewritten).
+- [x] **Verify RED:** run the targeted test; confirm failure if legacy column handling is broken
   - **Observed output:**
     ```
+    (temporarily injected `UPDATE agents SET channel_session_id = NULL` into migrateAgentsDeliveryColumns to prove the new assertion catches regressions; reverted immediately after)
+     ❯ tests/migration-delivery-columns.test.ts (6 tests | 1 failed | 5 skipped) 6ms
+       × migration: delivery columns > leaves legacy channel_session_id column and its values untouched after migration and backfill 6ms
+         → expected null to be 'csid-abc' // Object.is equality
+    AssertionError: expected null to be 'csid-abc' // Object.is equality
+    - Expected: "csid-abc"
+    + Received: null
+     ❯ tests/migration-delivery-columns.test.ts:135:37
+     Test Files  1 failed (1)
+          Tests  1 failed | 5 skipped (6)
     ```
-- [ ] **INTEGRATION-GREEN:** Inspect migration SQL; if necessary, add a post-migration assertion helper; ensure no migration statement mutates the legacy column
-- [ ] **Verify GREEN:** re-run the test + full suite, confirm pass
+- [x] **INTEGRATION-GREEN:** Inspect migration SQL; if necessary, add a post-migration assertion helper; ensure no migration statement mutates the legacy column
+- [x] **Verify GREEN:** re-run the test + full suite, confirm pass
   - **Observed output:**
     ```
+    # targeted
+     ✓ tests/migration-delivery-columns.test.ts (6 tests) 15ms
+     Test Files  1 passed (1)
+          Tests  6 passed (6)
+
+    # full suite
+     Test Files  103 passed (103)
+          Tests  351 passed (351)
+       Duration  15.57s
+
+    # typecheck
+    > tsc --noEmit
+    (exit 0, no diagnostics)
     ```
-- [ ] **REFACTOR:** None — already minimal
-- [ ] **Verify REFACTOR:** re-run tests
+- [x] **REFACTOR:** None — already minimal
+- [x] **Verify REFACTOR:** re-run tests
   - **Observed output:**
     ```
+    (no refactor performed; GREEN run above already confirms targeted + full suite pass after production revert)
     ```
-- [ ] **Commit:** `test(storage): assert migration preserves legacy channel_session_id (Task 2.4)`
-  - **Commit SHA:** ``
+- [x] **Commit:** `test(storage): assert migration preserves legacy channel_session_id (Task 2.4)`
+  - **Commit SHA:** `1cbc012`
 
 ## TDD for 2.5 Tests: fresh-db schema assertions (PRAGMA table_info columns, defaults, notnull flags) matching scenarios in `agent-registry/spec.md`
 - kind: unit-test

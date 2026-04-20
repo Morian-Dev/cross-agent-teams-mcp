@@ -11,7 +11,7 @@
 - [x] 2.1 Update `src/storage/schema.ts` to include `delivery_kind TEXT NOT NULL DEFAULT 'none'` and `delivery_payload TEXT` in the `CREATE TABLE agents` statement for fresh databases
 - [x] 2.2 Add idempotent startup migration in the schema bootstrap path: detect missing columns via `PRAGMA table_info('agents')`, run `ALTER TABLE agents ADD COLUMN delivery_kind ...` and `ALTER TABLE agents ADD COLUMN delivery_payload TEXT` only when missing, wrapped in a transaction
 - [x] 2.3 Add one-shot backfill in the same migration: `UPDATE agents SET delivery_kind='claude-channel', delivery_payload=json_object('channel_session_id', channel_session_id) WHERE channel_session_id IS NOT NULL AND delivery_kind='none'`
-- [ ] 2.4 Verify migration leaves legacy `channel_session_id` column and its values untouched
+- [x] 2.4 Verify migration leaves legacy `channel_session_id` column and its values untouched
 - [ ] 2.5 Tests: fresh-db schema assertions (PRAGMA table_info columns, defaults, notnull flags) matching scenarios in `agent-registry/spec.md`
 - [ ] 2.6 Tests: migration-from-old-schema — seed a DB that lacks `delivery_*` columns but has rows with `channel_session_id`, run startup, assert columns exist and backfill applied exactly to matching rows
 - [ ] 2.7 Tests: migration idempotence — run startup twice, assert second run does no ALTER and does not overwrite values
