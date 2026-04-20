@@ -67,23 +67,56 @@
 - **Files:**
   - Modify: `tests/delivery-spec.test.ts`
   - Modify: `src/lib/delivery-spec.ts`
-- [ ] **RED:** Add failing parse tests: kind 'none' row → `{kind: 'none'}`; kind 'claude-channel' JSON row → full spec; unparseable JSON → throws `corrupt_delivery_payload`
-- [ ] **Verify RED:** run `pnpm test tests/delivery-spec.test.ts`, confirm failure
+- [x] **RED:** Add failing parse tests: kind 'none' row → `{kind: 'none'}`; kind 'claude-channel' JSON row → full spec; unparseable JSON → throws `corrupt_delivery_payload`
+- [x] **Verify RED:** run `pnpm test tests/delivery-spec.test.ts`, confirm failure
   - **Observed output:**
     ```
+     RUN  v2.1.9 /Users/jtianling/workspace/cross-agent-teams-mcp-workspace/cross-agent-teams-mcp
+
+     ❯ tests/delivery-spec.test.ts (8 tests | 3 failed) 5ms
+       × parseDeliveryRow (Task 1.2) > kind none row with null payload returns {kind: none} 2ms
+         → parseDeliveryRow is not a function
+       × parseDeliveryRow (Task 1.2) > kind claude-channel row reconstructs channel_session_id from JSON payload 0ms
+         → parseDeliveryRow is not a function
+       × parseDeliveryRow (Task 1.2) > throws corrupt_delivery_payload when non-none payload fails to parse as JSON 2ms
+         → expected [Function] to throw error including 'corrupt_delivery_payload' but got 'parseDeliveryRo…'
+
+     Test Files  1 failed (1)
+          Tests  3 failed | 5 passed (8)
     ```
-- [ ] **GREEN:** Implement `parseDeliveryRow` per `agent-delivery/spec.md` reconstruction rules
-- [ ] **Verify GREEN:** re-run the test + full suite, confirm pass
+- [x] **GREEN:** Implement `parseDeliveryRow` per `agent-delivery/spec.md` reconstruction rules
+- [x] **Verify GREEN:** re-run the test + full suite, confirm pass
   - **Observed output:**
     ```
+    # scoped
+     RUN  v2.1.9 /Users/jtianling/workspace/cross-agent-teams-mcp-workspace/cross-agent-teams-mcp
+     ✓ tests/delivery-spec.test.ts (8 tests) 2ms
+     Test Files  1 passed (1)
+          Tests  8 passed (8)
+       Duration  122ms
+
+    # full suite
+     Test Files  102 passed (102)
+          Tests  323 passed (323)
+       Duration  15.70s
+
+    # typecheck
+    > cross-agent-teams-mcp@0.1.0 typecheck
+    > tsc --noEmit
+    (exit 0, no output)
     ```
-- [ ] **REFACTOR:** None — already minimal
-- [ ] **Verify REFACTOR:** re-run tests
+- [x] **REFACTOR:** None — already minimal
+- [x] **Verify REFACTOR:** re-run tests
   - **Observed output:**
     ```
+     RUN  v2.1.9 /Users/jtianling/workspace/cross-agent-teams-mcp-workspace/cross-agent-teams-mcp
+     ✓ tests/delivery-spec.test.ts (8 tests) 2ms
+     Test Files  1 passed (1)
+          Tests  8 passed (8)
+       Duration  122ms
     ```
-- [ ] **Commit:** `feat(lib): implement parseDeliveryRow (Task 1.2)`
-  - **Commit SHA:** ``
+- [x] **Commit:** `feat(lib): implement parseDeliveryRow (Task 1.2)`
+  - **Commit SHA:** `515682d`
 
 ## TDD for 1.3 Implement `serializeDelivery(spec: DeliverySpec): { delivery_kind, delivery_payload }` inverse of 1.2
 - kind: unit-test

@@ -1,6 +1,7 @@
 import { describe, it, expectTypeOf, expect } from 'vitest';
 import type { DeliverySpec } from '../src/lib/delivery-spec.js';
 import * as deliverySpecModule from '../src/lib/delivery-spec.js';
+import { parseDeliveryRow } from '../src/lib/delivery-spec.js';
 
 describe('DeliverySpec discriminated union shape', () => {
   it('module loads from src/lib/delivery-spec', () => {
@@ -59,5 +60,28 @@ describe('DeliverySpec discriminated union shape', () => {
         ws_url: 'ws://x',
       }),
     ).toBe('00000000-0000-0000-0000-000000000000');
+  });
+});
+
+describe('parseDeliveryRow (Task 1.2)', () => {
+  it('kind none row with null payload returns {kind: none}', () => {
+    const row = { delivery_kind: 'none', delivery_payload: null };
+    expect(parseDeliveryRow(row)).toEqual({ kind: 'none' });
+  });
+
+  it('kind claude-channel row reconstructs channel_session_id from JSON payload', () => {
+    const row = {
+      delivery_kind: 'claude-channel',
+      delivery_payload: '{"channel_session_id":"csid-abc"}',
+    };
+    expect(parseDeliveryRow(row)).toEqual({
+      kind: 'claude-channel',
+      channel_session_id: 'csid-abc',
+    });
+  });
+
+  it('throws corrupt_delivery_payload when non-none payload fails to parse as JSON', () => {
+    const row = { delivery_kind: 'claude-channel', delivery_payload: 'not-json' };
+    expect(() => parseDeliveryRow(row)).toThrow('corrupt_delivery_payload');
   });
 });
