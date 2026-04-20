@@ -1,0 +1,15 @@
+{
+  "change": "fix-brand-sweep-self-match",
+  "phase": "archive",
+  "iteration": 1,
+  "max_iterations": 3,
+  "last_critical_types": [],
+  "history": [
+    { "iteration": 1, "phase": "propose", "status": "ok", "at": "2026-04-20T12:05:00Z" },
+    { "iteration": 1, "phase": "apply", "status": "ok", "at": "2026-04-20T12:15:00Z" },
+    { "iteration": 1, "phase": "review", "status": "pass", "at": "2026-04-20T12:20:00Z" },
+    { "iteration": 1, "phase": "verify", "status": "pass", "at": "2026-04-20T12:25:00Z" },
+    { "iteration": 1, "phase": "sync", "status": "ok", "at": "2026-04-20T12:26:00Z" }
+  ],
+  "updated_at": "2026-04-20T12:26:00Z"
+}
