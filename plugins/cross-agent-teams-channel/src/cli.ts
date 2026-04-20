@@ -15,6 +15,19 @@ export class CliArgError extends Error {
   }
 }
 
+export function buildStartupHint(csid: string): { content: string; meta: { source: string; kind: string } } {
+  const content = [
+    `ts-agent-teams: your channel_session_id is ${csid}.`,
+    `If you have not called register_agent yet, call it first (the ts-agent-teams register_agent tool).`,
+    `Then call bind_channel({channel_session_id: "${csid}"}) to complete binding.`,
+    `If bind_channel returns unknown_agent, it means register_agent has not completed yet — call register_agent then retry bind_channel.`
+  ].join(' ')
+  return {
+    content,
+    meta: { source: 'ts_agent_teams', kind: 'startup_bind_hint' }
+  }
+}
+
 export function parseCliArgs(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): CliArgs {
   let daemonUrl: string | undefined
 
@@ -71,16 +84,8 @@ export async function main(
     onSequenceComplete: () => {
       // Announce csid to Claude via host-facing channel notification so Claude
       // can call bind_channel({channel_session_id}) to bind its own agent row.
-      const content = [
-        `ts-agent-teams: your channel_session_id is ${csid}.`,
-        `If you have not called register_agent yet, call it first (the ts-agent-teams register_agent tool).`,
-        `Then call bind_channel({channel_session_id: "${csid}"}) to complete binding.`,
-        `If bind_channel returns unknown_agent, it means register_agent has not completed yet — call register_agent then retry bind_channel.`
-      ].join(' ')
-      relayChannelWake(hostServer, {
-        content,
-        meta: { source: 'ts_agent_teams', kind: 'startup_bind_hint' }
-      })
+      const hint = buildStartupHint(csid)
+      relayChannelWake(hostServer, hint)
     }
   })
 
