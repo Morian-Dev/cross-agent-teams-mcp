@@ -189,12 +189,14 @@ The daemon's `McpServer` instance SHALL declare its `name` field as `cross-agent
 
 ### Requirement: Daemon source tree free of legacy brand word
 
-The daemon's shipped source tree (non-archived, non-historical: `src/**`, `package.json`, `tsconfig.json`, active `docs/configs/**`, active `openspec/specs/**`, `opencode.json`, `.gitignore`) SHALL NOT contain the literal string `ts-agent-teams` (case-sensitive).  This ensures the rename is complete and future readers never re-encounter the legacy brand.
+In this Requirement, `<legacy-brand>` denotes the string equal to `'ts'` concatenated with `'-agent-teams'` (total 13 characters, case-sensitive, ASCII).  The placeholder convention is chosen so this spec file itself stays sweep-safe (see change `fix-brand-sweep-self-match`).
+
+The daemon's shipped source tree (non-archived, non-historical: `src/**`, `package.json`, `tsconfig.json`, active `docs/configs/**`, active `openspec/specs/**`, `opencode.json`, `.gitignore`) SHALL NOT contain the literal string `<legacy-brand>` (case-sensitive).  This ensures the rename is complete and future readers never re-encounter the legacy brand.
 
 Exempt paths: `openspec/changes/archive/**`, `discuss/**`, `node_modules/**`, `dist/**`, `pnpm-lock.yaml`, `worktrees/**`.
 
 #### Scenario: Brand-sweep grep returns zero matches
 
-- **WHEN** `grep -r 'ts-agent-teams' src/ plugins/cross-agent-teams-channel/src/ docs/configs/ openspec/specs/ package.json tsconfig.json opencode.json .gitignore` is run
+- **WHEN** `grep -r '<legacy-brand>' src/ plugins/cross-agent-teams-channel/src/ docs/configs/ openspec/specs/ package.json tsconfig.json opencode.json .gitignore` is run (the `<legacy-brand>` placeholder resolves at evaluation time to the concatenated string defined above)
 - **THEN** the exit code is non-zero (ripgrep/grep convention for no matches) or output is empty
 
