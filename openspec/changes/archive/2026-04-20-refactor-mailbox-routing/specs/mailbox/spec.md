@@ -18,33 +18,6 @@ For same-team writes (`broadcast`, `broadcast_to_role`, same-team `send_message`
 - **THEN** the new `messages` row has `from_team='alpha'`, `to_team='beta'`
 - **AND** the paired `events` row has `from_team='alpha'`, `to_team='beta'`
 
-### Requirement: send_message is 1→1 private message only
-
-`send_message({to_agent_id, to_team?, subject?, body, auto_poke?})` MUST accept `to_agent_id` as the ONLY way to name the recipient. Requests containing a `to_role` parameter SHALL be rejected by the MCP tool schema layer (Zod validation) — the parameter is not defined on the tool at all.
-
-`send_message` MUST accept an optional `to_team` parameter. When `to_team` is omitted, the daemon SHALL default it to the caller's team. When `to_team` is provided and equals the caller's team, behavior is identical to omission. When `to_team` is provided and differs from the caller's team, the call constitutes a cross-team private message (see Requirement "send_message supports cross-team delivery when to_team is explicit").
-
-The `send_message` MCP tool description MUST state: 除非用户明确指定 `to_team`, 不要跨 team 沟通.  The description MUST also reference `broadcast_to_role` as the way to address a role, and `broadcast` as the way to reach the whole team.
-
-#### Scenario: to_role parameter is rejected by the schema layer
-
-- **WHEN** a client calls `send_message({to_agent_id:'X', to_role:'frontend', body:'hi'})`
-- **THEN** the MCP tool's Zod schema MUST reject the call with a validation error (unknown field `to_role`)
-- **AND** no `messages` or `events` row is written
-
-#### Scenario: send_message without to_agent_id is rejected
-
-- **WHEN** a client calls `send_message({body:'hi'})`
-- **THEN** the MCP tool's Zod schema MUST reject the call with a validation error (missing required field `to_agent_id`)
-
-#### Scenario: send_message tool description mentions the other two tools and cross-team constraint
-
-- **GIVEN** a client fetches the MCP tool list via `tools/list`
-- **WHEN** it reads the `description` of `send_message`
-- **THEN** the description SHOULD reference both `broadcast` and `broadcast_to_role` as the paths for multi-recipient delivery
-- **AND** SHOULD include a sentence expressing "除非用户明确指定 `to_team`, 不要跨 team 沟通" (Chinese OK) or an equivalent English statement
-- **AND** SHOULD describe the fire-and-forget + optional poke follow-up idiom for auto_poke semantics
-
 ### Requirement: send_message to unknown recipient
 
 When `to_agent_id` references no agent, OR references an agent whose `team` field does not equal the resolved `to_team` (caller's team if `to_team` omitted, or the explicit `to_team` if provided), the daemon SHALL return `{ error: 'unknown_recipient' }` without writing any event.
@@ -535,6 +508,33 @@ The response shape MUST be:
 - **THEN** the description SHOULD state the tool is strictly same-team
 - **AND** SHOULD reference `send_message({to_team})` as the only cross-team path (and only for 1→1)
 - **AND** SHOULD describe auto-poke default, quiet-guard, and retry-backoff consistent with `broadcast`
+
+### Requirement: send_message is 1→1 private message only
+
+`send_message({to_agent_id, to_team?, subject?, body, auto_poke?})` MUST accept `to_agent_id` as the ONLY way to name the recipient. Requests containing a `to_role` parameter SHALL be rejected by the MCP tool schema layer (Zod validation) — the parameter is not defined on the tool at all.
+
+`send_message` MUST accept an optional `to_team` parameter. When `to_team` is omitted, the daemon SHALL default it to the caller's team. When `to_team` is provided and equals the caller's team, behavior is identical to omission. When `to_team` is provided and differs from the caller's team, the call constitutes a cross-team private message (see Requirement "send_message supports cross-team delivery when to_team is explicit").
+
+The `send_message` MCP tool description MUST state: 除非用户明确指定 `to_team`, 不要跨 team 沟通.  The description MUST also reference `broadcast_to_role` as the way to address a role, and `broadcast` as the way to reach the whole team.
+
+#### Scenario: to_role parameter is rejected by the schema layer
+
+- **WHEN** a client calls `send_message({to_agent_id:'X', to_role:'frontend', body:'hi'})`
+- **THEN** the MCP tool's Zod schema MUST reject the call with a validation error (unknown field `to_role`)
+- **AND** no `messages` or `events` row is written
+
+#### Scenario: send_message without to_agent_id is rejected
+
+- **WHEN** a client calls `send_message({body:'hi'})`
+- **THEN** the MCP tool's Zod schema MUST reject the call with a validation error (missing required field `to_agent_id`)
+
+#### Scenario: send_message tool description mentions the other two tools and cross-team constraint
+
+- **GIVEN** a client fetches the MCP tool list via `tools/list`
+- **WHEN** it reads the `description` of `send_message`
+- **THEN** the description SHOULD reference both `broadcast` and `broadcast_to_role` as the paths for multi-recipient delivery
+- **AND** SHOULD include a sentence expressing "除非用户明确指定 `to_team`, 不要跨 team 沟通" (Chinese OK) or an equivalent English statement
+- **AND** SHOULD describe the fire-and-forget + optional poke follow-up idiom for auto_poke semantics
 
 ## REMOVED Requirements
 

@@ -1,0 +1,17 @@
+{
+  "change": "send-message-by-name",
+  "phase": "done",
+  "iteration": 2,
+  "max_iterations": 3,
+  "last_critical_types": ["tdd-discipline-red-shows-pass-fraud"],
+  "history": [
+    { "iteration": 1, "phase": "propose", "status": "ok", "at": "2026-04-20T00:01:00Z" },
+    { "iteration": 1, "phase": "apply", "status": "ok", "at": "2026-04-20T00:20:00Z" },
+    { "iteration": 1, "phase": "review", "status": "pass", "at": "2026-04-20T00:25:00Z" },
+    { "iteration": 1, "phase": "verify", "status": "critical", "at": "2026-04-20T00:35:00Z" },
+    { "iteration": 2, "phase": "auto-fix-apply", "status": "ok", "at": "2026-04-20T00:45:00Z" },
+    { "iteration": 2, "phase": "verify", "status": "pass", "at": "2026-04-20T00:55:00Z" },
+    { "iteration": 2, "phase": "sync", "status": "ok", "at": "2026-04-20T01:00:00Z" }
+  ],
+  "updated_at": "2026-04-20T01:00:00Z"
+}

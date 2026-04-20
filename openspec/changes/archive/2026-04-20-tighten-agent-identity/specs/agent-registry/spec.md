@@ -30,7 +30,7 @@ A UNIQUE index `agents_identity_idx` SHALL exist on `(team, name)` to support O(
 - **THEN** SQLite raises `UNIQUE constraint failed: agents.team, agents.name`
 - **AND** only the original row `agent_id='X'` remains in the table
 
-### Requirement: register_agent reuses agent_id by (team, name) identity
+### Requirement: register_agent reuses agent_id by (team, name, role) identity
 
 The `register_agent` MCP tool SHALL take `{ model: string, name: string, role?: string = 'default', team?: string = 'default', tmux_pane_id?: string }` and:
 
@@ -161,11 +161,3 @@ Arriving on a different TCP socket (e.g. after keep-alive expiry) MUST NOT by it
 - **WHEN** session `sess-B` calls `register_agent({ model, team: 'default', name: 'alice', role: 'frontend' })`
 - **THEN** response is HTTP 409 with body `{ error: 'agent_id_collision' }`
 - **AND** the original row for `(default, alice)` is unchanged (still `role='backend'`, bound to `sess-A`)
-
-## REMOVED Requirements
-
-### Requirement: Role change produces new agent_id (scenario-level removal)
-
-**Reason**: Identity is now `(team, name)`. The previous spec had a scenario named "Role change produces new agent_id (new identity)" that asserted a new UUID is returned when only `role` changes. That scenario is inverted by this change: role changes update the existing row in place (see the new scenario "Role change updates existing agent_id in-place"). The scenario-level removal is recorded here because the ambient requirement ("register_agent reuses agent_id by (team, name, role) identity") is itself being re-worded as "reuses by (team, name) identity" — the scenario no longer fits the parent requirement.
-
-**Migration**: Callers previously relying on "I register as alice/backend for one agent_id and alice/frontend for another" MUST consolidate to a single `(team, name)` identity. If distinct mailboxes are genuinely needed, use distinct names (e.g. `alice-backend` vs `alice-frontend`).
