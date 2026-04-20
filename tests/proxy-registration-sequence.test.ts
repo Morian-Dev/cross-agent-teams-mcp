@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { startServer } from '../src/daemon/server.js'
-import { runRegistrationSequence } from '../plugins/ts-agent-teams-channel/src/daemon-client.js'
+import { runRegistrationSequence } from '../plugins/cross-agent-teams-channel/src/daemon-client.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-proxy-reg-'))
 

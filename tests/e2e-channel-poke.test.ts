@@ -6,8 +6,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { startServer } from '../src/daemon/server.js'
-import { runRegistrationSequence } from '../plugins/ts-agent-teams-channel/src/daemon-client.js'
-import { createProxyServer, relayChannelWake } from '../plugins/ts-agent-teams-channel/src/proxy.js'
+import { runRegistrationSequence } from '../plugins/cross-agent-teams-channel/src/daemon-client.js'
+import { createProxyServer, relayChannelWake } from '../plugins/cross-agent-teams-channel/src/proxy.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-e2e-chan-'))
 

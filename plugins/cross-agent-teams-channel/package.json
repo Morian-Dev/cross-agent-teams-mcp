@@ -1,10 +1,10 @@
 {
-  "name": "ts-agent-teams-channel",
+  "name": "cross-agent-teams-channel",
   "version": "0.1.0",
-  "description": "Claude Code channel proxy for ts-agent-teams",
+  "description": "Claude Code channel proxy for cross-agent-teams-mcp",
   "type": "module",
   "bin": {
-    "ts-agent-teams-channel-proxy": "./dist/cli.js"
+    "cross-agent-teams-proxy": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

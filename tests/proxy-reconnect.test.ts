@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { startServer } from '../src/daemon/server.js'
-import { runReconnectingProxy } from '../plugins/ts-agent-teams-channel/src/daemon-client.js'
+import { runReconnectingProxy } from '../plugins/cross-agent-teams-channel/src/daemon-client.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-proxy-reconn-'))
 
