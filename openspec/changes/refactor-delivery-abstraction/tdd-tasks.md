@@ -237,23 +237,47 @@
   - `agent-delivery/spec.md` → every scenario under Requirements "DeliverySpec persistence maps to two columns" and "DeliverySpec validation rejects unknown kinds at write time" (coverage audit)
 - **Files:**
   - Modify: `tests/delivery-spec.test.ts`
-- [ ] **RED:** Audit `tests/delivery-spec.test.ts` against the spec scenarios above; add any missing cases, ensure they fail if the feature is incomplete
-- [ ] **Verify RED:** run `pnpm test tests/delivery-spec.test.ts` against the pre-1.1..1.4 tree (if any audit gap is found the new case should fail); confirm every scenario row has at least one dedicated test
+- [x] **RED:** Audit `tests/delivery-spec.test.ts` against the spec scenarios above; add any missing cases, ensure they fail if the feature is incomplete
+- [x] **Verify RED:** run `pnpm test tests/delivery-spec.test.ts` against the pre-1.1..1.4 tree (if any audit gap is found the new case should fail); confirm every scenario row has at least one dedicated test
   - **Observed output:**
     ```
+    Audit result: coverage from tasks 1.1-1.4 already exercises every scenario
+    under "DeliverySpec persistence maps to two columns" and "DeliverySpec
+    validation rejects unknown kinds at write time". Added an explicit
+    "Task 1.5 scenario coverage audit" describe block mirroring each spec
+    scenario 1:1 (11 new cases) so coverage is self-documenting and
+    regression-proof. Since 1.1-1.4 implementation is already in tree, the
+    new audit cases pass on first run (no RED gap detected):
+
+     RUN  v2.1.9 /Users/jtianling/workspace/cross-agent-teams-mcp-workspace/cross-agent-teams-mcp
+     ✓ tests/delivery-spec.test.ts (29 tests) 3ms
+     Test Files  1 passed (1)
+          Tests  29 passed (29)
+       Duration  125ms
     ```
-- [ ] **GREEN:** If any gap was filled, ensure implementation still covers it (changes to `src/lib/delivery-spec.ts` only if needed)
-- [ ] **Verify GREEN:** re-run the full suite, confirm pass
+- [x] **GREEN:** If any gap was filled, ensure implementation still covers it (changes to `src/lib/delivery-spec.ts` only if needed)
+- [x] **Verify GREEN:** re-run the full suite, confirm pass
   - **Observed output:**
     ```
+    $ pnpm vitest run
+     Test Files  102 passed (102)
+          Tests  344 passed (344)
+       Duration  15.41s
+
+    $ pnpm typecheck
+    (tsc --noEmit, exit 0)
     ```
-- [ ] **REFACTOR:** None — already minimal
-- [ ] **Verify REFACTOR:** re-run tests
+- [x] **REFACTOR:** None — already minimal
+- [x] **Verify REFACTOR:** re-run tests
   - **Observed output:**
     ```
+    No refactor applied; targeted suite still green:
+     ✓ tests/delivery-spec.test.ts (29 tests)
+     Test Files  1 passed (1)
+          Tests  29 passed (29)
     ```
-- [ ] **Commit:** `test(lib): close scenario coverage for delivery-spec (Task 1.5)`
-  - **Commit SHA:** ``
+- [x] **Commit:** `test(lib): close scenario coverage for delivery-spec (Task 1.5)`
+  - **Commit SHA:** `5e53d79`
 
 ## TDD for 2.1 Update `src/storage/schema.ts` to include `delivery_kind TEXT NOT NULL DEFAULT 'none'` and `delivery_payload TEXT` in the `CREATE TABLE agents` statement for fresh databases
 - kind: unit-test

@@ -208,3 +208,101 @@ describe('validateDeliveryForWrite (Task 1.4)', () => {
     });
   });
 });
+
+describe('Task 1.5 scenario coverage audit (agent-delivery/spec.md)', () => {
+  describe('Requirement: persistence maps to two columns', () => {
+    it('scenario: writing kind none sets payload to NULL', () => {
+      expect(serializeDelivery({ kind: 'none' })).toEqual({
+        delivery_kind: 'none',
+        delivery_payload: null,
+      });
+    });
+
+    it('scenario: writing kind claude-channel serializes channel_session_id into payload', () => {
+      expect(
+        serializeDelivery({ kind: 'claude-channel', channel_session_id: 'csid-abc' }),
+      ).toEqual({
+        delivery_kind: 'claude-channel',
+        delivery_payload: '{"channel_session_id":"csid-abc"}',
+      });
+    });
+
+    it('scenario: reading back kind none row reconstructs {kind:none}', () => {
+      expect(parseDeliveryRow({ delivery_kind: 'none', delivery_payload: null })).toEqual({
+        kind: 'none',
+      });
+    });
+
+    it('scenario: reading back kind claude-channel row reconstructs spec', () => {
+      expect(
+        parseDeliveryRow({
+          delivery_kind: 'claude-channel',
+          delivery_payload: '{"channel_session_id":"csid-abc"}',
+        }),
+      ).toEqual({ kind: 'claude-channel', channel_session_id: 'csid-abc' });
+    });
+
+    it('scenario: non-none row with unparseable payload fails with corrupt_delivery_payload', () => {
+      expect(() =>
+        parseDeliveryRow({ delivery_kind: 'claude-channel', delivery_payload: 'not-json' }),
+      ).toThrow('corrupt_delivery_payload');
+    });
+
+    it('roundtrip: parse(serialize(spec)) is identity for every kind', () => {
+      const specs: DeliverySpec[] = [
+        { kind: 'none' },
+        { kind: 'claude-channel', channel_session_id: 'csid-roundtrip' },
+        {
+          kind: 'codex-appserver',
+          thread_id: '22222222-2222-2222-2222-222222222222',
+          ws_url: 'ws://roundtrip',
+        },
+        {
+          kind: 'codex-appserver',
+          thread_id: '33333333-3333-3333-3333-333333333333',
+          ws_url: 'wss://roundtrip',
+          auth_token_ref: 'env:RT',
+        },
+      ];
+      for (const spec of specs) {
+        expect(parseDeliveryRow(serializeDelivery(spec))).toEqual(spec);
+      }
+    });
+  });
+
+  describe('Requirement: validation rejects unknown kinds at write time', () => {
+    it('scenario: accepts kind none', () => {
+      expect(validateDeliveryForWrite({ kind: 'none' })).toEqual({ ok: { kind: 'none' } });
+    });
+
+    it('scenario: accepts kind claude-channel with valid channel_session_id', () => {
+      expect(
+        validateDeliveryForWrite({ kind: 'claude-channel', channel_session_id: 'csid-ok' }),
+      ).toEqual({ ok: { kind: 'claude-channel', channel_session_id: 'csid-ok' } });
+    });
+
+    it('scenario: rejects kind codex-appserver with reason kind_not_yet_supported', () => {
+      expect(
+        validateDeliveryForWrite({
+          kind: 'codex-appserver',
+          thread_id: '00000000-0000-0000-0000-000000000000',
+          ws_url: 'ws://x',
+        }),
+      ).toEqual({ error: 'invalid_delivery', reason: 'kind_not_yet_supported' });
+    });
+
+    it('scenario: rejects unknown kind irc with reason unknown_kind', () => {
+      expect(validateDeliveryForWrite({ kind: 'irc' })).toEqual({
+        error: 'invalid_delivery',
+        reason: 'unknown_kind',
+      });
+    });
+
+    it('scenario: rejects claude-channel missing channel_session_id', () => {
+      expect(validateDeliveryForWrite({ kind: 'claude-channel' })).toEqual({
+        error: 'invalid_delivery',
+        reason: 'missing_channel_session_id',
+      });
+    });
+  });
+});
