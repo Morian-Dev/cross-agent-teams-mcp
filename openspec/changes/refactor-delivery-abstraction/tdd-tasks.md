@@ -345,23 +345,41 @@
 - **Files:**
   - Modify: `src/storage/schema.ts` (or the bootstrap entry point)
   - Create: `tests/migration-delivery-columns.test.ts`
-- [ ] **INTEGRATION-RED:** Seed a `better-sqlite3` DB whose `agents` table lacks `delivery_kind`/`delivery_payload`; run the bootstrap; assert columns exist afterwards with correct PRAGMA; then run bootstrap a second time and assert no error, no duplicate ALTER (e.g. by capturing executed SQL or verifying idempotent outcome). The test must fail before 2.2 implementation lands.
-- [ ] **Verify RED:** run `pnpm test tests/migration-delivery-columns.test.ts`, confirm failure
+- [x] **INTEGRATION-RED:** Seed a `better-sqlite3` DB whose `agents` table lacks `delivery_kind`/`delivery_payload`; run the bootstrap; assert columns exist afterwards with correct PRAGMA; then run bootstrap a second time and assert no error, no duplicate ALTER (e.g. by capturing executed SQL or verifying idempotent outcome). The test must fail before 2.2 implementation lands.
+- [x] **Verify RED:** run `pnpm test tests/migration-delivery-columns.test.ts`, confirm failure
   - **Observed output:**
     ```
+     ❯ tests/migration-delivery-columns.test.ts (3 tests | 2 failed) 10ms
+       × migration: delivery columns > adds delivery_kind and delivery_payload to a pre-existing old-schema agents table 6ms
+         → expected undefined to be defined
+       × migration: delivery columns > is idempotent: running applySchema twice does not error and leaves columns intact 3ms
+         → expected [ 'agent_id', …(9) ] to include 'delivery_kind'
+     Test Files  1 failed (1)
+          Tests  2 failed | 1 passed (3)
     ```
-- [ ] **INTEGRATION-GREEN:** Implement idempotent bootstrap: detect via `PRAGMA table_info('agents')`; conditionally ALTER; wrap in a transaction
-- [ ] **Verify GREEN:** re-run the test + full suite, confirm pass
+- [x] **INTEGRATION-GREEN:** Implement idempotent bootstrap: detect via `PRAGMA table_info('agents')`; conditionally ALTER; wrap in a transaction
+- [x] **Verify GREEN:** re-run the test + full suite, confirm pass
   - **Observed output:**
     ```
+     ✓ tests/migration-delivery-columns.test.ts (3 tests) 10ms
+     Test Files  1 passed (1)
+          Tests  3 passed (3)
+
+    full-suite summary:
+     Test Files  103 passed (103)
+          Tests  348 passed (348)
+       Duration  15.79s
     ```
-- [ ] **REFACTOR:** None — already minimal
-- [ ] **Verify REFACTOR:** re-run tests
+- [x] **REFACTOR:** None — already minimal
+- [x] **Verify REFACTOR:** re-run tests
   - **Observed output:**
     ```
+    Re-ran full suite after refactor review (no code changes):
+     Test Files  103 passed (103)
+          Tests  348 passed (348)
     ```
-- [ ] **Commit:** `feat(storage): idempotent startup migration adds delivery columns (Task 2.2)`
-  - **Commit SHA:** ``
+- [x] **Commit:** `feat(storage): idempotent startup migration adds delivery columns (Task 2.2)`
+  - **Commit SHA:** `bb93350`
 
 ## TDD for 2.3 Add one-shot backfill in the same migration: `UPDATE agents SET delivery_kind='claude-channel', delivery_payload=json_object('channel_session_id', channel_session_id) WHERE channel_session_id IS NOT NULL AND delivery_kind='none'`
 - kind: integration-test

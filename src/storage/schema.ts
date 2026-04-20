@@ -73,6 +73,28 @@ const DDL = [
   )`
 ]
 
+function migrateAgentsDeliveryColumns(db: Database.Database): void {
+  const tableExists = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='agents'`)
+    .get() as { name: string } | undefined
+  if (!tableExists) return
+  const cols = db.pragma('table_info(agents)') as Array<{ name: string }>
+  const existing = new Set(cols.map(c => c.name))
+  const needKind = !existing.has('delivery_kind')
+  const needPayload = !existing.has('delivery_payload')
+  if (!needKind && !needPayload) return
+  const tx = db.transaction(() => {
+    if (needKind) {
+      db.exec(`ALTER TABLE agents ADD COLUMN delivery_kind TEXT NOT NULL DEFAULT 'none'`)
+    }
+    if (needPayload) {
+      db.exec(`ALTER TABLE agents ADD COLUMN delivery_payload TEXT`)
+    }
+  })
+  tx()
+}
+
 export function applySchema(db: Database.Database): void {
   for (const sql of DDL) db.exec(sql)
+  migrateAgentsDeliveryColumns(db)
 }
