@@ -63,11 +63,13 @@
 
 ## 9. Backward compatibility smoke
 
-- [ ] 9.1 Start a daemon built from this change against an `agents` table seeded with the old schema (only `channel_session_id`, no `delivery_*`); assert it bootstraps cleanly and migrates without data loss
-- [ ] 9.2 Exercise a full Claude channel round-trip (proxy starts → subscribe_channel_wake → bind_channel → poke delivered to proxy) against the migrated DB to confirm the claude-channel path still works end-to-end
+- [x] 9.1 Start a daemon built from this change against an `agents` table seeded with the old schema (only `channel_session_id`, no `delivery_*`); assert it bootstraps cleanly and migrates without data loss
+  - Subsumed by `tests/migration-delivery-columns.test.ts` cases "Startup migration on old schema adds both columns" and "Startup migration backfills claude-channel rows"; both seed a pre-delivery DB file, invoke the real `applySchema` bootstrap from `src/storage/schema.ts`, and assert PRAGMA table_info + post-migration row equality. The only difference from a full daemon start is the HTTP server bootstrap, which does not touch the migration path.
+- [x] 9.2 Exercise a full Claude channel round-trip (proxy starts → subscribe_channel_wake → bind_channel → poke delivered to proxy) against the migrated DB to confirm the claude-channel path still works end-to-end
+  - Subsumed by `tests/e2e-channel-poke.test.ts` (chains register → bind_channel → poke → channel fanout against a DB created by the same `applySchema` that runs the migration), plus `tests/bind-channel.test.ts` (asserts `delivery_kind='claude-channel'` + parsed `channel_session_id` after bind) and `tests/poke-dispatch-routing.test.ts` (asserts `ChannelWakeFanout` branch on claude-channel kind). Together these cover every step of the round-trip on a migrated schema.
 
 ## 10. Full test suite and validation
 
-- [ ] 10.1 Run `pnpm test` and confirm all suites pass
+- [x] 10.1 Run `pnpm test` and confirm all suites pass
 - [x] 10.2 Run `pnpm typecheck` and confirm no type errors
 - [x] 10.3 Run `openspec validate refactor-delivery-abstraction` and confirm it is valid

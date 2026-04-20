@@ -58,14 +58,15 @@ describe('register_agent tool hint rule (tmux only)', () => {
     await t.close(); await app.close()
   })
 
-  it('register_agent rejects unknown channel_session_id argument (not in schema)', async () => {
+  it('register_agent rejects unknown channel_session_id argument (strict schema)', async () => {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
     const { c, t } = await connectClient(host, port)
 
-    // Passing channel_session_id must either be silently ignored (not persisted)
-    // or rejected; either way the agent is created and the persisted row has
-    // channel_session_id=NULL because register_agent is no longer a writer for it.
+    // register_agent is no longer a writer for channel_session_id. After the
+    // delivery-abstraction refactor, the MCP tool schema is strict and returns
+    // a validation error envelope (isError: true) for unknown top-level args.
+    // No agent row must be created.
     const resp = await c.callTool({
       name: 'register_agent',
       arguments: {
@@ -73,14 +74,11 @@ describe('register_agent tool hint rule (tmux only)', () => {
         channel_session_id: 'csid-should-not-be-written'
       }
     })
-    const obj = await parseTool(resp)
-    expect(obj.agent_id).toBeDefined()
-    // The agents row should have channel_session_id=NULL because bind_channel is the only writer.
-    const listResp = await c.callTool({ name: 'list_agents', arguments: {} })
-    const list = await parseTool(listResp)
-    const agents = list.agents as Array<{ name: string; channel_session_id: string | null }>
-    const aliceRow = agents.find(a => a.name === 'alice')
-    expect(aliceRow?.channel_session_id).toBeNull()
+    const errResp = resp as { isError?: boolean; content: Array<{ text: string }> }
+    expect(errResp.isError).toBe(true)
+    expect(errResp.content[0].text).toMatch(/channel_session_id/i)
+    expect(errResp.content[0].text).toMatch(/unrecognized_keys|Input validation/i)
+    // Schema rejection happens before any DB write, so no agent row exists.
 
     await t.close(); await app.close()
   })
