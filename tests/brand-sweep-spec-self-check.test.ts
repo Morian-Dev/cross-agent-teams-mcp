@@ -9,6 +9,11 @@ const SPEC_PATH = resolve(
   'openspec/specs/daemon-core/spec.md'
 )
 
+const SWEEP_TEST_PATH = resolve(
+  process.cwd(),
+  'tests/brand-sweep.test.ts'
+)
+
 describe('brand-sweep spec self-check', () => {
   it('daemon-core main spec file is literal-free', () => {
     const content = readFileSync(SPEC_PATH, 'utf8')
@@ -16,5 +21,16 @@ describe('brand-sweep spec self-check', () => {
       content.includes(LEGACY_BRAND),
       `daemon-core spec must not embed the legacy brand literal as a contiguous substring`
     ).toBe(false)
+  })
+
+  it('sweep allowlist covers daemon-core spec dir as defense in depth', () => {
+    const sweep = readFileSync(SWEEP_TEST_PATH, 'utf8')
+    const hasDirExclude = sweep.includes('--exclude-dir=daemon-core')
+    const hasPathAllowlist =
+      sweep.includes('daemon-core') && /exclude/i.test(sweep)
+    expect(
+      hasDirExclude || hasPathAllowlist,
+      `brand-sweep.test.ts must categorically exempt the daemon-core spec directory via --exclude-dir=daemon-core or an equivalent path-aware allowlist entry`
+    ).toBe(true)
   })
 })

@@ -31,9 +31,14 @@ const ANTI_BRAND_ASSERTION_EXCLUDES = [
 
 describe('brand sweep', () => {
   it('no active source file contains the legacy ts-agent-teams brand', () => {
-    const excludeArgs = ANTI_BRAND_ASSERTION_EXCLUDES.flatMap((name) => [
-      `--exclude=${name}`
-    ])
+    const excludeArgs = [
+      ...ANTI_BRAND_ASSERTION_EXCLUDES.flatMap((name) => [
+        `--exclude=${name}`
+      ]),
+      // daemon-core dir holds the spec that describes the invariant by
+      // negative assertion; see change fix-brand-sweep-self-match.
+      '--exclude-dir=daemon-core'
+    ]
     let hits = ''
     try {
       hits = execFileSync(
