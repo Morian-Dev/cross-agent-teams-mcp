@@ -57,7 +57,7 @@
        Duration  124ms
     ```
 - [x] **Commit:** `feat(lib): add DeliverySpec discriminated union (Task 1.1)`
-  - **Commit SHA:** `2218d6c`
+  - **Commit SHA:** `c64ed68`
 
 ## TDD for 1.2 Implement `parseDeliveryRow(row: { delivery_kind, delivery_payload }): DeliverySpec` with `corrupt_delivery_payload` error on parse failure
 - kind: unit-test
