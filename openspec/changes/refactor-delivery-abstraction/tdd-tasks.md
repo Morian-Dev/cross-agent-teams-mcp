@@ -533,22 +533,45 @@
   - `agent-registry/spec.md` → Scenario: `Startup migration backfills claude-channel rows`
 - **Files:**
   - Modify: `tests/migration-delivery-columns.test.ts`
-- [ ] **INTEGRATION-RED:** Audit the migration test; ensure the "seed → bootstrap → assert columns + backfill" case covers both scenarios end-to-end (precise PRAGMA + exact JSON payload assertion). Add missing assertions.
-- [ ] **Verify RED:** run the targeted test; confirm any audit gap surfaces as a failure
+- [x] **INTEGRATION-RED:** Audit the migration test; ensure the "seed → bootstrap → assert columns + backfill" case covers both scenarios end-to-end (precise PRAGMA + exact JSON payload assertion). Add missing assertions.
+- [x] **Verify RED:** run the targeted test; confirm any audit gap surfaces as a failure
   - **Observed output:**
     ```
+    (temporarily patched src/storage/schema.ts backfill to write json_object('channel_session_id','BROKEN'); reverted immediately after observing RED)
+     FAIL  tests/migration-delivery-columns.test.ts > migration: delivery columns > backfills delivery_kind/delivery_payload from channel_session_id during migration
+    AssertionError: expected { channel_session_id: 'BROKEN' } to deeply equal { channel_session_id: 'csid-abc' }
+       106|     expect(row1.delivery_kind).toBe('claude-channel')
+       107|     expect(row1.delivery_payload).not.toBeNull()
+       108|     expect(JSON.parse(row1.delivery_payload as string)).toEqual({ chan…
+          |                                                         ^
+     Test Files  1 failed (1)
+          Tests  1 failed | 5 passed (6)
     ```
-- [ ] **INTEGRATION-GREEN:** Confirm 2.2 + 2.3 implementations cover the assertions; no production change expected
-- [ ] **Verify GREEN:** re-run the test + full suite, confirm pass
+- [x] **INTEGRATION-GREEN:** Confirm 2.2 + 2.3 implementations cover the assertions; no production change expected
+- [x] **Verify GREEN:** re-run the test + full suite, confirm pass
   - **Observed output:**
     ```
+    # scoped
+     ✓ tests/migration-delivery-columns.test.ts (6 tests) 14ms
+     Test Files  1 passed (1)
+          Tests  6 passed (6)
+
+    # full suite
+     Test Files  103 passed (103)
+          Tests  353 passed (353)
+       Duration  15.50s
+
+    # typecheck
+    > tsc --noEmit
+    (exit 0, no diagnostics)
     ```
-- [ ] **REFACTOR:** None — already minimal
-- [ ] **Verify REFACTOR:** re-run tests
+- [x] **REFACTOR:** None — already minimal
+- [x] **Verify REFACTOR:** re-run tests
   - **Observed output:**
     ```
+    (no refactor performed; GREEN run above already confirms targeted + full suite pass after production revert)
     ```
-- [ ] **Commit:** `test(storage): close migration-from-old-schema coverage (Task 2.6)`
+- [x] **Commit:** `test(storage): close migration-from-old-schema coverage (Task 2.6)`
   - **Commit SHA:** ``
 
 ## TDD for 2.7 Tests: migration idempotence — run startup twice, assert second run does no ALTER and does not overwrite values

@@ -13,7 +13,7 @@
 - [x] 2.3 Add one-shot backfill in the same migration: `UPDATE agents SET delivery_kind='claude-channel', delivery_payload=json_object('channel_session_id', channel_session_id) WHERE channel_session_id IS NOT NULL AND delivery_kind='none'`
 - [x] 2.4 Verify migration leaves legacy `channel_session_id` column and its values untouched
 - [x] 2.5 Tests: fresh-db schema assertions (PRAGMA table_info columns, defaults, notnull flags) matching scenarios in `agent-registry/spec.md`
-- [ ] 2.6 Tests: migration-from-old-schema — seed a DB that lacks `delivery_*` columns but has rows with `channel_session_id`, run startup, assert columns exist and backfill applied exactly to matching rows
+- [x] 2.6 Tests: migration-from-old-schema — seed a DB that lacks `delivery_*` columns but has rows with `channel_session_id`, run startup, assert columns exist and backfill applied exactly to matching rows
 - [ ] 2.7 Tests: migration idempotence — run startup twice, assert second run does no ALTER and does not overwrite values
 
 ## 3. AgentsRepo: delivery read / write
