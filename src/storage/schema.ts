@@ -90,6 +90,12 @@ function migrateAgentsDeliveryColumns(db: Database.Database): void {
     if (needPayload) {
       db.exec(`ALTER TABLE agents ADD COLUMN delivery_payload TEXT`)
     }
+    if (needKind || needPayload) {
+      db.exec(`UPDATE agents
+        SET delivery_kind = 'claude-channel',
+            delivery_payload = json_object('channel_session_id', channel_session_id)
+        WHERE channel_session_id IS NOT NULL AND delivery_kind = 'none'`)
+    }
   })
   tx()
 }

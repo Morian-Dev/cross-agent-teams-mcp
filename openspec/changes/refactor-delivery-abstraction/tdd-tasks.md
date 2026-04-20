@@ -388,23 +388,46 @@
 - **Files:**
   - Modify: `src/storage/schema.ts`
   - Modify: `tests/migration-delivery-columns.test.ts`
-- [ ] **INTEGRATION-RED:** Extend the migration test: seed rows with `channel_session_id='csid-abc'` BEFORE the new columns exist; run bootstrap; assert the row has `delivery_kind='claude-channel'` and `delivery_payload='{"channel_session_id":"csid-abc"}'`. Also seed a row with `channel_session_id=NULL`; assert it stays `delivery_kind='none'`, `delivery_payload IS NULL`.
-- [ ] **Verify RED:** run `pnpm test tests/migration-delivery-columns.test.ts`, confirm failure
+- [x] **INTEGRATION-RED:** Extend the migration test: seed rows with `channel_session_id='csid-abc'` BEFORE the new columns exist; run bootstrap; assert the row has `delivery_kind='claude-channel'` and `delivery_payload='{"channel_session_id":"csid-abc"}'`. Also seed a row with `channel_session_id=NULL`; assert it stays `delivery_kind='none'`, `delivery_payload IS NULL`.
+- [x] **Verify RED:** run `pnpm test tests/migration-delivery-columns.test.ts`, confirm failure
   - **Observed output:**
     ```
+     ❯ tests/migration-delivery-columns.test.ts (5 tests | 2 failed) 45ms
+       × migration: delivery columns > backfills delivery_kind/delivery_payload from channel_session_id during migration 4ms
+         → expected 'none' to be 'claude-channel' // Object.is equality
+       × migration: delivery columns > backfill is idempotent: running applySchema again does not overwrite existing delivery data 2ms
+         → expected 'none' to be 'claude-channel' // Object.is equality
+    AssertionError: expected 'none' to be 'claude-channel' // Object.is equality
+    Expected: "claude-channel"
+    Received: "none"
+     ❯ tests/migration-delivery-columns.test.ts:106:32
+     Test Files  1 failed (1)
+          Tests  2 failed | 3 passed (5)
     ```
-- [ ] **INTEGRATION-GREEN:** Add the one-shot UPDATE inside the same bootstrap transaction, guarded by `channel_session_id IS NOT NULL AND delivery_kind='none'`
-- [ ] **Verify GREEN:** re-run the test + full suite, confirm pass
+- [x] **INTEGRATION-GREEN:** Add the one-shot UPDATE inside the same bootstrap transaction, guarded by `channel_session_id IS NOT NULL AND delivery_kind='none'`
+- [x] **Verify GREEN:** re-run the test + full suite, confirm pass
   - **Observed output:**
     ```
+    scoped:
+     ✓ tests/migration-delivery-columns.test.ts (5 tests) 14ms
+     Test Files  1 passed (1)
+          Tests  5 passed (5)
+    full suite:
+     Test Files  103 passed (103)
+          Tests  350 passed (350)
+       Duration  15.81s
+    typecheck:
+    > tsc --noEmit  (exit 0, no output)
     ```
-- [ ] **REFACTOR:** None — already minimal
-- [ ] **Verify REFACTOR:** re-run tests
+- [x] **REFACTOR:** None — already minimal
+- [x] **Verify REFACTOR:** re-run tests
   - **Observed output:**
     ```
+     Test Files  103 passed (103)
+          Tests  350 passed (350)
     ```
-- [ ] **Commit:** `feat(storage): backfill delivery from legacy channel_session_id on migration (Task 2.3)`
-  - **Commit SHA:** ``
+- [x] **Commit:** `feat(storage): backfill delivery from legacy channel_session_id on migration (Task 2.3)`
+  - **Commit SHA:** `d73d2e2`
 
 ## TDD for 2.4 Verify migration leaves legacy `channel_session_id` column and its values untouched
 - kind: integration-test
