@@ -379,7 +379,7 @@
           Tests  348 passed (348)
     ```
 - [x] **Commit:** `feat(storage): idempotent startup migration adds delivery columns (Task 2.2)`
-  - **Commit SHA:** `bb93350`
+  - **Commit SHA:** `8f2b7b4`
 
 ## TDD for 2.3 Add one-shot backfill in the same migration: `UPDATE agents SET delivery_kind='claude-channel', delivery_payload=json_object('channel_session_id', channel_session_id) WHERE channel_session_id IS NOT NULL AND delivery_kind='none'`
 - kind: integration-test
