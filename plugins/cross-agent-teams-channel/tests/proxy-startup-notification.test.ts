@@ -2,11 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { createProxyServer, relayChannelWake } from '../src/proxy.js'
-
-// The proxy's startup flow (in cli.ts) runs register_agent → subscribe_channel_wake
-// and then emits a host-facing notifications/claude/channel announcing the csid.
-// This unit test validates the notification shape by invoking relayChannelWake
-// directly with the startup-hint payload the CLI's onSequenceComplete builds.
+import { buildStartupHint } from '../src/cli.js'
 
 describe('proxy startup channel notification', () => {
   it('emits a claude/channel notification containing csid and bind_channel instruction', async () => {
@@ -23,16 +19,10 @@ describe('proxy startup channel notification', () => {
     await client.connect(clientT)
 
     const csid = 'csid-xyz-1234'
-    const content = [
-      `ts-agent-teams: your channel_session_id is ${csid}.`,
-      `Please call bind_channel({channel_session_id: "${csid}"}) to complete binding.`
-    ].join(' ')
-    relayChannelWake(server, {
-      content,
-      meta: { source: 'ts_agent_teams', kind: 'startup_bind_hint' }
-    })
+    // Exercise production: use the real hint builder from cli.ts
+    const hint = buildStartupHint(csid)
+    relayChannelWake(server, hint)
 
-    // Flush the loop so InMemoryTransport delivers.
     await new Promise(r => setTimeout(r, 50))
 
     const hit = received.find(r => r.method === 'notifications/claude/channel')
@@ -41,6 +31,10 @@ describe('proxy startup channel notification', () => {
     expect(params.content).toContain(csid)
     expect(params.content).toContain('bind_channel')
     expect(params.meta.kind).toBe('startup_bind_hint')
+    // Brand-contract assertions
+    expect(params.content).toContain('cross-agent-teams-mcp')
+    expect(params.content).not.toContain('ts-agent-teams')
+    expect(params.meta.source).toBe('cross_agent_teams_mcp')
 
     await client.close()
     await server.close()

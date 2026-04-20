@@ -17,14 +17,14 @@ export class CliArgError extends Error {
 
 export function buildStartupHint(csid: string): { content: string; meta: { source: string; kind: string } } {
   const content = [
-    `ts-agent-teams: your channel_session_id is ${csid}.`,
-    `If you have not called register_agent yet, call it first (the ts-agent-teams register_agent tool).`,
+    `cross-agent-teams-mcp: your channel_session_id is ${csid}.`,
+    `If you have not called register_agent yet, call it first (the cross-agent-teams-mcp register_agent tool).`,
     `Then call bind_channel({channel_session_id: "${csid}"}) to complete binding.`,
     `If bind_channel returns unknown_agent, it means register_agent has not completed yet — call register_agent then retry bind_channel.`
   ].join(' ')
   return {
     content,
-    meta: { source: 'ts_agent_teams', kind: 'startup_bind_hint' }
+    meta: { source: 'cross_agent_teams_mcp', kind: 'startup_bind_hint' }
   }
 }
 
@@ -65,7 +65,7 @@ export async function main(
     args = parseCliArgs(argv, env)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    process.stderr.write(`ts-agent-teams-channel-proxy: ${msg}\n`)
+    process.stderr.write(`cross-agent-teams-proxy: ${msg}\n`)
     process.exit(2)
   }
 
