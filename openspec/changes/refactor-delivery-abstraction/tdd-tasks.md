@@ -185,20 +185,48 @@
 - **Files:**
   - Modify: `tests/delivery-spec.test.ts`
   - Modify: `src/lib/delivery-spec.ts`
-- [ ] **RED:** Add failing validator tests covering all 5 scenarios above (accept × 2, reject × 3 with explicit `reason` values)
-- [ ] **Verify RED:** run `pnpm test tests/delivery-spec.test.ts`, confirm failure
+- [x] **RED:** Add failing validator tests covering all 5 scenarios above (accept × 2, reject × 3 with explicit `reason` values)
+- [x] **Verify RED:** run `pnpm test tests/delivery-spec.test.ts`, confirm failure
   - **Observed output:**
     ```
+    FAIL  tests/delivery-spec.test.ts > validateDeliveryForWrite (Task 1.4) > accepts {kind: none}
+    TypeError: validateDeliveryForWrite is not a function
+     ❯ tests/delivery-spec.test.ts:169:20
+    FAIL  tests/delivery-spec.test.ts > validateDeliveryForWrite (Task 1.4) > accepts {kind: claude-channel, channel_session_id: ...}
+    TypeError: validateDeliveryForWrite is not a function
+    FAIL  tests/delivery-spec.test.ts > validateDeliveryForWrite (Task 1.4) > rejects {kind: codex-appserver} with reason kind_not_yet_supported
+    TypeError: validateDeliveryForWrite is not a function
+    FAIL  tests/delivery-spec.test.ts > validateDeliveryForWrite (Task 1.4) > rejects unknown kind with reason unknown_kind
+    TypeError: validateDeliveryForWrite is not a function
+    FAIL  tests/delivery-spec.test.ts > validateDeliveryForWrite (Task 1.4) > rejects claude-channel missing channel_session_id with reason missing_channel_session_id
+    TypeError: validateDeliveryForWrite is not a function
+
+     Test Files  1 failed (1)
+          Tests  5 failed | 13 passed (18)
     ```
-- [ ] **GREEN:** Implement `validateDeliveryForWrite` per the spec's discriminated handling
-- [ ] **Verify GREEN:** re-run the test + full suite, confirm pass
+- [x] **GREEN:** Implement `validateDeliveryForWrite` per the spec's discriminated handling
+- [x] **Verify GREEN:** re-run the test + full suite, confirm pass
   - **Observed output:**
     ```
+    Scoped: pnpm vitest run tests/delivery-spec.test.ts
+     ✓ tests/delivery-spec.test.ts (18 tests) 2ms
+     Test Files  1 passed (1)
+          Tests  18 passed (18)
+
+    Full suite: pnpm vitest run
+     Test Files  102 passed (102)
+          Tests  333 passed (333)
+       Duration  15.77s
+
+    Typecheck: pnpm typecheck → tsc --noEmit exit 0
     ```
-- [ ] **REFACTOR:** None — already minimal
-- [ ] **Verify REFACTOR:** re-run tests
+- [x] **REFACTOR:** None — already minimal
+- [x] **Verify REFACTOR:** re-run tests
   - **Observed output:**
     ```
+    Re-ran pnpm vitest run tests/delivery-spec.test.ts
+     Test Files  1 passed (1)
+          Tests  18 passed (18)
     ```
 - [ ] **Commit:** `feat(lib): implement validateDeliveryForWrite (Task 1.4)`
   - **Commit SHA:** ``

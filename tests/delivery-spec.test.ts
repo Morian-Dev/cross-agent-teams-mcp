@@ -1,7 +1,11 @@
 import { describe, it, expectTypeOf, expect } from 'vitest';
 import type { DeliverySpec } from '../src/lib/delivery-spec.js';
 import * as deliverySpecModule from '../src/lib/delivery-spec.js';
-import { parseDeliveryRow, serializeDelivery } from '../src/lib/delivery-spec.js';
+import {
+  parseDeliveryRow,
+  serializeDelivery,
+  validateDeliveryForWrite,
+} from '../src/lib/delivery-spec.js';
 
 describe('DeliverySpec discriminated union shape', () => {
   it('module loads from src/lib/delivery-spec', () => {
@@ -157,5 +161,50 @@ describe('serializeDelivery (Task 1.3)', () => {
     for (const spec of specs) {
       expect(parseDeliveryRow(serializeDelivery(spec))).toEqual(spec);
     }
+  });
+});
+
+describe('validateDeliveryForWrite (Task 1.4)', () => {
+  it('accepts {kind: none}', () => {
+    const result = validateDeliveryForWrite({ kind: 'none' });
+    expect(result).toEqual({ ok: { kind: 'none' } });
+  });
+
+  it('accepts {kind: claude-channel, channel_session_id: ...}', () => {
+    const result = validateDeliveryForWrite({
+      kind: 'claude-channel',
+      channel_session_id: 'csid-abc',
+    });
+    expect(result).toEqual({
+      ok: { kind: 'claude-channel', channel_session_id: 'csid-abc' },
+    });
+  });
+
+  it('rejects {kind: codex-appserver} with reason kind_not_yet_supported', () => {
+    const result = validateDeliveryForWrite({
+      kind: 'codex-appserver',
+      thread_id: '00000000-0000-0000-0000-000000000000',
+      ws_url: 'ws://localhost:1234',
+    });
+    expect(result).toEqual({
+      error: 'invalid_delivery',
+      reason: 'kind_not_yet_supported',
+    });
+  });
+
+  it('rejects unknown kind with reason unknown_kind', () => {
+    const result = validateDeliveryForWrite({ kind: 'irc' });
+    expect(result).toEqual({
+      error: 'invalid_delivery',
+      reason: 'unknown_kind',
+    });
+  });
+
+  it('rejects claude-channel missing channel_session_id with reason missing_channel_session_id', () => {
+    const result = validateDeliveryForWrite({ kind: 'claude-channel' });
+    expect(result).toEqual({
+      error: 'invalid_delivery',
+      reason: 'missing_channel_session_id',
+    });
   });
 });

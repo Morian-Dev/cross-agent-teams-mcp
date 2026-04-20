@@ -59,3 +59,33 @@ export function serializeDelivery(spec: DeliverySpec): DeliveryRow {
     delivery_payload: JSON.stringify(rest),
   };
 }
+
+export type DeliveryValidationReason =
+  | 'kind_not_yet_supported'
+  | 'unknown_kind'
+  | 'missing_channel_session_id';
+
+export type ValidateDeliveryResult =
+  | { ok: DeliverySpec }
+  | { error: 'invalid_delivery'; reason: DeliveryValidationReason };
+
+export function validateDeliveryForWrite(input: unknown): ValidateDeliveryResult {
+  if (typeof input !== 'object' || input === null) {
+    return { error: 'invalid_delivery', reason: 'unknown_kind' };
+  }
+  const kind = (input as { kind?: unknown }).kind;
+  if (kind === 'none') {
+    return { ok: { kind: 'none' } };
+  }
+  if (kind === 'claude-channel') {
+    const csid = (input as { channel_session_id?: unknown }).channel_session_id;
+    if (typeof csid !== 'string' || csid.length === 0) {
+      return { error: 'invalid_delivery', reason: 'missing_channel_session_id' };
+    }
+    return { ok: { kind: 'claude-channel', channel_session_id: csid } };
+  }
+  if (kind === 'codex-appserver') {
+    return { error: 'invalid_delivery', reason: 'kind_not_yet_supported' };
+  }
+  return { error: 'invalid_delivery', reason: 'unknown_kind' };
+}

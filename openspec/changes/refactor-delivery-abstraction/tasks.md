@@ -3,7 +3,7 @@
 - [x] 1.1 Define `DeliverySpec` discriminated union in a new module (e.g. `src/lib/delivery-spec.ts`) with kinds `'none'`, `'claude-channel'`, `'codex-appserver'`
 - [x] 1.2 Implement `parseDeliveryRow(row: { delivery_kind, delivery_payload }): DeliverySpec` with `corrupt_delivery_payload` error on parse failure
 - [x] 1.3 Implement `serializeDelivery(spec: DeliverySpec): { delivery_kind, delivery_payload }` inverse of 1.2
-- [ ] 1.4 Implement `validateDeliveryForWrite(input): { ok: DeliverySpec } | { error: 'invalid_delivery', reason }` accepting `none` and `claude-channel` only; rejecting `codex-appserver` with reason `kind_not_yet_supported` and any other kind with `unknown_kind`
+- [x] 1.4 Implement `validateDeliveryForWrite(input): { ok: DeliverySpec } | { error: 'invalid_delivery', reason }` accepting `none` and `claude-channel` only; rejecting `codex-appserver` with reason `kind_not_yet_supported` and any other kind with `unknown_kind`
 - [ ] 1.5 Unit tests in `tests/delivery-spec.test.ts` covering serialize / parse roundtrip for each kind, corrupt payload, and validator accept/reject cases from `agent-delivery/spec.md`
 
 ## 2. Storage schema and migration
