@@ -572,7 +572,7 @@
     (no refactor performed; GREEN run above already confirms targeted + full suite pass after production revert)
     ```
 - [x] **Commit:** `test(storage): close migration-from-old-schema coverage (Task 2.6)`
-  - **Commit SHA:** ``
+  - **Commit SHA:** `5a4c260`
 
 ## TDD for 2.7 Tests: migration idempotence — run startup twice, assert second run does no ALTER and does not overwrite values
 - kind: integration-test
