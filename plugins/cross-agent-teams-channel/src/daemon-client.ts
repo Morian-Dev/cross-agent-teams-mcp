@@ -41,7 +41,7 @@ export async function runRegistrationSequence(
 ): Promise<RegistrationSequenceResult> {
   const order: string[] = []
   const transport = new StreamableHTTPClientTransport(new URL(config.daemonUrl))
-  const client = new Client({ name: 'ts-agent-teams-channel-proxy', version: '0.1.0' })
+  const client = new Client({ name: 'cross-agent-teams-proxy', version: '0.1.0' })
 
   if (config.notificationHandler) {
     client.fallbackNotificationHandler = async (n) => {
