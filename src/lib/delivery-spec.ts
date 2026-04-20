@@ -48,3 +48,14 @@ export function parseDeliveryRow(row: DeliveryRow): DeliverySpec {
   }
   return { kind, ...(payload as Record<string, unknown>) } as DeliverySpec;
 }
+
+export function serializeDelivery(spec: DeliverySpec): DeliveryRow {
+  if (spec.kind === 'none') {
+    return { delivery_kind: 'none', delivery_payload: null };
+  }
+  const { kind, ...rest } = spec;
+  return {
+    delivery_kind: kind,
+    delivery_payload: JSON.stringify(rest),
+  };
+}

@@ -1,7 +1,7 @@
 import { describe, it, expectTypeOf, expect } from 'vitest';
 import type { DeliverySpec } from '../src/lib/delivery-spec.js';
 import * as deliverySpecModule from '../src/lib/delivery-spec.js';
-import { parseDeliveryRow } from '../src/lib/delivery-spec.js';
+import { parseDeliveryRow, serializeDelivery } from '../src/lib/delivery-spec.js';
 
 describe('DeliverySpec discriminated union shape', () => {
   it('module loads from src/lib/delivery-spec', () => {
@@ -83,5 +83,79 @@ describe('parseDeliveryRow (Task 1.2)', () => {
   it('throws corrupt_delivery_payload when non-none payload fails to parse as JSON', () => {
     const row = { delivery_kind: 'claude-channel', delivery_payload: 'not-json' };
     expect(() => parseDeliveryRow(row)).toThrow('corrupt_delivery_payload');
+  });
+});
+
+describe('serializeDelivery (Task 1.3)', () => {
+  it('serializes {kind: none} to {delivery_kind: none, delivery_payload: null}', () => {
+    const spec: DeliverySpec = { kind: 'none' };
+    expect(serializeDelivery(spec)).toEqual({
+      delivery_kind: 'none',
+      delivery_payload: null,
+    });
+  });
+
+  it('serializes claude-channel to JSON string payload with channel_session_id', () => {
+    const spec: DeliverySpec = {
+      kind: 'claude-channel',
+      channel_session_id: 'csid-abc',
+    };
+    expect(serializeDelivery(spec)).toEqual({
+      delivery_kind: 'claude-channel',
+      delivery_payload: '{"channel_session_id":"csid-abc"}',
+    });
+  });
+
+  it('serializes codex-appserver to JSON payload with thread_id and ws_url', () => {
+    const spec: DeliverySpec = {
+      kind: 'codex-appserver',
+      thread_id: '00000000-0000-0000-0000-000000000000',
+      ws_url: 'ws://localhost:1234',
+    };
+    const result = serializeDelivery(spec);
+    expect(result.delivery_kind).toBe('codex-appserver');
+    expect(result.delivery_payload).not.toBeNull();
+    const parsed = JSON.parse(result.delivery_payload as string);
+    expect(parsed).toEqual({
+      thread_id: '00000000-0000-0000-0000-000000000000',
+      ws_url: 'ws://localhost:1234',
+    });
+  });
+
+  it('serializes codex-appserver with optional auth_token_ref when present', () => {
+    const spec: DeliverySpec = {
+      kind: 'codex-appserver',
+      thread_id: '00000000-0000-0000-0000-000000000000',
+      ws_url: 'wss://example.com/app',
+      auth_token_ref: 'env:CODEX_TOKEN',
+    };
+    const result = serializeDelivery(spec);
+    const parsed = JSON.parse(result.delivery_payload as string);
+    expect(parsed).toEqual({
+      thread_id: '00000000-0000-0000-0000-000000000000',
+      ws_url: 'wss://example.com/app',
+      auth_token_ref: 'env:CODEX_TOKEN',
+    });
+  });
+
+  it('roundtrips parseDeliveryRow(serializeDelivery(spec)) === spec for each kind', () => {
+    const specs: DeliverySpec[] = [
+      { kind: 'none' },
+      { kind: 'claude-channel', channel_session_id: 'csid-xyz' },
+      {
+        kind: 'codex-appserver',
+        thread_id: '00000000-0000-0000-0000-000000000000',
+        ws_url: 'ws://x',
+      },
+      {
+        kind: 'codex-appserver',
+        thread_id: '11111111-1111-1111-1111-111111111111',
+        ws_url: 'wss://y',
+        auth_token_ref: 'env:FOO',
+      },
+    ];
+    for (const spec of specs) {
+      expect(parseDeliveryRow(serializeDelivery(spec))).toEqual(spec);
+    }
   });
 });

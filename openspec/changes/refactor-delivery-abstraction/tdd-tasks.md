@@ -126,23 +126,53 @@
 - **Files:**
   - Modify: `tests/delivery-spec.test.ts`
   - Modify: `src/lib/delivery-spec.ts`
-- [ ] **RED:** Add failing serialize tests: `{kind: 'none'}` → `{delivery_kind: 'none', delivery_payload: null}`; `{kind: 'claude-channel', channel_session_id: 'csid-abc'}` → exact JSON string form
-- [ ] **Verify RED:** run `pnpm test tests/delivery-spec.test.ts`, confirm failure
+- [x] **RED:** Add failing serialize tests: `{kind: 'none'}` → `{delivery_kind: 'none', delivery_payload: null}`; `{kind: 'claude-channel', channel_session_id: 'csid-abc'}` → exact JSON string form
+- [x] **Verify RED:** run `pnpm test tests/delivery-spec.test.ts`, confirm failure
   - **Observed output:**
     ```
+    FAIL  tests/delivery-spec.test.ts > serializeDelivery (Task 1.3) > serializes {kind: none} to {delivery_kind: none, delivery_payload: null}
+    TypeError: serializeDelivery is not a function
+     ❯ tests/delivery-spec.test.ts:92:12
+    FAIL  tests/delivery-spec.test.ts > serializeDelivery (Task 1.3) > serializes claude-channel to JSON string payload with channel_session_id
+    TypeError: serializeDelivery is not a function
+    FAIL  tests/delivery-spec.test.ts > serializeDelivery (Task 1.3) > serializes codex-appserver to JSON payload with thread_id and ws_url
+    TypeError: serializeDelivery is not a function
+    FAIL  tests/delivery-spec.test.ts > serializeDelivery (Task 1.3) > serializes codex-appserver with optional auth_token_ref when present
+    TypeError: serializeDelivery is not a function
+    FAIL  tests/delivery-spec.test.ts > serializeDelivery (Task 1.3) > roundtrips parseDeliveryRow(serializeDelivery(spec)) === spec for each kind
+    TypeError: serializeDelivery is not a function
+
+     Test Files  1 failed (1)
+          Tests  5 failed | 8 passed (13)
     ```
-- [ ] **GREEN:** Implement `serializeDelivery` as the inverse of `parseDeliveryRow`; add a roundtrip test that runs both directions
-- [ ] **Verify GREEN:** re-run the test + full suite, confirm pass
+- [x] **GREEN:** Implement `serializeDelivery` as the inverse of `parseDeliveryRow`; add a roundtrip test that runs both directions
+- [x] **Verify GREEN:** re-run the test + full suite, confirm pass
   - **Observed output:**
     ```
+    scoped: pnpm vitest run tests/delivery-spec.test.ts
+     ✓ tests/delivery-spec.test.ts (13 tests) 2ms
+     Test Files  1 passed (1)
+          Tests  13 passed (13)
+
+    full suite: pnpm vitest run
+     Test Files  102 passed (102)
+          Tests  328 passed (328)
+       Duration  15.51s
+
+    typecheck: pnpm typecheck
+    > tsc --noEmit
+    (exit 0, no errors)
     ```
-- [ ] **REFACTOR:** None — already minimal
-- [ ] **Verify REFACTOR:** re-run tests
+- [x] **REFACTOR:** None — already minimal
+- [x] **Verify REFACTOR:** re-run tests
   - **Observed output:**
     ```
+    No refactor applied; re-ran pnpm vitest run tests/delivery-spec.test.ts
+     Test Files  1 passed (1)
+          Tests  13 passed (13)
     ```
-- [ ] **Commit:** `feat(lib): implement serializeDelivery (Task 1.3)`
-  - **Commit SHA:** ``
+- [x] **Commit:** `feat(lib): implement serializeDelivery (Task 1.3)`
+  - **Commit SHA:** `8f925bd`
 
 ## TDD for 1.4 Implement `validateDeliveryForWrite(input): { ok: DeliverySpec } | { error: 'invalid_delivery', reason }` accepting `none` and `claude-channel` only; rejecting `codex-appserver` with reason `kind_not_yet_supported` and any other kind with `unknown_kind`
 - kind: unit-test
