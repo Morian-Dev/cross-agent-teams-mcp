@@ -24,7 +24,10 @@ describe('dispatchPoke', () => {
     const tmux = stubTmux({ ok: true, pane_tail_before: 'b', pane_tail_after: 'a' })
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
-      { channel_session_id: 'csid-bob', tmux_pane_id: '%99' },
+      {
+        delivery: { kind: 'claude-channel', channel_session_id: 'csid-bob' },
+        tmux_pane_id: '%99',
+      },
       { content: 'hi', meta: { source: 'x' } }
     )
     expect(res).toMatchObject({ ok: true, transport_used: 'claude-channel', channel_session_id: 'csid-bob' })
@@ -37,7 +40,10 @@ describe('dispatchPoke', () => {
     const tmux = stubTmux({ ok: true, pane_tail_before: 'bb', pane_tail_after: 'aa' })
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
-      { channel_session_id: 'csid-bob', tmux_pane_id: '%99' },
+      {
+        delivery: { kind: 'claude-channel', channel_session_id: 'csid-bob' },
+        tmux_pane_id: '%99',
+      },
       { content: 'hi', meta: {} }
     )
     expect(res).toMatchObject({ ok: true, transport_used: 'tmux-poke', pane_id: '%99' })
@@ -49,7 +55,7 @@ describe('dispatchPoke', () => {
     const tmux = stubTmux({ ok: true, pane_tail_before: 'x', pane_tail_after: 'y' })
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
-      { channel_session_id: null, tmux_pane_id: '%42' },
+      { delivery: { kind: 'none' }, tmux_pane_id: '%42' },
       { content: 'hi', meta: {} }
     )
     expect(res).toMatchObject({ ok: true, transport_used: 'tmux-poke' })
@@ -60,7 +66,7 @@ describe('dispatchPoke', () => {
     const tmux = stubTmux({ ok: true, pane_tail_before: '', pane_tail_after: '' })
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
-      { channel_session_id: null, tmux_pane_id: null },
+      { delivery: { kind: 'none' }, tmux_pane_id: null },
       { content: 'hi', meta: {} }
     )
     expect(res).toEqual({
@@ -75,7 +81,10 @@ describe('dispatchPoke', () => {
     const tmux = stubTmux({ ok: true, pane_tail_before: '', pane_tail_after: '' })
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
-      { channel_session_id: 'csid-x', tmux_pane_id: null },
+      {
+        delivery: { kind: 'claude-channel', channel_session_id: 'csid-x' },
+        tmux_pane_id: null,
+      },
       { content: 'hi', meta: {} }
     )
     expect(res).toEqual({
@@ -89,9 +98,28 @@ describe('dispatchPoke', () => {
     const tmux = stubTmux({ error: 'pane_dead', detail: 'no pane' })
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
-      { channel_session_id: null, tmux_pane_id: '%42' },
+      { delivery: { kind: 'none' }, tmux_pane_id: '%42' },
       { content: 'hi', meta: {} }
     )
     expect(res).toMatchObject({ error: 'pane_dead', transport_used: 'tmux-poke' })
+  })
+
+  it('returns dispatcher_not_implemented for codex-appserver delivery', async () => {
+    const fanout = new ChannelWakeFanout()
+    const tmux = stubTmux({ ok: true, pane_tail_before: '', pane_tail_after: '' })
+    const res = await dispatchPoke(
+      { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
+      {
+        delivery: {
+          kind: 'codex-appserver',
+          thread_id: 'thread-1',
+          ws_url: 'wss://example.test/ws',
+        },
+        tmux_pane_id: '%42',
+      },
+      { content: 'hi', meta: {} }
+    )
+    expect(res).toEqual({ error: 'dispatcher_not_implemented' })
+    expect(tmux.calls).toHaveLength(0)
   })
 })

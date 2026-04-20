@@ -26,10 +26,9 @@ describe('poke channel transport integration', () => {
     const alice = repo.register({ model: 'opus', role: 'backend', name: 'alice' })
     const bob = repo.register({
       model: 'opus', role: 'backend', name: 'bob',
-      tmux_pane_id: '%99'
+      tmux_pane_id: '%99',
+      delivery: { kind: 'claude-channel', channel_session_id: 'csid-bob' },
     })
-    // Simulate bind_channel having written the csid.
-    db.prepare(`UPDATE agents SET channel_session_id=? WHERE agent_id=?`).run('csid-bob', bob.agent_id)
     const emitted: unknown[] = []
     fanout.attach('csid-bob', (p) => emitted.push(p), 'sess-P')
     const res = await poke(

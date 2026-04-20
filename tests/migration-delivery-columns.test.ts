@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -161,6 +161,41 @@ describe('migration: delivery columns', () => {
     expect(first.delivery_kind).toBe('claude-channel')
     expect(second.delivery_kind).toBe('none')
     expect(second.delivery_payload).toBeNull()
+    db.close()
+  })
+
+  it('second startup issues no ALTER for delivery columns and preserves existing values', () => {
+    const dir = tmp(); cleanups.push(dir)
+    const dbPath = join(dir, 'data.db')
+    const db = openDb(dbPath)
+    createOldSchemaAgents(db)
+    db.prepare(`INSERT INTO agents (agent_id, team, role, name, registered_at, last_seen_at, channel_session_id)
+      VALUES ('a1', 'teamA', 'dev', 'alice', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'csid-abc')`).run()
+
+    applySchema(db)
+    db.prepare(
+      `UPDATE agents
+       SET delivery_kind='claude-channel',
+           delivery_payload='{"channel_session_id":"csid-custom"}'
+       WHERE agent_id='a1'`
+    ).run()
+
+    const execSpy = vi.spyOn(db, 'exec')
+    applySchema(db)
+
+    const alterCalls = execSpy.mock.calls
+      .map(([sql]) => sql)
+      .filter(sql => sql.includes('ALTER TABLE agents ADD COLUMN'))
+    expect(alterCalls).toEqual([])
+
+    const row = db.prepare(
+      `SELECT delivery_kind, delivery_payload FROM agents WHERE agent_id='a1'`
+    ).get() as {
+      delivery_kind: string
+      delivery_payload: string | null
+    }
+    expect(row.delivery_kind).toBe('claude-channel')
+    expect(row.delivery_payload).toBe('{"channel_session_id":"csid-custom"}')
     db.close()
   })
 })

@@ -27,7 +27,7 @@ describe('bind_channel service (self-binding)', () => {
     cleanups.length = 0
   })
 
-  it('updates caller channel_session_id when csid has live sink and caller is non-proxy', () => {
+  it('updates caller delivery when csid has live sink and caller is non-proxy', () => {
     const { dir, db, repo, fanout, svc } = setup(); cleanups.push(dir)
     const alice = repo.register({ model: 'opus', role: 'backend', name: 'alice' })
     fanout.attach('csid-abc', () => { /* sink */ }, 'proxy-session-1')
@@ -36,9 +36,20 @@ describe('bind_channel service (self-binding)', () => {
       channel_session_id: 'csid-abc'
     })
     expect(res).toEqual({ ok: true })
-    const row = db.prepare(`SELECT channel_session_id FROM agents WHERE agent_id=?`).get(alice.agent_id) as
-      { channel_session_id: string | null }
-    expect(row.channel_session_id).toBe('csid-abc')
+    const row = db.prepare(
+      `SELECT delivery_kind, delivery_payload, channel_session_id
+       FROM agents
+       WHERE agent_id=?`
+    ).get(alice.agent_id) as {
+      delivery_kind: string
+      delivery_payload: string | null
+      channel_session_id: string | null
+    }
+    expect(row.delivery_kind).toBe('claude-channel')
+    expect(JSON.parse(row.delivery_payload as string)).toEqual({
+      channel_session_id: 'csid-abc',
+    })
+    expect(row.channel_session_id).toBeNull()
     db.close()
   })
 
@@ -50,8 +61,17 @@ describe('bind_channel service (self-binding)', () => {
       channel_session_id: 'csid-ghost'
     })
     expect(res).toEqual({ error: 'unknown_channel_session' })
-    const row = db.prepare(`SELECT channel_session_id FROM agents WHERE agent_id=?`).get(alice.agent_id) as
-      { channel_session_id: string | null }
+    const row = db.prepare(
+      `SELECT delivery_kind, delivery_payload, channel_session_id
+       FROM agents
+       WHERE agent_id=?`
+    ).get(alice.agent_id) as {
+      delivery_kind: string
+      delivery_payload: string | null
+      channel_session_id: string | null
+    }
+    expect(row.delivery_kind).toBe('none')
+    expect(row.delivery_payload).toBeNull()
     expect(row.channel_session_id).toBeNull()
     db.close()
   })
@@ -86,6 +106,38 @@ describe('bind_channel service (self-binding)', () => {
       channel_session_id: '   '
     })
     expect(res).toEqual({ error: 'invalid_channel_session_id' })
+    db.close()
+  })
+
+  it('leaves legacy channel_session_id column untouched after successful bind', () => {
+    const { dir, db, repo, fanout, svc } = setup(); cleanups.push(dir)
+    const alice = repo.register({ model: 'opus', role: 'backend', name: 'alice' })
+    db.prepare(`UPDATE agents SET channel_session_id=? WHERE agent_id=?`).run(
+      'legacy-csid',
+      alice.agent_id
+    )
+    fanout.attach('csid-new', () => { /* sink */ }, 'proxy-session-1')
+
+    const res = svc.bind({
+      callerAgentId: alice.agent_id,
+      channel_session_id: 'csid-new'
+    })
+
+    expect(res).toEqual({ ok: true })
+    const row = db.prepare(
+      `SELECT delivery_kind, delivery_payload, channel_session_id
+       FROM agents
+       WHERE agent_id=?`
+    ).get(alice.agent_id) as {
+      delivery_kind: string
+      delivery_payload: string | null
+      channel_session_id: string | null
+    }
+    expect(row.delivery_kind).toBe('claude-channel')
+    expect(JSON.parse(row.delivery_payload as string)).toEqual({
+      channel_session_id: 'csid-new',
+    })
+    expect(row.channel_session_id).toBe('legacy-csid')
     db.close()
   })
 })

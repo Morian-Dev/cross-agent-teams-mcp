@@ -6,6 +6,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { startServer } from '../src/daemon/server.js'
+import { openDb } from '../src/storage/db.js'
 import { runRegistrationSequence } from '../plugins/cross-agent-teams-channel/src/daemon-client.js'
 import { createProxyServer, relayChannelWake } from '../plugins/cross-agent-teams-channel/src/proxy.js'
 
@@ -16,6 +17,24 @@ async function parseTool(resp: unknown): Promise<Record<string, unknown>> {
   return JSON.parse(r.content[0].text)
 }
 
+function createOldSchemaDb(dbPath: string): void {
+  const db = openDb(dbPath)
+  db.exec(`CREATE TABLE agents (
+    agent_id TEXT PRIMARY KEY,
+    team TEXT NOT NULL,
+    role TEXT NOT NULL,
+    name TEXT NOT NULL,
+    model TEXT,
+    registered_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    last_processed_event_id INTEGER NOT NULL DEFAULT 0,
+    tmux_pane_id TEXT,
+    channel_session_id TEXT
+  )`)
+  db.exec(`CREATE UNIQUE INDEX agents_identity_idx ON agents(team, name)`)
+  db.close()
+}
+
 describe('e2e channel poke (self-binding)', () => {
   const cleanups: string[] = []
   afterEach(() => {
@@ -23,6 +42,38 @@ describe('e2e channel poke (self-binding)', () => {
     cleanups.length = 0
     vi.restoreAllMocks()
   })
+
+  it('daemon bootstraps cleanly from old agents schema and migrates without data loss', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const dbPath = join(dir, 'data.db')
+    createOldSchemaDb(dbPath)
+    const seedDb = openDb(dbPath)
+    seedDb.prepare(`INSERT INTO agents (agent_id, team, role, name, registered_at, last_seen_at, channel_session_id)
+      VALUES ('legacy-agent', 'default', 'backend', 'legacy', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'csid-legacy')`).run()
+    seedDb.close()
+
+    const { app, port, host } = await startServer({ dbPath, port: 0 })
+    const health = await fetch(`http://${host}:${port}/health`)
+    expect(health.ok).toBe(true)
+
+    const db = openDb(dbPath)
+    const row = db.prepare(
+      `SELECT channel_session_id, delivery_kind, delivery_payload
+       FROM agents
+       WHERE agent_id='legacy-agent'`
+    ).get() as {
+      channel_session_id: string | null
+      delivery_kind: string
+      delivery_payload: string | null
+    }
+    expect(row.channel_session_id).toBe('csid-legacy')
+    expect(row.delivery_kind).toBe('claude-channel')
+    expect(JSON.parse(row.delivery_payload as string)).toEqual({
+      channel_session_id: 'csid-legacy',
+    })
+    db.close()
+    await app.close()
+  }, 20000)
 
   it('Claude-side bind_channel({csid}) + poke triggers notifications/claude/channel on proxy host with no tmux', async () => {
     const dir = tmp(); cleanups.push(dir)

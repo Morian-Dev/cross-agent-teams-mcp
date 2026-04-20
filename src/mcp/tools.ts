@@ -32,6 +32,10 @@ function toText(value: unknown): TextContent {
   return { content: [{ type: 'text', text: JSON.stringify(value) }] }
 }
 
+const deliverySchema = z.object({
+  kind: z.string(),
+}).passthrough()
+
 const SEND_MESSAGE_DESC = [
   'Private 1→1 message to another agent.  By default auto-poke=true with quiet-guard (auto_poke:false opts out).',
   'Provide exactly one of to_agent_id (UUID) or to_agent_name (the target\'s `name` in its team); to_agent_name is preferred when you know the target by (team, name).',
@@ -182,17 +186,18 @@ export function registerBusinessTools(
         'Most LLM coding agents (Claude Code, opencode, codex) run inside tmux by default, so the',
         'first branch is usually the right one. Do not skip the check.'
       ].join(' '),
-      inputSchema: {
+      inputSchema: z.object({
         model: z.string(),
         name: z.string().min(1).refine(v => v.trim().length > 0, { message: 'name must not be empty' }),
         role: z.string().optional(),
         team: z.string().optional(),
-        tmux_pane_id: z.string().optional()
-      }
+        tmux_pane_id: z.string().optional(),
+        delivery: deliverySchema.optional(),
+      }).strict()
     },
     async (args: {
       model: string; name: string; role?: string; team?: string;
-      tmux_pane_id?: string
+      tmux_pane_id?: string; delivery?: { kind: string; [key: string]: unknown }
     }) => {
       // connection_id for collision detection must be the stable session id,
       // NOT agentIdHolder.current (which becomes the agent_id after success).
@@ -205,7 +210,8 @@ export function registerBusinessTools(
           name: args.name,
           role: args.role,
           team: args.team,
-          tmux_pane_id: args.tmux_pane_id
+          tmux_pane_id: args.tmux_pane_id,
+          delivery: args.delivery,
         })
         if ('agent_id' in res) {
           if (onRegisterSuccess) {

@@ -1,4 +1,8 @@
 import type Database from 'better-sqlite3'
+import {
+  validateDeliveryForWrite,
+  type DeliveryValidationReason,
+} from '../lib/delivery-spec.js'
 import { AgentsRepo } from '../storage/agents-repo.js'
 
 export interface RegisterInput {
@@ -8,11 +12,13 @@ export interface RegisterInput {
   role?: string
   team?: string
   tmux_pane_id?: string
+  delivery?: unknown
 }
 
 export type RegisterResult =
   | { agent_id: string; team: string }
   | { error: 'agent_id_collision' }
+  | { error: 'invalid_delivery'; reason: DeliveryValidationReason }
 
 function identityKey(team: string, name: string): string {
   return `${team}\u0000${name}`
@@ -25,6 +31,12 @@ export class RegisterAgentService {
   constructor(db: Database.Database) { this.repo = new AgentsRepo(db) }
 
   register(input: RegisterInput): RegisterResult {
+    const validated =
+      input.delivery === undefined
+        ? undefined
+        : validateDeliveryForWrite(input.delivery)
+    if (validated && 'error' in validated) return validated
+
     const team = input.team ?? 'default'
     const role = input.role ?? 'default'
     const key = identityKey(team, input.name)
@@ -36,7 +48,8 @@ export class RegisterAgentService {
       name: input.name,
       role,
       team,
-      tmux_pane_id: input.tmux_pane_id
+      tmux_pane_id: input.tmux_pane_id,
+      delivery: validated?.ok,
     })
   }
 

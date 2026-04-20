@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3'
 import { randomBytes } from 'node:crypto'
+import { parseDeliveryRow, type DeliverySpec } from '../lib/delivery-spec.js'
 import {
   isTmuxAvailable,
   capturePaneTail,
@@ -42,7 +43,8 @@ interface TargetRow {
   agent_id: string
   team: string
   tmux_pane_id: string | null
-  channel_session_id: string | null
+  delivery_kind: string
+  delivery_payload: string | null
 }
 
 export const PROMPT_MAX_BYTES = 8192
@@ -117,7 +119,16 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
   }
 
   const target = deps.db
-    .prepare(`SELECT agent_id, team, tmux_pane_id, channel_session_id FROM agents WHERE agent_id = ?`)
+    .prepare(
+      `SELECT
+         agent_id,
+         team,
+         tmux_pane_id,
+         delivery_kind,
+         delivery_payload
+       FROM agents
+       WHERE agent_id = ?`
+    )
     .get(input.target_agent_id) as TargetRow | undefined
   if (!target) return { error: 'unknown_target' }
 
@@ -134,6 +145,7 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
   // If no ChannelWakeFanout is available (e.g., legacy callers), fall back to
   // a disabled fanout so the dispatcher uniformly treats channel as unsubscribed.
   const fanout = deps.channelWakeFanout
+  const delivery = parseDeliveryRow(target) as DeliverySpec
   if (!fanout) {
     // Legacy tmux-only path preserved when no fanout supplied by caller.
     if (!target.tmux_pane_id) return { error: 'tmux_pane_not_set' }
@@ -152,7 +164,7 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
 
   return dispatchPoke(
     { channelWakeFanout: fanout, tmuxPoke: tmuxPokeImpl },
-    { channel_session_id: target.channel_session_id, tmux_pane_id: target.tmux_pane_id },
+    { delivery, tmux_pane_id: target.tmux_pane_id },
     { content: input.prompt, meta: {} }
   )
 }
