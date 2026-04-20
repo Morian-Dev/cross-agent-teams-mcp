@@ -172,7 +172,7 @@
           Tests  13 passed (13)
     ```
 - [x] **Commit:** `feat(lib): implement serializeDelivery (Task 1.3)`
-  - **Commit SHA:** `8f925bd`
+  - **Commit SHA:** `dea1f3a`
 
 ## TDD for 1.4 Implement `validateDeliveryForWrite(input): { ok: DeliverySpec } | { error: 'invalid_delivery', reason }` accepting `none` and `claude-channel` only; rejecting `codex-appserver` with reason `kind_not_yet_supported` and any other kind with `unknown_kind`
 - kind: unit-test
