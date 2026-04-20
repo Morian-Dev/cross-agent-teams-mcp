@@ -3,9 +3,7 @@
 ## Purpose
 
 Deliver agent wake-ups via Claude Code's experimental `claude/channel` MCP capability instead of (or in addition to) tmux paste injection.  A per-directory channel proxy subprocess declares the capability to its host Claude Code, subscribes to daemon wake-up notifications keyed by a `channel_session_id`, and relays them into the host's context as `<channel>` tags — removing the tmux dependency for poke delivery.
-
 ## Requirements
-
 ### Requirement: Channel proxy declares claude/channel experimental capability
 
 The channel proxy SHALL declare `capabilities.experimental['claude/channel']: {}` in its MCP server `initialize` response.  This capability is the signal Claude Code uses to register the `notifications/claude/channel` listener and route subsequent notifications into context as a `<channel>` tag.
@@ -157,6 +155,22 @@ On startup, the channel proxy SHALL, in order:
 - **AND** the notification `params.content` contains the literal string `csid-xyz`
 - **AND** the notification `params.content` mentions `bind_channel`
 
+#### Scenario: proxy honors CROSS_AGENT_TEAMS_MCP_DAEMON_URL env var when flag omitted
+
+- **GIVEN** the proxy binary is launched with no `--daemon-url` flag
+- **AND** env var `CROSS_AGENT_TEAMS_MCP_DAEMON_URL=http://localhost:8787`
+- **WHEN** the proxy starts
+- **THEN** the proxy uses `http://localhost:8787` as its daemon URL
+- **AND** does NOT read the legacy `TS_AGENT_TEAMS_DAEMON_URL` env var
+
+#### Scenario: proxy exits when neither flag nor CROSS_AGENT_TEAMS_MCP_DAEMON_URL is set
+
+- **GIVEN** the proxy binary is launched with no `--daemon-url` flag
+- **AND** env var `CROSS_AGENT_TEAMS_MCP_DAEMON_URL` is unset or empty
+- **WHEN** the proxy starts
+- **THEN** the proxy exits with non-zero status
+- **AND** stderr mentions `CROSS_AGENT_TEAMS_MCP_DAEMON_URL` (so operator knows what env var to set)
+
 ### Requirement: Channel proxy relays channel_wake as claude/channel notification
 
 When the proxy receives a `notifications/channel_wake` notification from the daemon with params `{content, meta}`, it SHALL emit a `notifications/claude/channel` notification to its host stdio with params `{content, meta}` unchanged (no rewriting of keys or values).
@@ -198,3 +212,13 @@ When an authenticated agent calls `poke({target_agent_id, prompt})` and the targ
 - **THEN** the poke response is `{ok: true, transport_used: 'claude-channel', channel_session_id: 'csid-bob'}`
 - **AND** the channel proxy's host-facing stdio emits a `notifications/claude/channel` JSON-RPC notification
 - **AND** no tmux command is executed
+
+### Requirement: Channel proxy MCP server identity
+
+The channel proxy's `McpServer` instance SHALL declare its `name` field as `cross-agent-teams-channel` during MCP initialize handshake with its host.  The internal daemon-facing `Client` instance SHALL declare its `name` field as `cross-agent-teams-proxy` (matching the bin name exposed to users).
+
+#### Scenario: proxy serverInfo.name reports new brand to host
+
+- **GIVEN** the proxy is started and an MCP client completes initialize over its stdio
+- **THEN** the `serverInfo.name` field equals `cross-agent-teams-channel`
+

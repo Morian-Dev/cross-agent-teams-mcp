@@ -177,3 +177,24 @@ The heartbeat timer MUST be cleared when the daemon shuts down (onClose hook) so
 - **THEN** the contract_event notification is still delivered to the subscriber
 - **AND** the heartbeat does not consume or replace it
 
+### Requirement: Daemon MCP server identity
+
+The daemon's `McpServer` instance SHALL declare its `name` field as `cross-agent-teams-mcp` during MCP initialize handshake.  This is the logical server identity reported to every connecting client and MUST NOT include legacy brand words.
+
+#### Scenario: initialize serverInfo.name reports new brand
+
+- **GIVEN** the daemon is running on a random port
+- **WHEN** an MCP client completes the initialize handshake
+- **THEN** the `serverInfo.name` field equals `cross-agent-teams-mcp`
+
+### Requirement: Daemon source tree free of legacy brand word
+
+The daemon's shipped source tree (non-archived, non-historical: `src/**`, `package.json`, `tsconfig.json`, active `docs/configs/**`, active `openspec/specs/**`, `opencode.json`, `.gitignore`) SHALL NOT contain the literal string `ts-agent-teams` (case-sensitive).  This ensures the rename is complete and future readers never re-encounter the legacy brand.
+
+Exempt paths: `openspec/changes/archive/**`, `discuss/**`, `node_modules/**`, `dist/**`, `pnpm-lock.yaml`, `worktrees/**`.
+
+#### Scenario: Brand-sweep grep returns zero matches
+
+- **WHEN** `grep -r 'ts-agent-teams' src/ plugins/cross-agent-teams-channel/src/ docs/configs/ openspec/specs/ package.json tsconfig.json opencode.json .gitignore` is run
+- **THEN** the exit code is non-zero (ripgrep/grep convention for no matches) or output is empty
+
