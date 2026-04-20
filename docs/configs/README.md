@@ -1,9 +1,9 @@
 # Multi-agent Phase 2 walkthrough
 
 Prerequisites:
-1. Start the daemon: `npx ts-agent-teams daemon --port 9100`.
+1. Start the daemon: `npx cross-agent-teams-mcp daemon --port 9100`.
 2. Confirm `curl http://127.0.0.1:9100/health` returns `{ "ok": true, ... }`.
-3. Configure each agent per `opencode.md`, `claude-code.md`, `codex-cli.md` (MCP server name: `ts-agent-teams`).
+3. Configure each agent per `opencode.md`, `claude-code.md`, `codex-cli.md` (MCP server name: `cross-agent-teams-mcp`).
 4. Optional: if running inside tmux, see each agent's "Reporting your tmux pane id on register" section to enable cross-agent interrupt targeting.
 
 Manual scenario (broadcast replaces human relay):

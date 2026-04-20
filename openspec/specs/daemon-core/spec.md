@@ -10,7 +10,7 @@ The daemon SHALL bind its HTTP listener only to `127.0.0.1`. It MUST refuse any 
 
 #### Scenario: Default bind address
 
-- **WHEN** the daemon is started with `npx ts-agent-teams daemon` without any host override
+- **WHEN** the daemon is started with `npx cross-agent-teams-mcp daemon` without any host override
 - **THEN** the HTTP server listens on `127.0.0.1:9100`
 - **AND** a request from a non-loopback address (e.g. `192.168.x.x`) fails to connect
 
@@ -37,7 +37,7 @@ The daemon SHALL attempt to bind the configured port (default `9100`). If the po
 
 ### Requirement: PID file lifecycle
 
-The daemon SHALL write its process id to `~/.ts-agent-teams/daemon.pid` on startup (including the chosen port) and remove the file on graceful shutdown. If the file exists at startup and the referenced process is alive, the daemon MUST exit with error unless `--force` is passed.
+The daemon SHALL write its process id to `~/.cross-agent-teams-mcp/daemon.pid` on startup (including the chosen port) and remove the file on graceful shutdown. If the file exists at startup and the referenced process is alive, the daemon MUST exit with error unless `--force` is passed.
 
 #### Scenario: Fresh startup writes pid file
 

@@ -1,9 +1,9 @@
-# Codex CLI MCP config for ts-agent-teams
+# Codex CLI MCP config for cross-agent-teams-mcp
 
 Add to `~/.codex/config.toml`:
 
 ```toml
-[mcp_servers.ts-agent-teams]
+[mcp_servers.cross-agent-teams-mcp]
 type = "streamable-http"
 url = "http://127.0.0.1:9100/mcp"
 ```
@@ -11,10 +11,10 @@ url = "http://127.0.0.1:9100/mcp"
 With `--token`:
 
 ```toml
-[mcp_servers.ts-agent-teams]
+[mcp_servers.cross-agent-teams-mcp]
 type = "streamable-http"
 url = "http://127.0.0.1:9100/mcp"
-[mcp_servers.ts-agent-teams.headers]
+[mcp_servers.cross-agent-teams-mcp.headers]
 Authorization = "Bearer YOUR_TOKEN"
 ```
 

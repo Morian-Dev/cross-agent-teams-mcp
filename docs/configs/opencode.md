@@ -1,11 +1,11 @@
-# opencode MCP config for ts-agent-teams
+# opencode MCP config for cross-agent-teams-mcp
 
 Add to `~/.config/opencode/config.json`:
 
 ```json
 {
   "mcp": {
-    "ts-agent-teams": {
+    "cross-agent-teams-mcp": {
       "type": "streamable_http",
       "url": "http://127.0.0.1:9100/mcp"
     }
@@ -18,7 +18,7 @@ If you started the daemon with `--token`, add the bearer header:
 ```json
 {
   "mcp": {
-    "ts-agent-teams": {
+    "cross-agent-teams-mcp": {
       "type": "streamable_http",
       "url": "http://127.0.0.1:9100/mcp",
       "headers": { "Authorization": "Bearer YOUR_TOKEN" }
