@@ -50,6 +50,36 @@ describe('agents schema', () => {
     db.close()
   })
 
+  it('fresh-db insert without delivery fields defaults delivery_kind=none and delivery_payload NULL', () => {
+    const dir = tmp(); cleanups.push(dir)
+    const db = openDb(join(dir, 'data.db'))
+    applySchema(db)
+    db.prepare(`INSERT INTO agents (agent_id, team, role, name, registered_at, last_seen_at)
+      VALUES (?, ?, ?, ?, ?, ?)`)
+      .run('a1', 'default', 'impl', 'alice', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
+    const row = db.prepare(`SELECT delivery_kind, delivery_payload FROM agents WHERE agent_id = ?`).get('a1') as { delivery_kind: string; delivery_payload: string | null }
+    expect(row.delivery_kind).toBe('none')
+    expect(row.delivery_payload).toBeNull()
+    db.close()
+  })
+
+  it('fresh-db channel_session_id column has type TEXT, notnull=0, and defaults NULL on insert', () => {
+    const dir = tmp(); cleanups.push(dir)
+    const db = openDb(join(dir, 'data.db'))
+    applySchema(db)
+    const cols = db.pragma('table_info(agents)') as Array<{ name: string; type: string; notnull: number; dflt_value: string | null }>
+    const channel = cols.find(c => c.name === 'channel_session_id')
+    expect(channel).toBeDefined()
+    expect(channel?.type).toBe('TEXT')
+    expect(channel?.notnull).toBe(0)
+    db.prepare(`INSERT INTO agents (agent_id, team, role, name, registered_at, last_seen_at)
+      VALUES (?, ?, ?, ?, ?, ?)`)
+      .run('a2', 'default', 'impl', 'bob', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
+    const row = db.prepare(`SELECT channel_session_id FROM agents WHERE agent_id = ?`).get('a2') as { channel_session_id: string | null }
+    expect(row.channel_session_id).toBeNull()
+    db.close()
+  })
+
   it('creates UNIQUE agents_identity_idx covering (team, name)', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db'))
