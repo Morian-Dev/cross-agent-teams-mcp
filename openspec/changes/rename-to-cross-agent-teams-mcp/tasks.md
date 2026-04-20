@@ -210,7 +210,7 @@ Ordering: task 1 must precede 6/7/8 (directory rename unblocks sub-package edits
       ```
   - [x] **Commit:** `feat(daemon): rename env var and home dir to CROSS_AGENT_TEAMS_MCP_*`
     - Staging order: test file BEFORE production file
-    - **Commit SHA (fill during apply):** `050e9070cbb85ed25a49401aa62b18c011f7e569`
+    - **Commit SHA (fill during apply):** `cd12fa8f9f8e1f4233d3674ac1e92f14dfac892d`
 
 ## 4. Daemon MCP server identity reports cross-agent-teams-mcp
 
@@ -651,7 +651,7 @@ Ordering: task 1 must precede 6/7/8 (directory rename unblocks sub-package edits
       ```
   - [x] **Commit:** `refactor(channel-plugin): rename brand in startup hint content`
     - Staging order: test assertions BEFORE cli.ts edits
-    - **Commit SHA (fill during apply):** `dd645af`
+    - **Commit SHA (fill during apply):** `dd645af89595fdfa363f597a67bff59fd90bec16`
 
 ## 9. Brand sync across docs, opencode.json, .gitignore
 
