@@ -14,7 +14,7 @@ function parseArg(name: string, def?: string): string | undefined {
 async function main(): Promise<void> {
   const cmd = process.argv[2]
   if (cmd !== 'daemon') { console.error('usage: cross-agent-teams-mcp daemon [options]'); process.exit(2) }
-  const home = process.env.TS_AGENT_TEAMS_HOME ?? join(homedir(), '.ts-agent-teams')
+  const home = process.env.CROSS_AGENT_TEAMS_MCP_HOME ?? join(homedir(), '.cross-agent-teams-mcp')
   const pidPath = parseArg('--pid-file', join(home, 'daemon.pid'))!
   const dbPath = parseArg('--db', join(home, 'data.db'))!
   const token = parseArg('--token')
