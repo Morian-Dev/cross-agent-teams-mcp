@@ -427,7 +427,7 @@
           Tests  350 passed (350)
     ```
 - [x] **Commit:** `feat(storage): backfill delivery from legacy channel_session_id on migration (Task 2.3)`
-  - **Commit SHA:** `d73d2e2`
+  - **Commit SHA:** `a26f6f0`
 
 ## TDD for 2.4 Verify migration leaves legacy `channel_session_id` column and its values untouched
 - kind: integration-test
