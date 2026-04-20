@@ -484,23 +484,47 @@
   - `agent-registry/spec.md` → Scenario: `Fresh database still creates agents table with channel_session_id column`
 - **Files:**
   - Modify: `tests/agents-schema.test.ts` (or the fresh-db schema test file)
-- [ ] **RED:** Audit the fresh-db PRAGMA tests; ensure every field of the two scenarios above is asserted (column exists, type, notnull, default); add missing assertions so they fail if `src/storage/schema.ts` is incomplete
-- [ ] **Verify RED:** run the targeted test against an incomplete schema; confirm failure
+- [x] **RED:** Audit the fresh-db PRAGMA tests; ensure every field of the two scenarios above is asserted (column exists, type, notnull, default); add missing assertions so they fail if `src/storage/schema.ts` is incomplete
+- [x] **Verify RED:** run the targeted test against an incomplete schema; confirm failure
   - **Observed output:**
     ```
+    (temporarily patched src/storage/schema.ts: delivery_kind DEFAULT 'broken' and delivery_payload NOT NULL DEFAULT ''; reverted immediately after observing RED)
+     FAIL  tests/agents-schema.test.ts > agents schema > creates agents table with delivery_kind and delivery_payload columns
+    AssertionError: expected '\'broken\'' to be '\'none\'' // Object.is equality
+       41|     expect(deliveryKind?.type).toBe('TEXT')
+       42|     expect(deliveryKind?.notnull).toBe(1)
+       43|     expect(deliveryKind?.dflt_value).toBe("'none'")
+     FAIL  tests/agents-schema.test.ts > agents schema > fresh-db insert without delivery fields defaults delivery_kind=none and delivery_payload NULL
+    AssertionError: expected 'broken' to be 'none' // Object.is equality
+     Test Files  1 failed (1)
+          Tests  2 failed | 3 passed (5)
     ```
-- [ ] **GREEN:** Confirm 2.1 implementation covers the assertions; no further production change expected
-- [ ] **Verify GREEN:** re-run the test + full suite, confirm pass
+- [x] **GREEN:** Confirm 2.1 implementation covers the assertions; no further production change expected
+- [x] **Verify GREEN:** re-run the test + full suite, confirm pass
   - **Observed output:**
     ```
+    # scoped
+     ✓ tests/agents-schema.test.ts (5 tests) 11ms
+     Test Files  1 passed (1)
+          Tests  5 passed (5)
+
+    # full suite
+     Test Files  103 passed (103)
+          Tests  353 passed (353)
+       Duration  15.73s
+
+    # typecheck
+    > tsc --noEmit
+    (exit 0, no diagnostics)
     ```
-- [ ] **REFACTOR:** None — already minimal
-- [ ] **Verify REFACTOR:** re-run tests
+- [x] **REFACTOR:** None — already minimal
+- [x] **Verify REFACTOR:** re-run tests
   - **Observed output:**
     ```
+    (no refactor performed; GREEN run above already confirms targeted + full suite pass after production revert)
     ```
-- [ ] **Commit:** `test(storage): close PRAGMA assertions for delivery columns (Task 2.5)`
-  - **Commit SHA:** ``
+- [x] **Commit:** `test(storage): close PRAGMA assertions for delivery columns (Task 2.5)`
+  - **Commit SHA:** `86ea0c0`
 
 ## TDD for 2.6 Tests: migration-from-old-schema — seed a DB that lacks `delivery_*` columns but has rows with `channel_session_id`, run startup, assert columns exist and backfill applied exactly to matching rows
 - kind: integration-test
