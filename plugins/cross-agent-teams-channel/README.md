@@ -9,7 +9,7 @@ Claude Code channel proxy for the cross-agent-teams-mcp daemon.
 ## 启动
 
 ```
-cross-agent-teams-channel-proxy --daemon-url http://localhost:8787 --agent-team default --agent-name alice
+cross-agent-teams-proxy --daemon-url http://localhost:8787 --agent-team default --agent-name alice
 ```
 
 或通过环境变量 `TS_AGENT_TEAMS_DAEMON_URL` 提供 daemon URL.
