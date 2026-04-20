@@ -287,23 +287,55 @@
 - **Files:**
   - Modify: `src/storage/schema.ts`
   - Modify: `tests/agents-schema.test.ts` (or nearest existing schema-assertion test)
-- [ ] **RED:** Add failing schema assertions: on a fresh DB, `PRAGMA table_info('agents')` lists `delivery_kind` TEXT NOT NULL DEFAULT 'none' and `delivery_payload` TEXT NULL; legacy `channel_session_id` still present
-- [ ] **Verify RED:** run the targeted test; confirm failure
+- [x] **RED:** Add failing schema assertions: on a fresh DB, `PRAGMA table_info('agents')` lists `delivery_kind` TEXT NOT NULL DEFAULT 'none' and `delivery_payload` TEXT NULL; legacy `channel_session_id` still present
+- [x] **Verify RED:** run the targeted test; confirm failure
   - **Observed output:**
     ```
+     FAIL  tests/agents-schema.test.ts > agents schema > creates agents table with required columns and name is NOT NULL
+    AssertionError: expected [ 'agent_id', …(9) ] to deeply equal [ 'agent_id', …(11) ]
+    - Expected
+    + Received
+      Array [
+        "agent_id",
+        "channel_session_id",
+    -   "delivery_kind",
+    -   "delivery_payload",
+        "last_processed_event_id",
+        ...
+      ]
+     FAIL  tests/agents-schema.test.ts > agents schema > creates agents table with delivery_kind and delivery_payload columns
+    AssertionError: expected undefined to be defined
+     ❯ tests/agents-schema.test.ts:40:26
+         39|     const deliveryKind = cols.find(c => c.name === 'delivery_kind')
+         40|     expect(deliveryKind).toBeDefined()
+     Test Files  1 failed (1)
+          Tests  2 failed | 1 passed (3)
     ```
-- [ ] **GREEN:** Update the `CREATE TABLE agents` DDL in `schema.ts` to add the two columns with exact types/defaults
-- [ ] **Verify GREEN:** re-run the test + full suite, confirm pass
+- [x] **GREEN:** Update the `CREATE TABLE agents` DDL in `schema.ts` to add the two columns with exact types/defaults
+- [x] **Verify GREEN:** re-run the test + full suite, confirm pass
   - **Observed output:**
     ```
+     ✓ tests/agents-schema.test.ts (3 tests) 8ms
+     Test Files  1 passed (1)
+          Tests  3 passed (3)
+
+    Full suite:
+     Test Files  102 passed (102)
+          Tests  345 passed (345)
+       Duration  15.59s
+    pnpm typecheck: tsc --noEmit exit 0
     ```
-- [ ] **REFACTOR:** None — already minimal
-- [ ] **Verify REFACTOR:** re-run tests
+- [x] **REFACTOR:** None — already minimal
+- [x] **Verify REFACTOR:** re-run tests
   - **Observed output:**
     ```
+    No refactor performed; re-ran targeted test:
+     ✓ tests/agents-schema.test.ts (3 tests) 8ms
+     Test Files  1 passed (1)
+          Tests  3 passed (3)
     ```
-- [ ] **Commit:** `feat(storage): add delivery_kind/delivery_payload columns to agents DDL (Task 2.1)`
-  - **Commit SHA:** ``
+- [x] **Commit:** `feat(storage): add delivery_kind/delivery_payload columns to agents DDL (Task 2.1)`
+  - **Commit SHA:** `f189f18`
 
 ## TDD for 2.2 Add idempotent startup migration in the schema bootstrap path: detect missing columns via `PRAGMA table_info('agents')`, run `ALTER TABLE agents ADD COLUMN delivery_kind ...` and `ALTER TABLE agents ADD COLUMN delivery_payload TEXT` only when missing, wrapped in a transaction
 - kind: integration-test
