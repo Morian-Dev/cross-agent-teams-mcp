@@ -27,7 +27,7 @@ export function mountMcp(
   const sessionOwners = new Map<string, string>()
 
   function createSession(): Session {
-    const server = new McpServer({ name: 'ts-agent-teams', version: '0.1.0' })
+    const server = new McpServer({ name: 'cross-agent-teams-mcp', version: '0.1.0' })
     const agentIdHolder: AgentIdHolder = { current: undefined }
     server.registerTool('echo', { title: 'Echo', description: 'Return the input', inputSchema: echoSchema }, echoHandler as any)
 
