@@ -216,7 +216,7 @@ export function registerBusinessTools(
           if (!hasUsableTmuxPaneId(args)) {
             return {
               ...res,
-              hint: "No tmux_pane_id provided — cross-agent poke delivery via tmux is off until you re-register with a usable pane id. Run `echo \"$TMUX_PANE\"` in your shell tool (the env var is set per-pane by tmux); fall back to `tmux display-message -p '#{pane_id}'` only if $TMUX_PANE is empty. Most coding agents (Claude Code, opencode, codex) run inside tmux, so this is usually available. Claude Code users who loaded the ts-agent-teams channel plugin can also route pokes via channel_session_id — the plugin's proxy emits a startup <channel> notification telling Claude to call bind_channel({channel_session_id}); that path does not involve register_agent."
+              hint: "No tmux_pane_id provided — cross-agent poke delivery via tmux is off until you re-register with a usable pane id. Run `echo \"$TMUX_PANE\"` in your shell tool (the env var is set per-pane by tmux); fall back to `tmux display-message -p '#{pane_id}'` only if $TMUX_PANE is empty. Most coding agents (Claude Code, opencode, codex) run inside tmux, so this is usually available. Claude Code users who loaded the cross-agent-teams-mcp channel plugin can also route pokes via channel_session_id — the plugin's proxy emits a startup <channel> notification telling Claude to call bind_channel({channel_session_id}); that path does not involve register_agent."
             }
           }
         }
@@ -522,7 +522,7 @@ export function registerBusinessTools(
       {
         title: 'Bind channel_session_id to caller',
         description: [
-          'Bind the caller session\'s agent row to a channel_session_id produced by the ts-agent-teams channel proxy.',
+          'Bind the caller session\'s agent row to a channel_session_id produced by the cross-agent-teams-mcp channel proxy.',
           'Call this after receiving a startup <channel> notification from the proxy announcing your csid.',
           'Rejects proxy callers (role=__channel_proxy__).',
           'Rejects unknown csid (no live proxy sink attached).'
@@ -550,7 +550,7 @@ export function registerBusinessTools(
       {
         title: 'Subscribe channel wake',
         description: [
-          'Internal tool reserved for the ts-agent-teams channel proxy.',
+          'Internal tool reserved for the cross-agent-teams-mcp channel proxy.',
           'Attaches the caller\'s MCP session notification sink to a channel_session_id so the',
           'daemon can emit notifications/channel_wake to it.  Requires role=__channel_proxy__.'
         ].join(' '),
