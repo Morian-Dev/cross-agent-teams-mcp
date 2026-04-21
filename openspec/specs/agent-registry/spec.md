@@ -86,11 +86,33 @@ Agents MAY report a tmux pane identifier at registration time to enable cross-se
 - **THEN** the daemon stores the literal string `'custom-pane-token-xyz'` in the column
 - **AND** `list_agents` returns the literal string unchanged
 
+### Requirement: detect_tmux_pane discovers the real agent UI pane
+
+The daemon SHALL register an MCP tool named `detect_tmux_pane` that helps callers discover the tmux pane actually hosting a coding-agent UI, even when the shell used for tool execution lives in a different pane.  The tool SHALL accept `{ agent: 'codex' | 'claude-code' | 'opencode' | 'custom', cwd?: string, tty?: string, title_contains?: string, process_pattern?: string }`.
+
+The detector SHALL scan tmux panes globally, map each pane to its tty, inspect the real processes attached to that tty, and rank candidates using tty/process evidence rather than trusting `$TMUX_PANE` or tmux focus state alone.  For `agent='custom'`, `process_pattern` MUST be required.  Successful responses SHALL return the single best pane plus candidate metadata; ties at the highest score SHALL return an ambiguity result instead of guessing.
+
+#### Scenario: detect_tmux_pane finds Codex UI pane when shell pane differs
+
+- **GIVEN** a workspace where the shell invoking MCP tools lives in tmux pane `%1863`
+- **AND** the visible Codex UI is running in tmux pane `%1902`
+- **AND** `%1902` owns the tty whose live processes include `codex --remote ...`
+- **WHEN** the caller invokes `detect_tmux_pane({ agent: 'codex', cwd: '/workspace/project' })`
+- **THEN** the tool returns `{ ok: true, pane: { pane_id: '%1902', ... } }`
+- **AND** the returned candidate metadata reflects tty/process evidence for `%1902`
+
+#### Scenario: detect_tmux_pane returns ambiguous_match on tied candidates
+
+- **GIVEN** two tmux panes both satisfy the selected agent matcher with the same highest score
+- **WHEN** the caller invokes `detect_tmux_pane(...)`
+- **THEN** the tool returns `{ error: 'ambiguous_match', candidates: [...] }`
+- **AND** it does not silently choose one pane
+
 ### Requirement: register_agent response hints when tmux_pane_id missing
 
-The daemon MUST attach a `hint: string` field to the successful `register_agent` response if and only if the caller did NOT provide a usable `tmux_pane_id`.  "Not usable" means the field is (a) omitted, (b) an empty string, or (c) a string consisting only of whitespace.  A trimmed non-empty value suppresses the hint.  Error envelopes MUST NEVER carry a hint.
+The daemon MUST attach a `hint: string` field to the successful `register_agent` response if and only if the caller did NOT provide a usable `tmux_pane_id` AND did NOT provide a non-tmux delivery in the same call.  "Not usable" means the field is (a) omitted, (b) an empty string, or (c) a string consisting only of whitespace.  A trimmed non-empty value suppresses the hint.  Error envelopes MUST NEVER carry a hint.
 
-The hint text MUST advise the caller to run a shell command (`tmux display-message -p '#{pane_id}'`) to discover its pane id, then re-register with the result.  The text SHOULD mention cross-agent poke delivery as the motivation.
+The hint text MUST advise the caller how to discover a usable pane id before re-registering.  When the shell pane and visible agent UI are expected to be the same, the hint MUST mention `echo "$TMUX_PANE"` as the primary shell command and MAY mention `tmux display-message -p '#{pane_id}'` only as a fallback.  When the shell pane and visible agent UI may differ, the hint SHOULD mention `detect_tmux_pane({ agent, cwd })` as the safer path.  The text SHOULD mention cross-agent poke delivery as the motivation.
 
 #### Scenario: Omitted tmux_pane_id triggers hint
 
@@ -98,7 +120,15 @@ The hint text MUST advise the caller to run a shell command (`tmux display-messa
 - **WHEN** the call is processed and succeeds
 - **THEN** the response contains `hint: <string>`
 - **AND** the hint string contains the substring `tmux_pane_id`
-- **AND** the hint string contains the substring `tmux display-message`
+- **AND** the hint string contains the substring `TMUX_PANE`
+
+#### Scenario: Hint mentions detect_tmux_pane for split shell and UI setups
+
+- **GIVEN** a caller that succeeds in `register_agent(...)` without `tmux_pane_id`
+- **AND** the deployment may execute shell tools in a helper pane while the visible agent UI runs in another pane
+- **WHEN** the daemon returns the success envelope
+- **THEN** the `hint` string contains the substring `detect_tmux_pane`
+- **AND** the hint string recommends re-registering with the detected `pane_id`
 
 #### Scenario: Empty string tmux_pane_id triggers hint
 
@@ -111,6 +141,12 @@ The hint text MUST advise the caller to run a shell command (`tmux display-messa
 - **GIVEN** a caller that invokes `register_agent({ model, role, tmux_pane_id: '   ' })`
 - **WHEN** the call is processed and succeeds
 - **THEN** the response contains `hint: <string>` with the same form as the omitted case
+
+#### Scenario: Non-tmux delivery suppresses hint
+
+- **GIVEN** a caller that invokes `register_agent({ model, role, delivery: { kind: 'codex-appserver', thread_id: '11111111-1111-4111-8111-111111111111', ws_url: 'ws://127.0.0.1:8799' } })`
+- **WHEN** the call is processed and succeeds
+- **THEN** the response object MUST NOT have a `hint` field
 
 #### Scenario: Error envelope never includes hint
 

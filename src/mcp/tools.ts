@@ -23,6 +23,7 @@ import type { SseFanout } from '../daemon/sse-fanout.js'
 import type { ChannelWakeFanout } from '../daemon/channel-wake-fanout.js'
 import { SubscribeChannelWakeService } from './subscribe-channel-wake.js'
 import { BindChannelService } from './bind-channel.js'
+import { detectTmuxPane } from '../daemon/tmux-pane-detect.js'
 
 export interface AgentIdHolder { current: string | undefined }
 
@@ -35,6 +36,22 @@ function toText(value: unknown): TextContent {
 const deliverySchema = z.object({
   kind: z.string(),
 }).passthrough()
+
+const detectTmuxPaneSchema = z.object({
+  agent: z.enum(['codex', 'claude-code', 'opencode', 'custom']),
+  cwd: z.string().optional(),
+  tty: z.string().optional(),
+  title_contains: z.string().optional(),
+  process_pattern: z.string().optional(),
+}).superRefine((value, ctx) => {
+  if (value.agent === 'custom' && (!value.process_pattern || value.process_pattern.trim().length === 0)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['process_pattern'],
+      message: 'process_pattern is required when agent=custom',
+    })
+  }
+})
 
 const SEND_MESSAGE_DESC = [
   'Private 1→1 message to another agent.  By default auto-poke=true with quiet-guard (auto_poke:false opts out).',
@@ -64,6 +81,12 @@ const BROADCAST_TO_ROLE_DESC = [
 function hasUsableTmuxPaneId(args: { tmux_pane_id?: string }): boolean {
   const tp = args.tmux_pane_id
   return typeof tp === 'string' && tp.trim().length > 0
+}
+
+function suppressTmuxHint(
+  args: { delivery?: { kind?: string } }
+): boolean {
+  return args.delivery?.kind !== undefined && args.delivery.kind !== 'none'
 }
 
 export function buildAutoPokeHint(
@@ -165,6 +188,37 @@ export function registerBusinessTools(
 
   // register_agent — bootstrap: callable before an agents row exists for this session
   server.registerTool(
+    'detect_tmux_pane',
+    {
+      title: 'Detect tmux pane',
+      description: [
+        'Detect the tmux pane that is actually hosting a coding agent UI, even when the shell calling tools lives in a different pane.',
+        'The detector scans tmux panes globally, maps each pane to its tty, then inspects real tty processes instead of trusting `$TMUX_PANE` or tmux focus state alone.',
+        'Use `agent` to pick a built-in matcher for Codex, Claude Code, or opencode.',
+        'Optional `cwd`, `tty`, and `title_contains` narrow the search and make cross-directory multi-agent sessions much more reliable.',
+        'Returns either a single best pane, or an ambiguity/not-found result with candidates for debugging.'
+      ].join(' '),
+      inputSchema: detectTmuxPaneSchema,
+    },
+    async (args: {
+      agent: 'codex' | 'claude-code' | 'opencode' | 'custom'
+      cwd?: string
+      tty?: string
+      title_contains?: string
+      process_pattern?: string
+    }) => run(async () => {
+      return detectTmuxPane({
+        agent: args.agent,
+        cwd: args.cwd,
+        tty: args.tty,
+        title_contains: args.title_contains,
+        process_pattern: args.process_pattern,
+      })
+    })
+  )
+
+  // register_agent — bootstrap: callable before an agents row exists for this session
+  server.registerTool(
     'register_agent',
     {
       title: 'Register agent',
@@ -181,6 +235,8 @@ export function registerBusinessTools(
         'If `echo "$TMUX_PANE"` prints a pane id like `%42` (non-empty output): you ARE in tmux —',
         'include that value as `tmux_pane_id` in THIS register_agent call. Without it, `poke` cannot',
         'wake your session across tmux panes.',
+        'If your tool-calling shell lives in a helper pane but the real agent UI runs elsewhere, call',
+        '`detect_tmux_pane` first and register with the returned `pane_id`.',
         'If the variable is empty AND `tmux display-message` also errors with "not a tmux client":',
         'skip the tmux_pane_id field.',
         'Most LLM coding agents (Claude Code, opencode, codex) run inside tmux by default, so the',
@@ -219,10 +275,10 @@ export function registerBusinessTools(
           } else if (fanout) {
             try { fanout.rebind(res.agent_id, res.team) } catch { /* best-effort */ }
           }
-          if (!hasUsableTmuxPaneId(args)) {
+          if (!hasUsableTmuxPaneId(args) && !suppressTmuxHint(args)) {
             return {
               ...res,
-              hint: "No tmux_pane_id provided — cross-agent poke delivery via tmux is off until you re-register with a usable pane id. Run `echo \"$TMUX_PANE\"` in your shell tool (the env var is set per-pane by tmux); fall back to `tmux display-message -p '#{pane_id}'` only if $TMUX_PANE is empty. Most coding agents (Claude Code, opencode, codex) run inside tmux, so this is usually available. Claude Code users who loaded the cross-agent-teams-mcp channel plugin can also route pokes via channel_session_id — the plugin's proxy emits a startup <channel> notification telling Claude to call bind_channel({channel_session_id}); that path does not involve register_agent."
+              hint: "No tmux_pane_id provided — cross-agent poke delivery via tmux is off until you re-register with a usable pane id. If your shell and visible agent UI are the same pane, run `echo \"$TMUX_PANE\"` first; fall back to `tmux display-message -p '#{pane_id}'` only if $TMUX_PANE is empty. If they differ, call `detect_tmux_pane({ agent, cwd })` and use the returned `pane_id`. Claude Code users who loaded the cross-agent-teams-mcp channel plugin can also route pokes via channel_session_id — the plugin's proxy emits a startup <channel> notification telling Claude to call bind_channel({channel_session_id}); that path does not involve register_agent."
             }
           }
         }
