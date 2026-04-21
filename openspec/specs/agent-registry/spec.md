@@ -132,7 +132,7 @@ The hint text MUST advise the caller how to discover a usable pane id before re-
 
 #### Scenario: Empty string tmux_pane_id triggers hint
 
-- **GIVEN** a caller that invokes `register_agent({ model, role, tmux_pane_id: '' })`
+- **GIVEN** a caller that invokes `register_agent({ model, name, role, tmux_pane_id: '', delivery: { kind: 'none' } })`
 - **WHEN** the call is processed and succeeds
 - **THEN** the response contains `hint: <string>` with the same form as the omitted case
 
@@ -372,15 +372,15 @@ Validation failures SHALL return `{error: 'invalid_delivery', reason: ...}` with
 
 - **GIVEN** a caller supplies `delivery={kind: 'codex-appserver', thread_id: '11111111-1111-4111-8111-111111111111', ws_url: 'ws://127.0.0.1:8799', auth_token_ref: 'CODEX_REMOTE_TOKEN'}` alongside identity fields
 - **WHEN** the tool returns successfully
-- **THEN** the `agents` row has both the identity fields and `delivery_kind='codex-appserver'`
-- **AND** `delivery_payload` contains `thread_id`, `ws_url`, and `auth_token_ref`
+- **THEN** the `agents` row has `delivery_kind='codex-appserver'`
+- **AND** `delivery_payload='{\"thread_id\":\"11111111-1111-4111-8111-111111111111\",\"ws_url\":\"ws://127.0.0.1:8799\",\"auth_token_ref\":\"CODEX_REMOTE_TOKEN\"}'`
 
-#### Scenario: register_agent with invalid delivery rejects without inserting
+#### Scenario: register_agent with invalid codex delivery rejects without inserting
 
-- **GIVEN** a caller supplies `delivery={kind: 'claude-channel'}` for a not-yet-registered `(team, name)`
-- **WHEN** the tool is invoked
-- **THEN** the tool returns `{error: 'invalid_delivery', reason: 'missing_channel_session_id'}`
-- **AND** no `agents` row is created for that `(team, name)`
+- **GIVEN** a caller supplies `delivery={kind: 'codex-appserver', thread_id: 'not-a-uuid', ws_url: 'ws://127.0.0.1:8799'}` for a not-yet-registered `(team, name)`
+- **WHEN** the tool validates the payload
+- **THEN** it returns `{error: 'invalid_delivery', reason: 'invalid_thread_id'}`
+- **AND** no row is inserted for that identity
 
 ### Requirement: register_codex_self autodetects and registers a Codex app-server delivery
 
@@ -516,4 +516,3 @@ The `agents` table SHALL retain the existing nullable column `channel_session_id
 - **GIVEN** team `default` has an agent whose `delivery.kind` is anything other than `'claude-channel'`, for example `'none'` or a future kind
 - **WHEN** a caller in team `default` invokes `list_agents({})`
 - **THEN** the entry has `channel_session_id: null`
-

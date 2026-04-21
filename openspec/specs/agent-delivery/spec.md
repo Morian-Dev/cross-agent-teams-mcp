@@ -69,9 +69,9 @@ Reading a row SHALL reconstruct `DeliverySpec` by taking `delivery_kind` as `kin
 - **WHEN** the row is read as a `DeliverySpec`
 - **THEN** reading fails with `corrupt_delivery_payload`
 
-### Requirement: DeliverySpec validation rejects unknown or malformed kinds at write time
+### Requirement: DeliverySpec validation rejects unknown kinds at write time
 
-Write paths, including `register_agent`, `bind_channel`, and any future MCP tool that accepts a `delivery` field, SHALL validate `DeliverySpec` and reject any `kind` outside the kinds currently supported by the daemon's write validator.
+Write paths, including `register_agent`, `bind_channel`, and any future MCP tool that accepts a `delivery` field, SHALL validate `DeliverySpec` and reject any `kind` outside the supported write surface.
 
 The write validator SHALL accept:
 
@@ -79,22 +79,30 @@ The write validator SHALL accept:
 - `{kind: 'claude-channel', channel_session_id: ...}`
 - `{kind: 'codex-appserver', thread_id: <UUID>, ws_url: <ws:// or wss:// URL>, auth_token_ref?: <trimmed non-empty string>}`
 
-Rejection response SHALL be `{error: 'invalid_delivery'}` with a machine-readable `reason` explaining which field is missing or malformed.
+The validator SHALL reject invalid inputs with `{ error: 'invalid_delivery', reason: <machine-readable reason> }`.
+
+Supported `reason` values in this change are:
+
+- `unknown_kind`
+- `missing_channel_session_id`
+- `invalid_thread_id`
+- `invalid_ws_url`
+- `invalid_auth_token_ref`
 
 #### Scenario: Write validator accepts kind 'none'
 
 - **WHEN** a write path receives `delivery={kind: 'none'}`
-- **THEN** it accepts the input
+- **THEN** it returns `{ ok: { kind: 'none' } }`
 
-#### Scenario: Write validator accepts kind 'claude-channel' with valid channel_session_id
+#### Scenario: Write validator accepts kind 'claude-channel'
 
 - **WHEN** a write path receives `delivery={kind: 'claude-channel', channel_session_id: 'csid-abc'}`
-- **THEN** it accepts the input
+- **THEN** it returns `{ ok: { kind: 'claude-channel', channel_session_id: 'csid-abc' } }`
 
-#### Scenario: Write validator accepts kind 'codex-appserver' with valid fields
+#### Scenario: Write validator accepts kind 'codex-appserver'
 
-- **WHEN** a write path receives `delivery={kind: 'codex-appserver', thread_id: '11111111-1111-4111-8111-111111111111', ws_url: 'ws://127.0.0.1:8799'}`
-- **THEN** it accepts the input
+- **WHEN** a write path receives `delivery={kind: 'codex-appserver', thread_id: '11111111-1111-4111-8111-111111111111', ws_url: 'ws://127.0.0.1:8799', auth_token_ref: 'CODEX_REMOTE_TOKEN'}`
+- **THEN** it returns `{ ok: { kind: 'codex-appserver', thread_id: '11111111-1111-4111-8111-111111111111', ws_url: 'ws://127.0.0.1:8799', auth_token_ref: 'CODEX_REMOTE_TOKEN' } }`
 
 #### Scenario: Write validator rejects unknown kind
 
@@ -108,7 +116,7 @@ Rejection response SHALL be `{error: 'invalid_delivery'}` with a machine-readabl
 
 #### Scenario: Write validator rejects kind 'codex-appserver' with invalid thread_id
 
-- **WHEN** a write path receives `delivery={kind: 'codex-appserver', thread_id: 'thread-1', ws_url: 'ws://127.0.0.1:8799'}`
+- **WHEN** a write path receives `delivery={kind: 'codex-appserver', thread_id: 'not-a-uuid', ws_url: 'ws://127.0.0.1:8799'}`
 - **THEN** it returns `{error: 'invalid_delivery', reason: 'invalid_thread_id'}`
 
 #### Scenario: Write validator rejects kind 'codex-appserver' with invalid ws_url
@@ -125,9 +133,9 @@ Rejection response SHALL be `{error: 'invalid_delivery'}` with a machine-readabl
 
 The daemon's poke dispatcher SHALL select the backend transport based on the target agent's `delivery.kind` value, with the following routing:
 
-- `kind === 'claude-channel'` → deliver via `ChannelWakeFanout` using `delivery.channel_session_id`, per `claude-channel-transport` spec.
+- `kind === 'claude-channel'` → deliver via `ChannelWakeFanout` using `delivery.channel_session_id`, per `claude-channel-transport` spec; if no subscribed sink exists and `tmux_pane_id` is set, it MAY fall back to tmux injection.
 - `kind === 'none'` → fall back to tmux injection if `tmux_pane_id` is set; otherwise fail with `no_transport_available`.
-- `kind === 'codex-appserver'` → deliver via the Codex websocket dispatcher using `delivery.thread_id`, `delivery.ws_url`, and optional `delivery.auth_token_ref`.  This route SHALL return a transport-aware Codex result and SHALL NOT automatically fall back to tmux when explicit Codex delivery is configured.
+- `kind === 'codex-appserver'` → deliver via the Codex websocket dispatcher defined in `codex-appserver-transport/spec.md`; this route SHALL NOT fall back to tmux automatically.
 
 #### Scenario: Route kind 'claude-channel' to ChannelWakeFanout
 
@@ -147,17 +155,18 @@ The daemon's poke dispatcher SHALL select the backend transport based on the tar
 - **WHEN** the daemon dispatches a poke to this agent
 - **THEN** the dispatcher returns `{error: 'no_transport_available'}`
 
-#### Scenario: kind 'codex-appserver' returns codex-appserver success envelope
+#### Scenario: Route kind 'codex-appserver' to Codex dispatcher
 
 - **GIVEN** target agent has `delivery={kind: 'codex-appserver', thread_id: '11111111-1111-4111-8111-111111111111', ws_url: 'ws://127.0.0.1:8799'}`
-- **WHEN** the daemon dispatches a poke to this agent and the Codex transport succeeds
-- **THEN** the dispatcher returns `{ok: true, transport_used: 'codex-appserver', thread_id: '11111111-1111-4111-8111-111111111111'}`
+- **WHEN** the daemon dispatches a poke to this agent
+- **THEN** it invokes the Codex dispatcher with that `thread_id` and `ws_url`
 
-#### Scenario: kind 'codex-appserver' failure does not fall back to tmux
+#### Scenario: Codex dispatcher failure is returned without tmux fallback
 
-- **GIVEN** target agent has `delivery={kind: 'codex-appserver', ...}` and also has a `tmux_pane_id`
-- **WHEN** the Codex transport fails with a machine-readable error such as `codex_connect_failed`
-- **THEN** the dispatcher returns that Codex transport error
+- **GIVEN** target agent has `delivery={kind: 'codex-appserver', thread_id: '11111111-1111-4111-8111-111111111111', ws_url: 'ws://127.0.0.1:8799'}`
+- **AND** the Codex dispatcher fails with `{ error: 'codex_connect_failed', detail: 'ECONNREFUSED' }`
+- **WHEN** the daemon dispatches a poke to this agent
+- **THEN** the daemon returns `{ error: 'codex_connect_failed', detail: 'ECONNREFUSED' }`
 - **AND** it does NOT attempt tmux injection automatically
 
 ### Requirement: Legacy channel_session_id access derives from delivery
