@@ -22,6 +22,7 @@ export interface RegisterCodexSelfInput {
   team?: string
   ws_url?: string
   auth_token_ref?: string
+  thread_id?: string
   tmux_pane_id?: string
   cwd?: string
   tty?: string
@@ -43,7 +44,7 @@ export type RegisterCodexSelfResult =
   | { error: 'codex_initialize_failed'; detail?: unknown }
   | { error: 'codex_loaded_list_failed'; detail?: unknown }
   | { error: 'no_loaded_threads'; detail?: unknown }
-  | { error: 'ambiguous_loaded_threads'; detail?: unknown }
+  | { error: 'thread_id_required'; detail: { ws_url: string; thread_ids: string[] } }
   | { error: 'codex_resume_failed'; detail?: unknown }
 
 export interface RegisterCodexSelfDeps {
@@ -187,51 +188,74 @@ export class RegisterCodexSelfService {
 
       client.notify('initialized')
 
-      const list = await requestStep(
-        client,
-        'thread/loaded/list',
-        { cursor: null, limit: 20 },
-        'codex_loaded_list_failed'
-      )
-      if ('error' in list) return list
+      const explicitThreadId = trimToUndefined(input.thread_id)
+      let threadId = explicitThreadId
 
-      const threadIds = extractThreadIds(list.ok)
-      if (threadIds.length === 0) {
-        return {
-          error: 'no_loaded_threads',
-          detail: { ws_url: wsUrl },
-        }
-      }
-
-      const liveThreadIds: string[] = []
-      const failures: Array<{ thread_id: string; detail: unknown }> = []
-      for (const threadId of threadIds) {
-        const resume = await requestStep(
+      if (!threadId) {
+        const list = await requestStep(
           client,
-          'thread/resume',
-          {
-            threadId,
-            persistExtendedHistory: false,
-          },
-          'codex_resume_failed'
+          'thread/loaded/list',
+          { cursor: null, limit: 20 },
+          'codex_loaded_list_failed'
         )
-        if ('error' in resume) {
-          failures.push({ thread_id: threadId, detail: resume.detail })
-          continue
+        if ('error' in list) return list
+
+        const threadIds = extractThreadIds(list.ok)
+        if (threadIds.length === 0) {
+          return {
+            error: 'no_loaded_threads',
+            detail: { ws_url: wsUrl },
+          }
         }
-        liveThreadIds.push(threadId)
+
+        const liveThreadIds: string[] = []
+        const failures: Array<{ thread_id: string; detail: unknown }> = []
+        for (const candidateThreadId of threadIds) {
+          const resume = await requestStep(
+            client,
+            'thread/resume',
+            {
+              threadId: candidateThreadId,
+              persistExtendedHistory: false,
+            },
+            'codex_resume_failed'
+          )
+          if ('error' in resume) {
+            failures.push({ thread_id: candidateThreadId, detail: resume.detail })
+            continue
+          }
+          liveThreadIds.push(candidateThreadId)
+        }
+
+        if (liveThreadIds.length === 0) {
+          return {
+            error: 'codex_resume_failed',
+            detail: failures,
+          }
+        }
+
+        return {
+          error: 'thread_id_required',
+          detail: {
+            ws_url: wsUrl,
+            thread_ids: liveThreadIds,
+          },
+        }
       }
 
-      if (liveThreadIds.length === 0) {
+      const resume = await requestStep(
+        client,
+        'thread/resume',
+        {
+          threadId,
+          persistExtendedHistory: false,
+        },
+        'codex_resume_failed'
+      )
+      if ('error' in resume) {
         return {
           error: 'codex_resume_failed',
-          detail: failures,
-        }
-      }
-      if (liveThreadIds.length > 1) {
-        return {
-          error: 'ambiguous_loaded_threads',
-          detail: { thread_ids: liveThreadIds },
+          detail: { thread_id: threadId, cause: resume.detail },
         }
       }
 
@@ -246,7 +270,7 @@ export class RegisterCodexSelfService {
         tmux_pane_id: tmuxPaneId,
         delivery: {
           kind: 'codex-appserver',
-          thread_id: liveThreadIds[0],
+          thread_id: threadId,
           ws_url: wsUrl,
           ...(input.auth_token_ref === undefined
             ? {}
@@ -256,7 +280,7 @@ export class RegisterCodexSelfService {
       if ('error' in result) return result
       return {
         ...result,
-        thread_id: liveThreadIds[0],
+        thread_id: threadId,
         ws_url: wsUrl,
       }
     } catch (error) {

@@ -293,22 +293,23 @@ export function registerBusinessTools(
     {
       title: 'Register codex self',
       description: [
-        'Codex-only shortcut. Autodetect the current Codex app-server thread and register this session as a codex-appserver delivery target.',
+        'Codex-only shortcut. Register this session as a codex-appserver delivery target using an explicit Codex thread id.',
         'Use this only for Codex remote sessions. Do NOT use this tool from Claude Code or opencode; they should call `register_agent` instead.',
         'Use this when the user says to register to cross-agent-teams and only provides human-facing fields like name, role, and team.',
-        'The tool discovers the Codex thread by connecting to the local app-server, listing loaded threads, and selecting the single resumable one.',
+        'The daemon cannot safely infer the caller\'s current Codex thread from loaded threads alone, so callers should provide `thread_id` explicitly.',
+        'When `thread_id` is omitted, the tool returns `thread_id_required` plus resumable thread ids for debugging instead of guessing.',
         'When `tmux_pane_id` is provided, the tool persists it alongside the Codex delivery. Otherwise it best-effort tries to discover the Codex tmux pane.',
         'Optional `cwd`, `tty`, and `title_contains` narrow tmux pane detection when the visible Codex UI may differ from the shell running MCP tools.',
         'Tmux pane discovery is best-effort only: if no unique pane is found, the tool still succeeds as long as Codex thread registration succeeds.',
         'Optional `ws_url` overrides the default websocket URL; optional `auth_token_ref` names an environment variable that stores the bearer token.',
-        'If the Codex app-server is unreachable or does not speak the expected protocol, the tool returns `unsupported_client` instead of guessing.',
-        'If multiple loaded threads are resumable, the tool returns an ambiguity error instead of guessing.'
+        'If the Codex app-server is unreachable or does not speak the expected protocol, the tool returns `unsupported_client` instead of guessing.'
       ].join(' '),
       inputSchema: z.object({
         name: z.string().min(1).refine(v => v.trim().length > 0, { message: 'name must not be empty' }),
         model: z.string().optional(),
         role: z.string().optional(),
         team: z.string().optional(),
+        thread_id: z.string().min(1).refine(v => v.trim().length > 0, { message: 'thread_id must not be empty' }).optional(),
         tmux_pane_id: z.string().optional(),
         cwd: z.string().optional(),
         tty: z.string().optional(),
@@ -322,6 +323,7 @@ export function registerBusinessTools(
       model?: string
       role?: string
       team?: string
+      thread_id?: string
       tmux_pane_id?: string
       cwd?: string
       tty?: string
@@ -338,6 +340,7 @@ export function registerBusinessTools(
           model: args.model,
           role: args.role,
           team: args.team,
+          thread_id: args.thread_id,
           tmux_pane_id: args.tmux_pane_id,
           cwd: args.cwd,
           tty: args.tty,

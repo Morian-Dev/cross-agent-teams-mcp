@@ -62,7 +62,9 @@ The daemon currently supports these wake-up paths:
 
 ## Codex App-Server Delivery
 
-For daily Codex usage, the recommended entry point is `register_codex_self`.  It connects to the local Codex app-server, calls `thread/loaded/list`, selects the single resumable thread, and registers the current session as a `codex-appserver` delivery target.  It also best-effort records `tmux_pane_id`: explicit `tmux_pane_id` wins, otherwise the tool tries to discover the Codex UI pane.
+For daily Codex usage, the recommended entry point is `register_codex_self`.  It connects to the local Codex app-server and registers a caller-supplied `thread_id` as a `codex-appserver` delivery target.  It also best-effort records `tmux_pane_id`: explicit `tmux_pane_id` wins, otherwise the tool tries to discover the Codex UI pane.
+
+`register_codex_self` no longer guesses the caller's current thread from `thread/loaded/list`.  The daemon cannot safely infer "which loaded thread is mine" from the MCP session alone.  If `thread_id` is omitted, the tool returns `thread_id_required` with resumable thread ids for debugging instead of registering the wrong thread.
 
 Minimal example:
 
@@ -70,7 +72,8 @@ Minimal example:
 register_codex_self({
   name: "lead",
   team: "default",
-  role: "worker"
+  role: "worker",
+  thread_id: "11111111-1111-4111-8111-111111111111"
 })
 ```
 
@@ -81,6 +84,7 @@ register_codex_self({
   name: "lead",
   team: "default",
   role: "worker",
+  thread_id: "11111111-1111-4111-8111-111111111111",
   tmux_pane_id: "%42"
 })
 ```
@@ -92,6 +96,7 @@ register_codex_self({
   name: "lead",
   team: "default",
   role: "worker",
+  thread_id: "11111111-1111-4111-8111-111111111111",
   cwd: "/workspace/project",
   title_contains: "project"
 })
@@ -104,6 +109,7 @@ register_codex_self({
   name: "lead",
   team: "default",
   role: "worker",
+  thread_id: "11111111-1111-4111-8111-111111111111",
   ws_url: "ws://127.0.0.1:8799"
 })
 ```
@@ -115,6 +121,7 @@ register_codex_self({
   name: "lead",
   team: "default",
   role: "worker",
+  thread_id: "11111111-1111-4111-8111-111111111111",
   auth_token_ref: "CODEX_REMOTE_TOKEN"
 })
 ```
@@ -122,11 +129,12 @@ register_codex_self({
 Behavior notes:
 
 - Default `ws_url` is `ws://127.0.0.1:8799`
+- `thread_id` is required for successful registration
 - `tmux_pane_id` is persisted when provided explicitly or when a unique Codex pane can be detected
 - Optional pane-detect hints are `cwd`, `tty`, and `title_contains`
 - Failure to find a unique tmux pane does not fail `register_codex_self`; it only means no new pane id is written
 - No loaded thread returns `no_loaded_threads`
-- Multiple resumable threads return `ambiguous_loaded_threads`
+- Omitted `thread_id` returns `thread_id_required` with resumable thread ids for debugging
 - Success returns `{ agent_id, team, thread_id, ws_url }`
 
 Minimal Codex app-server startup:

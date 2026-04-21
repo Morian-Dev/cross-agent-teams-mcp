@@ -62,7 +62,9 @@ curl http://127.0.0.1:9100/health
 
 ## Codex App-Server Delivery
 
-如果你平时主要在 Codex 里使用, 更推荐直接调用 `register_codex_self`.  它会连接本地 Codex app-server, 调用 `thread/loaded/list`, 选择唯一可恢复的 thread, 然后把当前会话注册成 `codex-appserver` delivery.  同时它还会以 best-effort 方式补登记 `tmux_pane_id`: 显式传入的 `tmux_pane_id` 优先, 否则工具会尝试发现 Codex UI 所在的 tmux pane.
+如果你平时主要在 Codex 里使用, 更推荐直接调用 `register_codex_self`.  它会连接本地 Codex app-server, 用调用者显式提供的 `thread_id` 把当前会话注册成 `codex-appserver` delivery.  同时它还会以 best-effort 方式补登记 `tmux_pane_id`: 显式传入的 `tmux_pane_id` 优先, 否则工具会尝试发现 Codex UI 所在的 tmux pane.
+
+`register_codex_self` 不再根据 `thread/loaded/list` 去猜“当前调用者自己的 thread”.  daemon 仅凭 MCP session 无法安全判断 loaded threads 里哪一个属于当前调用者.  如果省略 `thread_id`, 工具会返回 `thread_id_required`, 并附带可恢复的 thread id 列表供排查, 但不会继续注册.
 
 最简用法:
 
@@ -70,7 +72,8 @@ curl http://127.0.0.1:9100/health
 register_codex_self({
   name: "lead",
   team: "default",
-  role: "worker"
+  role: "worker",
+  thread_id: "11111111-1111-4111-8111-111111111111"
 })
 ```
 
@@ -81,6 +84,7 @@ register_codex_self({
   name: "lead",
   team: "default",
   role: "worker",
+  thread_id: "11111111-1111-4111-8111-111111111111",
   tmux_pane_id: "%42"
 })
 ```
@@ -92,6 +96,7 @@ register_codex_self({
   name: "lead",
   team: "default",
   role: "worker",
+  thread_id: "11111111-1111-4111-8111-111111111111",
   cwd: "/workspace/project",
   title_contains: "project"
 })
@@ -104,6 +109,7 @@ register_codex_self({
   name: "lead",
   team: "default",
   role: "worker",
+  thread_id: "11111111-1111-4111-8111-111111111111",
   ws_url: "ws://127.0.0.1:8799"
 })
 ```
@@ -115,6 +121,7 @@ register_codex_self({
   name: "lead",
   team: "default",
   role: "worker",
+  thread_id: "11111111-1111-4111-8111-111111111111",
   auth_token_ref: "CODEX_REMOTE_TOKEN"
 })
 ```
@@ -122,11 +129,12 @@ register_codex_self({
 行为说明:
 
 - 默认 `ws_url` 是 `ws://127.0.0.1:8799`
+- 成功注册必须显式提供 `thread_id`
 - 显式提供 `tmux_pane_id`, 或成功探测到唯一 Codex pane 时, 工具会一并持久化 `tmux_pane_id`
 - 可选的 pane 探测 hint 包括 `cwd`, `tty`, `title_contains`
 - 找不到唯一 tmux pane 不会让 `register_codex_self` 失败, 只是这次不会写入新的 pane id
 - 没有 loaded thread 时返回 `no_loaded_threads`
-- 有多个可恢复 thread 时返回 `ambiguous_loaded_threads`
+- 省略 `thread_id` 时返回 `thread_id_required`, 并附带可恢复 thread id 列表供排查
 - 成功时返回 `{ agent_id, team, thread_id, ws_url }`
 
 Codex app-server 的最小启动方式:

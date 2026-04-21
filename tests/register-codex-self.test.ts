@@ -95,7 +95,7 @@ describe('RegisterCodexSelfService', () => {
     return { db, svc }
   }
 
-  it('autodetects the single resumable thread and detected pane', async () => {
+  it('registers the caller-supplied thread_id and detected pane', async () => {
     const harness = createHarness({
       onCreate: (ws) => queueMicrotask(() => ws.emit('open', {})),
       onSend: (message, ws) => {
@@ -135,6 +135,7 @@ describe('RegisterCodexSelfService', () => {
       name: 'lead',
       team: 'default',
       role: 'worker',
+      thread_id: '11111111-1111-4111-8111-111111111111',
     })
 
     expect(result).toEqual({
@@ -196,6 +197,7 @@ describe('RegisterCodexSelfService', () => {
     await svc.register({
       connection_id: 'conn-1',
       name: 'lead',
+      thread_id: '11111111-1111-4111-8111-111111111111',
       tmux_pane_id: '%42',
     })
 
@@ -259,6 +261,7 @@ describe('RegisterCodexSelfService', () => {
     const result = await svc.register({
       connection_id: 'conn-1',
       name: 'lead',
+      thread_id: '11111111-1111-4111-8111-111111111111',
     })
 
     expect(result).toEqual({
@@ -317,6 +320,7 @@ describe('RegisterCodexSelfService', () => {
       connection_id: 'conn-1',
       name: 'lead',
       team: 'default',
+      thread_id: '11111111-1111-4111-8111-111111111111',
     })
 
     const row = db.prepare(
@@ -355,7 +359,7 @@ describe('RegisterCodexSelfService', () => {
     })
   })
 
-  it('returns ambiguous_loaded_threads when multiple threads are resumable', async () => {
+  it('returns thread_id_required when resumable threads exist but thread_id is omitted', async () => {
     const harness = createHarness({
       onCreate: (ws) => queueMicrotask(() => ws.emit('open', {})),
       onSend: (message, ws) => {
@@ -385,14 +389,53 @@ describe('RegisterCodexSelfService', () => {
     })
 
     expect(result).toEqual({
-      error: 'ambiguous_loaded_threads',
+      error: 'thread_id_required',
       detail: {
+        ws_url: 'ws://127.0.0.1:8799',
         thread_ids: [
           '11111111-1111-4111-8111-111111111111',
           '22222222-2222-4222-8222-222222222222',
         ],
       },
     })
+  })
+
+  it('returns thread_id_required for a single resumable thread without mutating agent state', async () => {
+    const harness = createHarness({
+      onCreate: (ws) => queueMicrotask(() => ws.emit('open', {})),
+      onSend: (message, ws) => {
+        if (message.method === 'initialize' && message.id) {
+          ws.reply(message.id, { result: { ok: true } })
+        }
+        if (message.method === 'thread/loaded/list' && message.id) {
+          ws.reply(message.id, {
+            result: { data: ['11111111-1111-4111-8111-111111111111'] },
+          })
+        }
+        if (message.method === 'thread/resume' && message.id) {
+          ws.reply(message.id, { result: { ok: true } })
+        }
+      },
+    })
+    const { db, svc } = setup(harness)
+
+    const result = await svc.register({
+      connection_id: 'conn-1',
+      name: 'lead',
+      team: 'default',
+    })
+
+    expect(result).toEqual({
+      error: 'thread_id_required',
+      detail: {
+        ws_url: 'ws://127.0.0.1:8799',
+        thread_ids: ['11111111-1111-4111-8111-111111111111'],
+      },
+    })
+    const row = db.prepare(
+      'SELECT agent_id FROM agents WHERE team=? AND name=?'
+    ).get('default', 'lead')
+    expect(row).toBeUndefined()
   })
 
   it('returns missing_auth_token when auth_token_ref is set but env is missing', async () => {
@@ -404,6 +447,7 @@ describe('RegisterCodexSelfService', () => {
     const result = await svc.register({
       connection_id: 'conn-1',
       name: 'lead',
+      thread_id: '11111111-1111-4111-8111-111111111111',
       auth_token_ref: 'CODEX_REMOTE_TOKEN',
     })
 
@@ -423,6 +467,7 @@ describe('RegisterCodexSelfService', () => {
     const result = await svc.register({
       connection_id: 'conn-1',
       name: 'lead',
+      thread_id: '11111111-1111-4111-8111-111111111111',
     })
 
     expect(result).toEqual({
@@ -452,6 +497,7 @@ describe('RegisterCodexSelfService', () => {
     const result = await svc.register({
       connection_id: 'conn-1',
       name: 'lead',
+      thread_id: '11111111-1111-4111-8111-111111111111',
     })
 
     expect(result).toEqual({
@@ -461,6 +507,37 @@ describe('RegisterCodexSelfService', () => {
         reason: 'codex_protocol_unavailable',
         ws_url: 'ws://127.0.0.1:8799',
         cause: { code: -32601, message: 'method not found' },
+      },
+    })
+  })
+
+  it('returns codex_resume_failed with thread_id detail for explicit thread bindings', async () => {
+    const harness = createHarness({
+      onCreate: (ws) => queueMicrotask(() => ws.emit('open', {})),
+      onSend: (message, ws) => {
+        if (message.method === 'initialize' && message.id) {
+          ws.reply(message.id, { result: { ok: true } })
+        }
+        if (message.method === 'thread/resume' && message.id) {
+          ws.reply(message.id, {
+            error: { code: -32600, message: 'no rollout found' },
+          })
+        }
+      },
+    })
+    const { svc } = setup(harness)
+
+    const result = await svc.register({
+      connection_id: 'conn-1',
+      name: 'lead',
+      thread_id: '11111111-1111-4111-8111-111111111111',
+    })
+
+    expect(result).toEqual({
+      error: 'codex_resume_failed',
+      detail: {
+        thread_id: '11111111-1111-4111-8111-111111111111',
+        cause: { code: -32600, message: 'no rollout found' },
       },
     })
   })
