@@ -15,7 +15,7 @@ describe('register_codex_self tool registration', () => {
     cleanups.length = 0
   })
 
-  it('register_codex_self appears in list_tools with name/team/role style inputs', async () => {
+  it('register_codex_self appears in list_tools with tmux pane inputs', async () => {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
     const url = new URL(`http://${host}:${port}/mcp`)
@@ -32,11 +32,16 @@ describe('register_codex_self tool registration', () => {
         name: expect.anything(),
         team: expect.anything(),
         role: expect.anything(),
+        tmux_pane_id: expect.anything(),
+        cwd: expect.anything(),
+        tty: expect.anything(),
+        title_contains: expect.anything(),
       })
     })
     expect(tool!.description).toMatch(/Codex-only/i)
     expect(tool!.description).toMatch(/Do NOT use this tool from Claude Code or opencode/i)
     expect(tool!.description).toMatch(/register_agent/i)
+    expect(tool!.description).toMatch(/best-effort/i)
 
     await t.terminateSession()
     await c.close()

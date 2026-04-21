@@ -38,7 +38,7 @@ Authorization = "Bearer YOUR_TOKEN"
 
 如果你希望 daemon 通过 Codex 自带的 websocket app-server 唤醒一个正在运行的 Codex thread, 可以在 agent 侧启动 app-server, 然后把 `delivery.kind='codex-appserver'` 注册到 daemon.
 
-优先推荐直接用高层工具 `register_codex_self`.  它会自动探测本地 app-server 上唯一可恢复的 loaded thread, 并把当前 agent 注册成 `codex-appserver` delivery.  只有在你需要精确指定 `thread_id` 或 `ws_url` 时, 才建议继续手写 `register_agent({ delivery: ... })`.
+优先推荐直接用高层工具 `register_codex_self`.  它会自动探测本地 app-server 上唯一可恢复的 loaded thread, 并把当前 agent 注册成 `codex-appserver` delivery.  同时它还会 best-effort 登记 `tmux_pane_id`: 显式传入的 pane id 优先, 否则会按 Codex matcher 尝试发现唯一 tmux pane.  只有在你需要精确指定 `thread_id` 或 `ws_url` 时, 才建议继续手写 `register_agent({ delivery: ... })`.
 
 ### 1. 启动 app-server
 
@@ -83,6 +83,30 @@ register_codex_self({
 })
 ```
 
+如果你已经知道自己的 pane id, 可以直接传:
+
+```text
+register_codex_self({
+  name: "lead",
+  team: "default",
+  role: "worker",
+  tmux_pane_id: "%42"
+})
+```
+
+如果调用工具的 shell pane 和可见的 Codex UI pane 可能不同, 可以传 hint 缩小探测范围:
+
+```text
+register_codex_self({
+  name: "lead",
+  team: "default",
+  role: "worker",
+  cwd: "/workspace/project",
+  tty: "ttys026",
+  title_contains: "project"
+})
+```
+
 可选覆盖:
 
 ```text
@@ -105,6 +129,13 @@ register_codex_self({
   "ws_url": "ws://127.0.0.1:8799"
 }
 ```
+
+补充说明:
+
+- `tmux_pane_id` 明确传入时会直接持久化
+- 未传 `tmux_pane_id` 时, 工具会尝试按 Codex pane detector 写入唯一 pane
+- `cwd`, `tty`, `title_contains` 只是 detector hint, 不会写入数据库
+- detector 找不到唯一 pane 不会让注册失败, 只是这次不会更新 `tmux_pane_id`
 
 如果没有可用 thread, 或有多个可恢复 thread, 工具会返回错误而不是擅自猜一个:
 

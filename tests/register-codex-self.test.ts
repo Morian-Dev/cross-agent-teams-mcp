@@ -7,6 +7,7 @@ import { applySchema } from '../src/storage/schema.js'
 import { RegisterAgentService } from '../src/mcp/register-agent.js'
 import { RegisterCodexSelfService } from '../src/mcp/register-codex-self.js'
 import type { WebSocketLike } from '../src/mcp/codex-appserver-rpc.js'
+import type { DetectTmuxPaneResult } from '../src/daemon/tmux-pane-detect.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-register-codex-self-'))
 
@@ -76,7 +77,11 @@ describe('RegisterCodexSelfService', () => {
     cleanups.length = 0
   })
 
-  function setup(harness: ReturnType<typeof createHarness>, env: NodeJS.ProcessEnv = {}) {
+  function setup(
+    harness: ReturnType<typeof createHarness>,
+    env: NodeJS.ProcessEnv = {},
+    detectResult: DetectTmuxPaneResult = { error: 'not_found', candidates: [] }
+  ) {
     const dir = tmp()
     cleanups.push(dir)
     const db = openDb(join(dir, 'data.db'))
@@ -85,11 +90,192 @@ describe('RegisterCodexSelfService', () => {
     const svc = new RegisterCodexSelfService(registerSvc, {
       webSocketFactory: harness.factory,
       env,
+      detectTmuxPane: async () => detectResult,
     })
     return { db, svc }
   }
 
-  it('autodetects the single resumable thread and registers codex delivery', async () => {
+  it('autodetects the single resumable thread and detected pane', async () => {
+    const harness = createHarness({
+      onCreate: (ws) => queueMicrotask(() => ws.emit('open', {})),
+      onSend: (message, ws) => {
+        if (message.method === 'initialize' && message.id) {
+          ws.reply(message.id, { result: { ok: true } })
+        }
+        if (message.method === 'thread/loaded/list' && message.id) {
+          ws.reply(message.id, {
+            result: { data: ['11111111-1111-4111-8111-111111111111'] },
+          })
+        }
+        if (message.method === 'thread/resume' && message.id) {
+          ws.reply(message.id, { result: { ok: true } })
+        }
+      },
+    })
+    const { db, svc } = setup(harness, {}, {
+      ok: true,
+      pane: {
+        pane_id: '%1902',
+        session_name: 's1',
+        window_index: 0,
+        pane_index: 2,
+        active: true,
+        tty: 'ttys001',
+        current_path: '/workspace/project',
+        current_command: 'codex',
+        title: 'project',
+        matched_processes: ['123 1 S+ codex --remote ws://127.0.0.1:8799'],
+        score: 99,
+      },
+      candidates: [],
+    })
+
+    const result = await svc.register({
+      connection_id: 'conn-1',
+      name: 'lead',
+      team: 'default',
+      role: 'worker',
+    })
+
+    expect(result).toEqual({
+      agent_id: expect.any(String),
+      team: 'default',
+      thread_id: '11111111-1111-4111-8111-111111111111',
+      ws_url: 'ws://127.0.0.1:8799',
+    })
+    const row = db.prepare(
+      'SELECT delivery_kind, delivery_payload, tmux_pane_id FROM agents WHERE team=? AND name=?'
+    ).get('default', 'lead') as {
+      delivery_kind: string
+      delivery_payload: string | null
+      tmux_pane_id: string | null
+    }
+    expect(row.delivery_kind).toBe('codex-appserver')
+    expect(JSON.parse(row.delivery_payload as string)).toEqual({
+      thread_id: '11111111-1111-4111-8111-111111111111',
+      ws_url: 'ws://127.0.0.1:8799',
+    })
+    expect(row.tmux_pane_id).toBe('%1902')
+  })
+
+  it('prefers explicit tmux_pane_id over detector output', async () => {
+    const harness = createHarness({
+      onCreate: (ws) => queueMicrotask(() => ws.emit('open', {})),
+      onSend: (message, ws) => {
+        if (message.method === 'initialize' && message.id) {
+          ws.reply(message.id, { result: { ok: true } })
+        }
+        if (message.method === 'thread/loaded/list' && message.id) {
+          ws.reply(message.id, {
+            result: { data: ['11111111-1111-4111-8111-111111111111'] },
+          })
+        }
+        if (message.method === 'thread/resume' && message.id) {
+          ws.reply(message.id, { result: { ok: true } })
+        }
+      },
+    })
+    const { db, svc } = setup(harness, {}, {
+      ok: true,
+      pane: {
+        pane_id: '%1902',
+        session_name: 's1',
+        window_index: 0,
+        pane_index: 2,
+        active: true,
+        tty: 'ttys001',
+        current_path: '/workspace/project',
+        current_command: 'codex',
+        title: 'project',
+        matched_processes: ['123 1 S+ codex --remote ws://127.0.0.1:8799'],
+        score: 99,
+      },
+      candidates: [],
+    })
+
+    await svc.register({
+      connection_id: 'conn-1',
+      name: 'lead',
+      tmux_pane_id: '%42',
+    })
+
+    const row = db.prepare(
+      'SELECT tmux_pane_id FROM agents WHERE team=? AND name=?'
+    ).get('default', 'lead') as {
+      tmux_pane_id: string | null
+    }
+    expect(row.tmux_pane_id).toBe('%42')
+  })
+
+  it('keeps codex registration successful when pane detection is ambiguous', async () => {
+    const harness = createHarness({
+      onCreate: (ws) => queueMicrotask(() => ws.emit('open', {})),
+      onSend: (message, ws) => {
+        if (message.method === 'initialize' && message.id) {
+          ws.reply(message.id, { result: { ok: true } })
+        }
+        if (message.method === 'thread/loaded/list' && message.id) {
+          ws.reply(message.id, {
+            result: { data: ['11111111-1111-4111-8111-111111111111'] },
+          })
+        }
+        if (message.method === 'thread/resume' && message.id) {
+          ws.reply(message.id, { result: { ok: true } })
+        }
+      },
+    })
+    const { db, svc } = setup(harness, {}, {
+      error: 'ambiguous_match',
+      candidates: [
+        {
+          pane_id: '%1902',
+          session_name: 's1',
+          window_index: 0,
+          pane_index: 2,
+          active: true,
+          tty: 'ttys001',
+          current_path: '/workspace/project',
+          current_command: 'codex',
+          title: 'project',
+          matched_processes: ['123 1 S+ codex --remote ws://127.0.0.1:8799'],
+          score: 99,
+        },
+        {
+          pane_id: '%1903',
+          session_name: 's1',
+          window_index: 0,
+          pane_index: 3,
+          active: false,
+          tty: 'ttys002',
+          current_path: '/workspace/project',
+          current_command: 'codex',
+          title: 'project',
+          matched_processes: ['124 1 S+ codex --remote ws://127.0.0.1:8799'],
+          score: 99,
+        },
+      ],
+    })
+
+    const result = await svc.register({
+      connection_id: 'conn-1',
+      name: 'lead',
+    })
+
+    expect(result).toEqual({
+      agent_id: expect.any(String),
+      team: 'default',
+      thread_id: '11111111-1111-4111-8111-111111111111',
+      ws_url: 'ws://127.0.0.1:8799',
+    })
+    const row = db.prepare(
+      'SELECT tmux_pane_id FROM agents WHERE team=? AND name=?'
+    ).get('default', 'lead') as {
+      tmux_pane_id: string | null
+    }
+    expect(row.tmux_pane_id).toBeNull()
+  })
+
+  it('preserves the existing pane on re-register when no new pane is found', async () => {
     const harness = createHarness({
       onCreate: (ws) => queueMicrotask(() => ws.emit('open', {})),
       onSend: (message, ws) => {
@@ -108,30 +294,39 @@ describe('RegisterCodexSelfService', () => {
     })
     const { db, svc } = setup(harness)
 
-    const result = await svc.register({
+    db.prepare(
+      `INSERT INTO agents (
+         agent_id, team, role, name, model, registered_at, last_seen_at,
+         last_processed_event_id, tmux_pane_id, delivery_kind, delivery_payload
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'agent-1',
+      'default',
+      'default',
+      'lead',
+      'codex',
+      '2026-04-21T00:00:00.000Z',
+      '2026-04-21T00:00:00.000Z',
+      0,
+      '%42',
+      'none',
+      null,
+    )
+
+    await svc.register({
       connection_id: 'conn-1',
       name: 'lead',
       team: 'default',
-      role: 'worker',
     })
 
-    expect(result).toEqual({
-      agent_id: expect.any(String),
-      team: 'default',
-      thread_id: '11111111-1111-4111-8111-111111111111',
-      ws_url: 'ws://127.0.0.1:8799',
-    })
     const row = db.prepare(
-      'SELECT delivery_kind, delivery_payload FROM agents WHERE team=? AND name=?'
+      'SELECT tmux_pane_id, delivery_kind FROM agents WHERE team=? AND name=?'
     ).get('default', 'lead') as {
+      tmux_pane_id: string | null
       delivery_kind: string
-      delivery_payload: string | null
     }
+    expect(row.tmux_pane_id).toBe('%42')
     expect(row.delivery_kind).toBe('codex-appserver')
-    expect(JSON.parse(row.delivery_payload as string)).toEqual({
-      thread_id: '11111111-1111-4111-8111-111111111111',
-      ws_url: 'ws://127.0.0.1:8799',
-    })
   })
 
   it('returns no_loaded_threads when app-server reports none', async () => {

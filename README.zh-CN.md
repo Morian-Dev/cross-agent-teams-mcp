@@ -62,7 +62,7 @@ curl http://127.0.0.1:9100/health
 
 ## Codex App-Server Delivery
 
-如果你平时主要在 Codex 里使用, 更推荐直接调用 `register_codex_self`.  它会连接本地 Codex app-server, 调用 `thread/loaded/list`, 选择唯一可恢复的 thread, 然后把当前会话注册成 `codex-appserver` delivery.
+如果你平时主要在 Codex 里使用, 更推荐直接调用 `register_codex_self`.  它会连接本地 Codex app-server, 调用 `thread/loaded/list`, 选择唯一可恢复的 thread, 然后把当前会话注册成 `codex-appserver` delivery.  同时它还会以 best-effort 方式补登记 `tmux_pane_id`: 显式传入的 `tmux_pane_id` 优先, 否则工具会尝试发现 Codex UI 所在的 tmux pane.
 
 最简用法:
 
@@ -71,6 +71,29 @@ register_codex_self({
   name: "lead",
   team: "default",
   role: "worker"
+})
+```
+
+如果你已经知道 pane id, 可以直接传:
+
+```text
+register_codex_self({
+  name: "lead",
+  team: "default",
+  role: "worker",
+  tmux_pane_id: "%42"
+})
+```
+
+如果执行工具的 shell pane 和可见的 Codex UI pane 可能不同, 可以传 hint 来缩小探测范围:
+
+```text
+register_codex_self({
+  name: "lead",
+  team: "default",
+  role: "worker",
+  cwd: "/workspace/project",
+  title_contains: "project"
 })
 ```
 
@@ -99,6 +122,9 @@ register_codex_self({
 行为说明:
 
 - 默认 `ws_url` 是 `ws://127.0.0.1:8799`
+- 显式提供 `tmux_pane_id`, 或成功探测到唯一 Codex pane 时, 工具会一并持久化 `tmux_pane_id`
+- 可选的 pane 探测 hint 包括 `cwd`, `tty`, `title_contains`
+- 找不到唯一 tmux pane 不会让 `register_codex_self` 失败, 只是这次不会写入新的 pane id
 - 没有 loaded thread 时返回 `no_loaded_threads`
 - 有多个可恢复 thread 时返回 `ambiguous_loaded_threads`
 - 成功时返回 `{ agent_id, team, thread_id, ws_url }`

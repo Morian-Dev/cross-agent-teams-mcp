@@ -297,6 +297,9 @@ export function registerBusinessTools(
         'Use this only for Codex remote sessions. Do NOT use this tool from Claude Code or opencode; they should call `register_agent` instead.',
         'Use this when the user says to register to cross-agent-teams and only provides human-facing fields like name, role, and team.',
         'The tool discovers the Codex thread by connecting to the local app-server, listing loaded threads, and selecting the single resumable one.',
+        'When `tmux_pane_id` is provided, the tool persists it alongside the Codex delivery. Otherwise it best-effort tries to discover the Codex tmux pane.',
+        'Optional `cwd`, `tty`, and `title_contains` narrow tmux pane detection when the visible Codex UI may differ from the shell running MCP tools.',
+        'Tmux pane discovery is best-effort only: if no unique pane is found, the tool still succeeds as long as Codex thread registration succeeds.',
         'Optional `ws_url` overrides the default websocket URL; optional `auth_token_ref` names an environment variable that stores the bearer token.',
         'If the Codex app-server is unreachable or does not speak the expected protocol, the tool returns `unsupported_client` instead of guessing.',
         'If multiple loaded threads are resumable, the tool returns an ambiguity error instead of guessing.'
@@ -306,6 +309,10 @@ export function registerBusinessTools(
         model: z.string().optional(),
         role: z.string().optional(),
         team: z.string().optional(),
+        tmux_pane_id: z.string().optional(),
+        cwd: z.string().optional(),
+        tty: z.string().optional(),
+        title_contains: z.string().optional(),
         ws_url: z.string().optional(),
         auth_token_ref: z.string().min(1).optional(),
       }).strict()
@@ -315,6 +322,10 @@ export function registerBusinessTools(
       model?: string
       role?: string
       team?: string
+      tmux_pane_id?: string
+      cwd?: string
+      tty?: string
+      title_contains?: string
       ws_url?: string
       auth_token_ref?: string
     }) => {
@@ -327,6 +338,10 @@ export function registerBusinessTools(
           model: args.model,
           role: args.role,
           team: args.team,
+          tmux_pane_id: args.tmux_pane_id,
+          cwd: args.cwd,
+          tty: args.tty,
+          title_contains: args.title_contains,
           ws_url: args.ws_url,
           auth_token_ref: args.auth_token_ref,
         })
