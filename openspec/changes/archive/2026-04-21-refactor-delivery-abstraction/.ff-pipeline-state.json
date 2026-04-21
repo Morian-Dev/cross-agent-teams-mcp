@@ -1,0 +1,13 @@
+{
+  "change": "refactor-delivery-abstraction",
+  "phase": "apply",
+  "iteration": 1,
+  "max_iterations": 2,
+  "auto_archive": false,
+  "last_critical_types": [],
+  "history": [
+    { "iteration": 1, "phase": "init", "status": "ok", "at": "2026-04-20T00:00:00Z" },
+    { "iteration": 1, "phase": "apply", "status": "paused", "at": "2026-04-20T16:30:00Z", "reason": "user-requested pause after task 2.6; next pending task is 2.7" }
+  ],
+  "updated_at": "2026-04-20T16:30:00Z"
+}
