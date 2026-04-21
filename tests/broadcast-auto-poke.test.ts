@@ -14,7 +14,7 @@ import { insertAgent } from './helpers/insert-agent.js'
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'atm-bcast-autopoke-'))
 
-interface PokeCall { target: string; pane: string }
+interface PokeCall { target: string; pane: string | null }
 
 function setupService(opts?: { paneState?: Record<string, 'idle' | 'active'> }): {
   svc: BroadcastService

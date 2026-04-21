@@ -94,6 +94,32 @@ describe('register_agent tmux_pane_id hint', () => {
     await t.close(); await app.close()
   })
 
+  it('response has no hint field when a non-tmux delivery is provided', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+    const { c, t } = await connectClient(host, port)
+
+    const resp = await c.callTool({
+      name: 'register_agent',
+      arguments: {
+        model: 'opus-4-7',
+        role: 'frontend',
+        name: 'alice',
+        delivery: {
+          kind: 'codex-appserver',
+          thread_id: '11111111-1111-4111-8111-111111111111',
+          ws_url: 'ws://127.0.0.1:8799',
+        },
+      },
+    })
+    const obj = await parseTool(resp)
+
+    expect(obj.agent_id).toBeDefined()
+    expect(obj.hint).toBeUndefined()
+
+    await t.close(); await app.close()
+  })
+
   it('hint is absent on error responses (unknown_agent path)', async () => {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })

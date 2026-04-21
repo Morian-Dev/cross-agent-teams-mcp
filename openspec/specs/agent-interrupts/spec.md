@@ -6,7 +6,17 @@ Cross-session agent wake-up and interrupt semantics. Currently ships the `poke` 
 ## Requirements
 ### Requirement: poke tool registration and input schema
 
-The daemon SHALL register an MCP tool named `poke` that takes `{ target_agent_id: string, prompt: string }` and returns either `{ ok: true, pane_id: string, pane_tail_before: string, pane_tail_after: string }` on success or `{ error: string, detail?: string | object }` on failure. The tool MUST be listed in the MCP server's `list_tools` response exactly once.
+The daemon SHALL register an MCP tool named `poke` that takes `{ target_agent_id: string, prompt: string }`.
+
+On success, the tool SHALL return a transport-specific envelope:
+
+- tmux success: `{ ok: true, transport_used: 'tmux-poke', pane_id: string, pane_tail_before: string, pane_tail_after: string }`
+- Claude channel success: `{ ok: true, transport_used: 'claude-channel', channel_session_id: string }`
+- Codex app-server success: `{ ok: true, transport_used: 'codex-appserver', thread_id: string }`
+
+On failure, the tool SHALL return `{ error: string, detail?: string | object, transport_used?: string }`.
+
+The tool MUST be listed in the MCP server's `list_tools` response exactly once.
 
 #### Scenario: poke appears in list_tools
 
@@ -60,16 +70,22 @@ If the `target_agent_id` does not correspond to any row in the `agents` table, t
 - **THEN** the response is `{ error: 'unknown_target' }`
 - **AND** no tmux command is executed
 
-### Requirement: Target without tmux_pane_id returns tmux_pane_not_set
+### Requirement: Target without any available delivery transport returns no_transport_available
 
-If the target row's `tmux_pane_id` column is NULL or empty string, the daemon MUST return `{ error: 'tmux_pane_not_set' }`.
+If the target has no usable configured delivery transport and also has no `tmux_pane_id`, the daemon MUST return `{ error: 'no_transport_available', detail: { channel_subscribed: false, tmux_pane_set: false } }`.
 
-#### Scenario: Target never registered pane id
+#### Scenario: Target with delivery kind none and no pane returns no_transport_available
 
-- **GIVEN** target `sess-B` is registered without `tmux_pane_id`
+- **GIVEN** target `sess-B` is registered with `delivery={kind: 'none'}` and no `tmux_pane_id`
 - **WHEN** caller `sess-A` calls `poke({ target_agent_id: 'sess-B', prompt: 'p' })`
-- **THEN** the response is `{ error: 'tmux_pane_not_set' }`
+- **THEN** the response is `{ error: 'no_transport_available', detail: { channel_subscribed: false, tmux_pane_set: false } }`
 - **AND** no tmux command is executed
+
+#### Scenario: Target with codex-appserver delivery and no pane still routes successfully
+
+- **GIVEN** target `sess-B` is registered with `delivery={kind: 'codex-appserver', thread_id: '11111111-1111-4111-8111-111111111111', ws_url: 'ws://127.0.0.1:8799'}` and no `tmux_pane_id`
+- **WHEN** caller `sess-A` calls `poke({ target_agent_id: 'sess-B', prompt: 'p' })`
+- **THEN** the daemon routes through the Codex transport instead of returning `no_transport_available`
 
 ### Requirement: Self-poke is rejected
 
@@ -174,4 +190,3 @@ For any other tmux CLI error not classified as `tmux_unavailable` or `pane_dead`
 - **AND** tmux returns a non-zero exit with stderr `<unexpected error>`
 - **WHEN** the daemon processes this failure
 - **THEN** the response is `{ error: 'tmux_cmd_failed', detail: { stage: 'load_buffer', stderr: '<unexpected error>' } }`
-

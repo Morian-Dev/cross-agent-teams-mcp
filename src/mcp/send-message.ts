@@ -5,6 +5,7 @@ import type { EventsOutbox } from '../storage/events-outbox.js'
 import { fanoutAutoPoke } from './auto-poke-fanout.js'
 import type { AutoPokeSkipReason, FanoutDeps } from './auto-poke-fanout.js'
 import { RETRY_DELAYS_S } from './poke-retry.js'
+import { parseDeliveryRow, type DeliverySpec } from '../lib/delivery-spec.js'
 
 export type { AutoPokeFn, AutoPokeSkipReason } from './auto-poke-fanout.js'
 
@@ -39,12 +40,15 @@ export type SendResult =
 interface RecipientPokeRow {
   agent_id: string
   tmux_pane_id: string | null
+  delivery: DeliverySpec
 }
 
 interface RecipientLookupRow {
   agent_id: string
   team: string
   tmux_pane_id: string | null
+  delivery_kind: string
+  delivery_payload: string | null
 }
 
 export class SendMessageService {
@@ -74,10 +78,16 @@ export class SendMessageService {
       resolvedId = hit.agent_id
     }
 
-    const rcpt = this.db.prepare('SELECT agent_id, team, tmux_pane_id FROM agents WHERE agent_id=?')
+    const rcpt = this.db.prepare(
+      'SELECT agent_id, team, tmux_pane_id, delivery_kind, delivery_payload FROM agents WHERE agent_id=?'
+    )
       .get(resolvedId) as RecipientLookupRow | undefined
     if (!rcpt || rcpt.team !== toTeam) return { error: 'unknown_recipient' }
-    const recipientRow: RecipientPokeRow = { agent_id: rcpt.agent_id, tmux_pane_id: rcpt.tmux_pane_id }
+    const recipientRow: RecipientPokeRow = {
+      agent_id: rcpt.agent_id,
+      tmux_pane_id: rcpt.tmux_pane_id,
+      delivery: parseDeliveryRow(rcpt),
+    }
 
     const baseResult = this.insert({ fromTeam, toTeam, from: input.from, toAgentId: rcpt.agent_id, input })
 

@@ -23,6 +23,7 @@ import type { SseFanout } from '../daemon/sse-fanout.js'
 import type { ChannelWakeFanout } from '../daemon/channel-wake-fanout.js'
 import { SubscribeChannelWakeService } from './subscribe-channel-wake.js'
 import { BindChannelService } from './bind-channel.js'
+import { RegisterCodexSelfService } from './register-codex-self.js'
 import { detectTmuxPane } from '../daemon/tmux-pane-detect.js'
 
 export interface AgentIdHolder { current: string | undefined }
@@ -145,6 +146,7 @@ export function registerBusinessTools(
   const agents = new AgentsRepo(db)
   const events = new EventsOutbox(db)
   const registerSvc = new RegisterAgentService(db)
+  const registerCodexSelfSvc = new RegisterCodexSelfService(registerSvc)
 
   const autoPokeImpl = createAutoPokeImpl(db, agents, channelWakeFanout)
 
@@ -217,7 +219,6 @@ export function registerBusinessTools(
     })
   )
 
-  // register_agent — bootstrap: callable before an agents row exists for this session
   server.registerTool(
     'register_agent',
     {
@@ -280,6 +281,60 @@ export function registerBusinessTools(
               ...res,
               hint: "No tmux_pane_id provided — cross-agent poke delivery via tmux is off until you re-register with a usable pane id. If your shell and visible agent UI are the same pane, run `echo \"$TMUX_PANE\"` first; fall back to `tmux display-message -p '#{pane_id}'` only if $TMUX_PANE is empty. If they differ, call `detect_tmux_pane({ agent, cwd })` and use the returned `pane_id`. Claude Code users who loaded the cross-agent-teams-mcp channel plugin can also route pokes via channel_session_id — the plugin's proxy emits a startup <channel> notification telling Claude to call bind_channel({channel_session_id}); that path does not involve register_agent."
             }
+          }
+        }
+        return res
+      })
+    }
+  )
+
+  server.registerTool(
+    'register_codex_self',
+    {
+      title: 'Register codex self',
+      description: [
+        'Codex-only shortcut. Autodetect the current Codex app-server thread and register this session as a codex-appserver delivery target.',
+        'Use this only for Codex remote sessions. Do NOT use this tool from Claude Code or opencode; they should call `register_agent` instead.',
+        'Use this when the user says to register to cross-agent-teams and only provides human-facing fields like name, role, and team.',
+        'The tool discovers the Codex thread by connecting to the local app-server, listing loaded threads, and selecting the single resumable one.',
+        'Optional `ws_url` overrides the default websocket URL; optional `auth_token_ref` names an environment variable that stores the bearer token.',
+        'If the Codex app-server is unreachable or does not speak the expected protocol, the tool returns `unsupported_client` instead of guessing.',
+        'If multiple loaded threads are resumable, the tool returns an ambiguity error instead of guessing.'
+      ].join(' '),
+      inputSchema: z.object({
+        name: z.string().min(1).refine(v => v.trim().length > 0, { message: 'name must not be empty' }),
+        model: z.string().optional(),
+        role: z.string().optional(),
+        team: z.string().optional(),
+        ws_url: z.string().optional(),
+        auth_token_ref: z.string().min(1).optional(),
+      }).strict()
+    },
+    async (args: {
+      name: string
+      model?: string
+      role?: string
+      team?: string
+      ws_url?: string
+      auth_token_ref?: string
+    }) => {
+      const connectionId = getSessionId?.() ?? caller()
+      if (!connectionId) return toText({ error: 'unknown_agent' })
+      return run(async () => {
+        const res = await registerCodexSelfSvc.register({
+          connection_id: connectionId,
+          name: args.name,
+          model: args.model,
+          role: args.role,
+          team: args.team,
+          ws_url: args.ws_url,
+          auth_token_ref: args.auth_token_ref,
+        })
+        if ('agent_id' in res) {
+          if (onRegisterSuccess) {
+            try { onRegisterSuccess(res.agent_id, res.team) } catch { /* best-effort */ }
+          } else if (fanout) {
+            try { fanout.rebind(res.agent_id, res.team) } catch { /* best-effort */ }
           }
         }
         return res

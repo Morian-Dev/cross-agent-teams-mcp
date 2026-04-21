@@ -1,6 +1,7 @@
 import { runQuietGuard } from './poke-guard.js'
 import { isTmuxAvailable } from '../daemon/tmux-cli.js'
 import { scheduleRetry as defaultScheduleRetry, type RetryAgentLookup, type RetryContext } from './poke-retry.js'
+import type { DeliverySpec } from '../lib/delivery-spec.js'
 
 export type AutoPokeSkipReason = 'no_pane' | 'guard_failed' | 'tmux_unavailable' | 'self'
 
@@ -8,7 +9,7 @@ export interface AutoPokeArgs {
   team: string
   fromAgentId: string
   targetAgentId: string
-  paneId: string
+  paneId: string | null
   body: string
 }
 
@@ -17,6 +18,7 @@ export type AutoPokeFn = (args: AutoPokeArgs) => Promise<{ ok: true } | { ok: fa
 export interface AutoPokeRecipient {
   agent_id: string
   tmux_pane_id: string | null
+  delivery?: DeliverySpec
 }
 
 export interface FanoutDeps {
@@ -51,21 +53,25 @@ export async function fanoutAutoPoke(args: {
 
   const results = await Promise.all(args.recipients.map(async (r) => {
     try {
+      const explicitNonTmuxDelivery =
+        r.delivery !== undefined && r.delivery.kind !== 'none'
       if (r.agent_id === args.fromAgentId) {
         return { agent_id: r.agent_id, poked: false, reason: 'self' as AutoPokeSkipReason, paneId: null as string | null }
       }
-      if (!r.tmux_pane_id) {
+      if (!explicitNonTmuxDelivery && !r.tmux_pane_id) {
         return { agent_id: r.agent_id, poked: false, reason: 'no_pane' as AutoPokeSkipReason, paneId: null }
       }
-      if (!(await tmuxAvail())) {
+      if (!explicitNonTmuxDelivery && !(await tmuxAvail())) {
         return { agent_id: r.agent_id, poked: false, reason: 'tmux_unavailable' as AutoPokeSkipReason, paneId: r.tmux_pane_id }
       }
       if (!pokeFn) {
         return { agent_id: r.agent_id, poked: false, reason: 'tmux_unavailable' as AutoPokeSkipReason, paneId: r.tmux_pane_id }
       }
-      const guard = await runQuietGuard(r.tmux_pane_id)
-      if (guard === 'fail') {
-        return { agent_id: r.agent_id, poked: false, reason: 'guard_failed' as AutoPokeSkipReason, paneId: r.tmux_pane_id }
+      if (!explicitNonTmuxDelivery) {
+        const guard = await runQuietGuard(r.tmux_pane_id!)
+        if (guard === 'fail') {
+          return { agent_id: r.agent_id, poked: false, reason: 'guard_failed' as AutoPokeSkipReason, paneId: r.tmux_pane_id }
+        }
       }
       const out = await pokeFn({
         team: args.team,
@@ -75,7 +81,12 @@ export async function fanoutAutoPoke(args: {
         body: args.body
       })
       if (out.ok) return { agent_id: r.agent_id, poked: true, reason: undefined, paneId: r.tmux_pane_id }
-      return { agent_id: r.agent_id, poked: false, reason: (out.reason ?? 'guard_failed') as AutoPokeSkipReason, paneId: r.tmux_pane_id }
+      return {
+        agent_id: r.agent_id,
+        poked: false,
+        reason: (out.reason ?? 'guard_failed') as AutoPokeSkipReason,
+        paneId: r.tmux_pane_id
+      }
     } catch {
       return { agent_id: r.agent_id, poked: false, reason: 'guard_failed' as AutoPokeSkipReason, paneId: r.tmux_pane_id }
     }

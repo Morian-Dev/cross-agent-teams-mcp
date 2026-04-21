@@ -15,7 +15,7 @@ import { insertAgent } from './helpers/insert-agent.js'
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'atm-btr-'))
 
-interface PokeCall { target: string; pane: string; prompt: string }
+interface PokeCall { target: string; pane: string | null; prompt: string }
 
 function setup(opts?: { paneState?: Record<string, 'idle' | 'active'> }): {
   svc: BroadcastToRoleService

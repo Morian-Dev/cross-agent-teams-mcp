@@ -4,6 +4,7 @@ import { ONLINE_MS, type AgentsRepo } from '../storage/agents-repo.js'
 import type { EventsOutbox } from '../storage/events-outbox.js'
 import type { FanoutDeps, AutoPokeSkipReason } from './auto-poke-fanout.js'
 import { runFanoutWithRetry } from './fanout-with-retry.js'
+import { parseDeliveryRow, type DeliverySpec } from '../lib/delivery-spec.js'
 
 export type BroadcastToRoleDeps = FanoutDeps
 
@@ -27,7 +28,11 @@ interface SuccessResult {
 
 export type BroadcastToRoleResult = SuccessResult | { error: 'unknown_recipient' }
 
-interface RecipientRow { agent_id: string; tmux_pane_id: string | null }
+interface RecipientRow {
+  agent_id: string
+  tmux_pane_id: string | null
+  delivery: DeliverySpec
+}
 
 export class BroadcastToRoleService {
   constructor(
@@ -41,10 +46,20 @@ export class BroadcastToRoleService {
     const fromRow = this.agents.findById(input.from)
     if (!fromRow) return { error: 'unknown_recipient' }
     const cutoffIso = new Date(Date.now() - ONLINE_MS).toISOString()
-    const rows = this.db.prepare(
-      `SELECT agent_id, tmux_pane_id FROM agents
+    const rawRows = this.db.prepare(
+      `SELECT agent_id, tmux_pane_id, delivery_kind, delivery_payload FROM agents
        WHERE team=? AND role=? AND agent_id != ? AND last_seen_at > ?`
-    ).all(fromRow.team, input.to_role, input.from, cutoffIso) as RecipientRow[]
+    ).all(fromRow.team, input.to_role, input.from, cutoffIso) as Array<{
+      agent_id: string
+      tmux_pane_id: string | null
+      delivery_kind: string
+      delivery_payload: string | null
+    }>
+    const rows = rawRows.map((row) => ({
+      agent_id: row.agent_id,
+      tmux_pane_id: row.tmux_pane_id,
+      delivery: parseDeliveryRow(row),
+    }))
     if (rows.length === 0) return { error: 'unknown_recipient' }
 
     const recipients = rows.map(r => r.agent_id)

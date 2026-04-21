@@ -58,6 +58,31 @@ describe('register_agent tool hint rule (tmux only)', () => {
     await t.close(); await app.close()
   })
 
+  it('hint suppressed when delivery.kind is non-none', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+    const { c, t } = await connectClient(host, port)
+
+    const resp = await c.callTool({
+      name: 'register_agent',
+      arguments: {
+        model: 'opus-4-7',
+        role: 'frontend',
+        name: 'alice',
+        delivery: {
+          kind: 'codex-appserver',
+          thread_id: '11111111-1111-4111-8111-111111111111',
+          ws_url: 'ws://127.0.0.1:8799',
+        },
+      }
+    })
+    const obj = await parseTool(resp)
+    expect(obj.agent_id).toBeDefined()
+    expect(obj.hint).toBeUndefined()
+
+    await t.close(); await app.close()
+  })
+
   it('register_agent rejects unknown channel_session_id argument (strict schema)', async () => {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })

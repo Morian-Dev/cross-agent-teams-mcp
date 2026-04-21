@@ -131,4 +131,34 @@ describe('send_message cross-team auto-poke + retry', () => {
 
     vi.useRealTimers()
   })
+
+  it('cross-team send treats Codex transport success as poked', async () => {
+    const { svc, db, cleanup } = setupService({ paneState: { '%B': 'idle' } })
+    cleanups.push(cleanup)
+    insertAgent(db, { agent_id: 'A', team: 'alpha', name: 'lead-alpha', tmux_pane_id: '%A' })
+    insertAgent(db, {
+      agent_id: 'B',
+      team: 'beta',
+      name: 'worker-beta',
+      delivery: {
+        kind: 'codex-appserver',
+        thread_id: '11111111-1111-4111-8111-111111111111',
+        ws_url: 'ws://127.0.0.1:8799',
+      },
+    })
+
+    vi.mocked(pokeMock).mockImplementationOnce(async (_deps: unknown, input: { target_agent_id: string; prompt: string }) => {
+      return {
+        ok: true as const,
+        transport_used: 'codex-appserver' as const,
+        thread_id: '11111111-1111-4111-8111-111111111111',
+      }
+    })
+
+    const r = await svc.send({ from: 'A', to_agent_id: 'B', to_team: 'beta', body: 'hello' })
+    if ('error' in r) throw new Error(`expected success, got ${r.error}`)
+
+    expect(r.poked).toBe(true)
+    expect(r.retry_scheduled).toBe(false)
+  })
 })

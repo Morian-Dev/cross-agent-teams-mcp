@@ -1,10 +1,18 @@
 import type { ChannelWakeFanout } from '../daemon/channel-wake-fanout.js'
 import { sendChannelWake } from '../daemon/channel-wake-send.js'
 import type { DeliverySpec } from '../lib/delivery-spec.js'
+import {
+  dispatchCodexAppserverPoke,
+  type CodexAppserverDispatchResult,
+} from './codex-appserver-dispatch.js'
 
 export interface DispatchDeps {
-  channelWakeFanout: ChannelWakeFanout
+  channelWakeFanout?: ChannelWakeFanout
   tmuxPoke: (args: { pane_id: string; content: string }) => Promise<TmuxPokeResult>
+  codexAppserverDispatch?: (args: {
+    delivery: Extract<DeliverySpec, { kind: 'codex-appserver' }>
+    content: string
+  }) => Promise<CodexAppserverDispatchResult>
 }
 
 export type TmuxPokeResult =
@@ -35,9 +43,14 @@ export type DispatchResult =
       pane_tail_after: string
     }
   | {
+      ok: true
+      transport_used: 'codex-appserver'
+      thread_id: string
+    }
+  | {
       error: string
       detail?: unknown
-      transport_used?: 'tmux-poke'
+      transport_used?: 'tmux-poke' | 'codex-appserver'
     }
 
 export async function dispatchPoke(
@@ -48,10 +61,10 @@ export async function dispatchPoke(
   const paneId = target.tmux_pane_id
 
   if (target.delivery.kind === 'claude-channel') {
-    const channelSubscribed = deps.channelWakeFanout.has(
+    const channelSubscribed = deps.channelWakeFanout?.has(
       target.delivery.channel_session_id
-    )
-    if (channelSubscribed) {
+    ) ?? false
+    if (channelSubscribed && deps.channelWakeFanout) {
       const result = sendChannelWake(
         deps.channelWakeFanout,
         target.delivery.channel_session_id,
@@ -93,12 +106,10 @@ export async function dispatchPoke(
   }
 
   if (target.delivery.kind === 'codex-appserver') {
-    console.warn(
-      'codex-appserver dispatcher not implemented',
-      target.delivery.thread_id,
-      target.delivery.ws_url
-    )
-    return { error: 'dispatcher_not_implemented' }
+    return (deps.codexAppserverDispatch ?? dispatchCodexAppserverPoke)({
+      delivery: target.delivery,
+      content: input.content,
+    })
   }
 
   if (paneId) {

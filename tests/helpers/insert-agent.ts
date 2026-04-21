@@ -1,4 +1,8 @@
 import type Database from 'better-sqlite3'
+import {
+  serializeDelivery,
+  type DeliverySpec,
+} from '../../src/lib/delivery-spec.js'
 
 export interface InsertAgentArgs {
   agent_id: string
@@ -7,6 +11,7 @@ export interface InsertAgentArgs {
   name?: string
   team?: string
   tmux_pane_id?: string | null
+  delivery?: DeliverySpec
   registered_at?: string
   last_seen_at?: string
 }
@@ -22,12 +27,28 @@ export function insertAgent(db: Database.Database, args: InsertAgentArgs): strin
   const registered_at = args.registered_at ?? now
   const last_seen_at = args.last_seen_at ?? now
   const tmux_pane_id = args.tmux_pane_id ?? null
+  const delivery = serializeDelivery(args.delivery ?? { kind: 'none' })
   db.prepare(
-    `INSERT INTO agents (agent_id, team, role, name, model, registered_at, last_seen_at, tmux_pane_id)
-     VALUES (?,?,?,?,?,?,?,?)
+    `INSERT INTO agents (
+       agent_id, team, role, name, model, registered_at, last_seen_at,
+       tmux_pane_id, delivery_kind, delivery_payload
+     )
+     VALUES (?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(agent_id) DO UPDATE SET
        team=excluded.team, role=excluded.role, name=excluded.name, model=excluded.model,
-       last_seen_at=excluded.last_seen_at, tmux_pane_id=excluded.tmux_pane_id`
-  ).run(args.agent_id, team, role, name, model, registered_at, last_seen_at, tmux_pane_id)
+       last_seen_at=excluded.last_seen_at, tmux_pane_id=excluded.tmux_pane_id,
+       delivery_kind=excluded.delivery_kind, delivery_payload=excluded.delivery_payload`
+  ).run(
+    args.agent_id,
+    team,
+    role,
+    name,
+    model,
+    registered_at,
+    last_seen_at,
+    tmux_pane_id,
+    delivery.delivery_kind,
+    delivery.delivery_payload
+  )
   return args.agent_id
 }

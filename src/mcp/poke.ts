@@ -37,7 +37,16 @@ export type PokeResult =
       pane_tail_before: string
       pane_tail_after: string
     }
-  | { error: string; detail?: unknown; transport_used?: 'tmux-poke' }
+  | {
+      ok: true
+      transport_used: 'codex-appserver'
+      thread_id: string
+    }
+  | {
+      error: string
+      detail?: unknown
+      transport_used?: 'tmux-poke' | 'codex-appserver'
+    }
 
 interface TargetRow {
   agent_id: string
@@ -147,6 +156,14 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
   const fanout = deps.channelWakeFanout
   const delivery = parseDeliveryRow(target) as DeliverySpec
   if (!fanout) {
+    if (delivery.kind === 'codex-appserver') {
+      return dispatchPoke(
+        { tmuxPoke: tmuxPokeImpl },
+        { delivery, tmux_pane_id: target.tmux_pane_id },
+        { content: input.prompt, meta: {} }
+      )
+    }
+
     // Legacy tmux-only path preserved when no fanout supplied by caller.
     if (!target.tmux_pane_id) return { error: 'tmux_pane_not_set' }
     const tr = await tmuxPokeImpl({ pane_id: target.tmux_pane_id, content: input.prompt })

@@ -180,15 +180,20 @@ describe('validateDeliveryForWrite (Task 1.4)', () => {
     });
   });
 
-  it('rejects {kind: codex-appserver} with reason kind_not_yet_supported', () => {
+  it('accepts {kind: codex-appserver, thread_id, ws_url, auth_token_ref?}', () => {
     const result = validateDeliveryForWrite({
       kind: 'codex-appserver',
-      thread_id: '00000000-0000-0000-0000-000000000000',
-      ws_url: 'ws://localhost:1234',
+      thread_id: '11111111-1111-4111-8111-111111111111',
+      ws_url: 'ws://127.0.0.1:8799',
+      auth_token_ref: 'CODEX_REMOTE_TOKEN',
     });
     expect(result).toEqual({
-      error: 'invalid_delivery',
-      reason: 'kind_not_yet_supported',
+      ok: {
+        kind: 'codex-appserver',
+        thread_id: '11111111-1111-4111-8111-111111111111',
+        ws_url: 'ws://127.0.0.1:8799',
+        auth_token_ref: 'CODEX_REMOTE_TOKEN',
+      },
     });
   });
 
@@ -205,6 +210,43 @@ describe('validateDeliveryForWrite (Task 1.4)', () => {
     expect(result).toEqual({
       error: 'invalid_delivery',
       reason: 'missing_channel_session_id',
+    });
+  });
+
+  it('rejects codex-appserver with invalid thread_id', () => {
+    const result = validateDeliveryForWrite({
+      kind: 'codex-appserver',
+      thread_id: 'not-a-uuid',
+      ws_url: 'ws://127.0.0.1:8799',
+    });
+    expect(result).toEqual({
+      error: 'invalid_delivery',
+      reason: 'invalid_thread_id',
+    });
+  });
+
+  it('rejects codex-appserver with invalid ws_url', () => {
+    const result = validateDeliveryForWrite({
+      kind: 'codex-appserver',
+      thread_id: '11111111-1111-4111-8111-111111111111',
+      ws_url: 'http://127.0.0.1:8799',
+    });
+    expect(result).toEqual({
+      error: 'invalid_delivery',
+      reason: 'invalid_ws_url',
+    });
+  });
+
+  it('rejects codex-appserver with blank auth_token_ref', () => {
+    const result = validateDeliveryForWrite({
+      kind: 'codex-appserver',
+      thread_id: '11111111-1111-4111-8111-111111111111',
+      ws_url: 'ws://127.0.0.1:8799',
+      auth_token_ref: '   ',
+    });
+    expect(result).toEqual({
+      error: 'invalid_delivery',
+      reason: 'invalid_auth_token_ref',
     });
   });
 });
@@ -281,14 +323,22 @@ describe('Task 1.5 scenario coverage audit (agent-delivery/spec.md)', () => {
       ).toEqual({ ok: { kind: 'claude-channel', channel_session_id: 'csid-ok' } });
     });
 
-    it('scenario: rejects kind codex-appserver with reason kind_not_yet_supported', () => {
+    it('scenario: accepts kind codex-appserver with valid thread_id and ws_url', () => {
       expect(
         validateDeliveryForWrite({
           kind: 'codex-appserver',
-          thread_id: '00000000-0000-0000-0000-000000000000',
-          ws_url: 'ws://x',
+          thread_id: '11111111-1111-4111-8111-111111111111',
+          ws_url: 'ws://127.0.0.1:8799',
+          auth_token_ref: 'CODEX_REMOTE_TOKEN',
         }),
-      ).toEqual({ error: 'invalid_delivery', reason: 'kind_not_yet_supported' });
+      ).toEqual({
+        ok: {
+          kind: 'codex-appserver',
+          thread_id: '11111111-1111-4111-8111-111111111111',
+          ws_url: 'ws://127.0.0.1:8799',
+          auth_token_ref: 'CODEX_REMOTE_TOKEN',
+        },
+      });
     });
 
     it('scenario: rejects unknown kind irc with reason unknown_kind', () => {
@@ -303,6 +353,37 @@ describe('Task 1.5 scenario coverage audit (agent-delivery/spec.md)', () => {
         error: 'invalid_delivery',
         reason: 'missing_channel_session_id',
       });
+    });
+
+    it('scenario: rejects kind codex-appserver with invalid thread_id', () => {
+      expect(
+        validateDeliveryForWrite({
+          kind: 'codex-appserver',
+          thread_id: 'thread-1',
+          ws_url: 'ws://127.0.0.1:8799',
+        }),
+      ).toEqual({ error: 'invalid_delivery', reason: 'invalid_thread_id' });
+    });
+
+    it('scenario: rejects kind codex-appserver with invalid ws_url', () => {
+      expect(
+        validateDeliveryForWrite({
+          kind: 'codex-appserver',
+          thread_id: '11111111-1111-4111-8111-111111111111',
+          ws_url: 'http://127.0.0.1:8799',
+        }),
+      ).toEqual({ error: 'invalid_delivery', reason: 'invalid_ws_url' });
+    });
+
+    it('scenario: rejects kind codex-appserver with blank auth_token_ref', () => {
+      expect(
+        validateDeliveryForWrite({
+          kind: 'codex-appserver',
+          thread_id: '11111111-1111-4111-8111-111111111111',
+          ws_url: 'ws://127.0.0.1:8799',
+          auth_token_ref: '   ',
+        }),
+      ).toEqual({ error: 'invalid_delivery', reason: 'invalid_auth_token_ref' });
     });
   });
 });

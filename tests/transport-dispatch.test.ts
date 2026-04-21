@@ -104,22 +104,80 @@ describe('dispatchPoke', () => {
     expect(res).toMatchObject({ error: 'pane_dead', transport_used: 'tmux-poke' })
   })
 
-  it('returns dispatcher_not_implemented for codex-appserver delivery', async () => {
+  it('routes codex-appserver to the dedicated dispatcher', async () => {
     const fanout = new ChannelWakeFanout()
     const tmux = stubTmux({ ok: true, pane_tail_before: '', pane_tail_after: '' })
+    const codexCalls: Array<{ thread_id: string; ws_url: string; content: string }> = []
     const res = await dispatchPoke(
-      { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
+      {
+        channelWakeFanout: fanout,
+        tmuxPoke: tmux.fn,
+        codexAppserverDispatch: async ({ delivery, content }) => {
+          codexCalls.push({
+            thread_id: delivery.thread_id,
+            ws_url: delivery.ws_url,
+            content,
+          })
+          return {
+            ok: true,
+            transport_used: 'codex-appserver',
+            thread_id: delivery.thread_id,
+          }
+        },
+      },
       {
         delivery: {
           kind: 'codex-appserver',
-          thread_id: 'thread-1',
+          thread_id: '11111111-1111-4111-8111-111111111111',
           ws_url: 'wss://example.test/ws',
         },
         tmux_pane_id: '%42',
       },
       { content: 'hi', meta: {} }
     )
-    expect(res).toEqual({ error: 'dispatcher_not_implemented' })
+    expect(res).toEqual({
+      ok: true,
+      transport_used: 'codex-appserver',
+      thread_id: '11111111-1111-4111-8111-111111111111',
+    })
+    expect(codexCalls).toEqual([
+      {
+        thread_id: '11111111-1111-4111-8111-111111111111',
+        ws_url: 'wss://example.test/ws',
+        content: 'hi',
+      },
+    ])
+    expect(tmux.calls).toHaveLength(0)
+  })
+
+  it('returns codex dispatcher failure without tmux fallback', async () => {
+    const fanout = new ChannelWakeFanout()
+    const tmux = stubTmux({ ok: true, pane_tail_before: '', pane_tail_after: '' })
+    const res = await dispatchPoke(
+      {
+        channelWakeFanout: fanout,
+        tmuxPoke: tmux.fn,
+        codexAppserverDispatch: async () => ({
+          error: 'codex_connect_failed',
+          detail: 'ECONNREFUSED',
+          transport_used: 'codex-appserver',
+        }),
+      },
+      {
+        delivery: {
+          kind: 'codex-appserver',
+          thread_id: '11111111-1111-4111-8111-111111111111',
+          ws_url: 'wss://example.test/ws',
+        },
+        tmux_pane_id: '%42',
+      },
+      { content: 'hi', meta: {} }
+    )
+    expect(res).toEqual({
+      error: 'codex_connect_failed',
+      detail: 'ECONNREFUSED',
+      transport_used: 'codex-appserver',
+    })
     expect(tmux.calls).toHaveLength(0)
   })
 })

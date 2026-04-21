@@ -123,7 +123,42 @@ describe('register_agent delivery integration', () => {
     await server.close()
   })
 
-  it('register with codex-appserver delivery returns kind_not_yet_supported', async () => {
+  it('register with codex-appserver delivery persists identity and delivery atomically', async () => {
+    const { db, server, client, transport } = await setup()
+    const result = await parseTool(await client.callTool({
+      name: 'register_agent',
+      arguments: {
+        model: 'opus',
+        role: 'backend',
+        name: 'alice',
+        delivery: {
+          kind: 'codex-appserver',
+          thread_id: '11111111-1111-4111-8111-111111111111',
+          ws_url: 'wss://example.test/ws',
+          auth_token_ref: 'CODEX_REMOTE_TOKEN',
+        },
+      },
+    }))
+    expect(result.agent_id).toBeDefined()
+    const row = db.prepare(
+      `SELECT delivery_kind, delivery_payload FROM agents WHERE team='default' AND name='alice'`
+    ).get() as {
+      delivery_kind: string
+      delivery_payload: string | null
+    }
+    expect(row.delivery_kind).toBe('codex-appserver')
+    expect(JSON.parse(row.delivery_payload as string)).toEqual({
+      thread_id: '11111111-1111-4111-8111-111111111111',
+      ws_url: 'wss://example.test/ws',
+      auth_token_ref: 'CODEX_REMOTE_TOKEN',
+    })
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it('register with invalid codex-appserver delivery returns invalid_thread_id and writes no row', async () => {
     const { db, server, client, transport } = await setup()
     const result = await parseTool(await client.callTool({
       name: 'register_agent',
@@ -140,7 +175,7 @@ describe('register_agent delivery integration', () => {
     }))
     expect(result).toEqual({
       error: 'invalid_delivery',
-      reason: 'kind_not_yet_supported',
+      reason: 'invalid_thread_id',
     })
     const row = db.prepare(
       `SELECT agent_id FROM agents WHERE team='default' AND name='alice'`

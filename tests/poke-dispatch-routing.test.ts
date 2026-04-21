@@ -73,16 +73,24 @@ describe('poke dispatch routes by delivery.kind', () => {
     expect(tmux.calls).toHaveLength(0)
   })
 
-  it('routes codex-appserver to dispatcher_not_implemented', async () => {
+  it('routes codex-appserver to the Codex dispatcher and does not fall back to tmux', async () => {
     const fanout = new ChannelWakeFanout()
     const tmux = createTmuxStub({ ok: true, pane_tail_before: 'before', pane_tail_after: 'after' })
 
     const result = await dispatchPoke(
-      { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
+      {
+        channelWakeFanout: fanout,
+        tmuxPoke: tmux.fn,
+        codexAppserverDispatch: async ({ delivery }) => ({
+          ok: true,
+          transport_used: 'codex-appserver',
+          thread_id: delivery.thread_id,
+        }),
+      },
       {
         delivery: {
           kind: 'codex-appserver',
-          thread_id: 'thread-123',
+          thread_id: '11111111-1111-4111-8111-111111111111',
           ws_url: 'wss://example.test/ws',
         },
         tmux_pane_id: '%42',
@@ -90,7 +98,44 @@ describe('poke dispatch routes by delivery.kind', () => {
       { content: 'wake up', meta: {} }
     )
 
-    expect(result).toEqual({ error: 'dispatcher_not_implemented' })
+    expect(result).toEqual({
+      ok: true,
+      transport_used: 'codex-appserver',
+      thread_id: '11111111-1111-4111-8111-111111111111',
+    })
+    expect(tmux.calls).toHaveLength(0)
+  })
+
+  it('returns Codex transport failure without tmux fallback', async () => {
+    const fanout = new ChannelWakeFanout()
+    const tmux = createTmuxStub({ ok: true, pane_tail_before: 'before', pane_tail_after: 'after' })
+
+    const result = await dispatchPoke(
+      {
+        channelWakeFanout: fanout,
+        tmuxPoke: tmux.fn,
+        codexAppserverDispatch: async () => ({
+          error: 'codex_turn_start_failed',
+          detail: { code: -32002, message: 'busy' },
+          transport_used: 'codex-appserver',
+        }),
+      },
+      {
+        delivery: {
+          kind: 'codex-appserver',
+          thread_id: '11111111-1111-4111-8111-111111111111',
+          ws_url: 'wss://example.test/ws',
+        },
+        tmux_pane_id: '%42',
+      },
+      { content: 'wake up', meta: {} }
+    )
+
+    expect(result).toEqual({
+      error: 'codex_turn_start_failed',
+      detail: { code: -32002, message: 'busy' },
+      transport_used: 'codex-appserver',
+    })
     expect(tmux.calls).toHaveLength(0)
   })
 })
