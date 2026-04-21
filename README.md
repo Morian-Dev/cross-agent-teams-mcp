@@ -1,67 +1,70 @@
 # cross-agent-teams-mcp
 
-用于跨 agent 协作的 MCP daemon.
+[中文说明](./README.zh-CN.md)
 
-## 启动 MCP 服务
+An MCP daemon for cross-agent collaboration, with local delivery transports for tmux, Codex app-server, and Claude channel wake integration.
 
-在仓库根目录执行:
+## Quick Start
+
+Build and start the daemon from the repository root:
 
 ```bash
 pnpm build
 node dist/cli.js daemon --port 9100
 ```
 
-如果你希望一键在后台启动当前项目需要的 daemon 和 Codex app-server, 可以直接用:
+If you want a one-command local setup for the daemon and Codex app-server, use:
 
 ```bash
 ./start-server.sh
 ```
 
-这个脚本会先自动执行 `pnpm build`, 然后再在后台启动服务.
-
-停止这两个后台进程:
+The script runs `pnpm build` first, then starts the background services.  To stop them:
 
 ```bash
 ./stop-server.sh
 ```
 
-脚本会把日志和 pid 文件写到项目内的 `logs/` 目录.
+Logs and pid files are written into `logs/`.
 
-如果你想直接跑源码, 可以用:
+To run directly from source:
 
 ```bash
 npx tsx src/cli.ts daemon --port 9100
 ```
 
-服务默认监听 `127.0.0.1:9100`, MCP endpoint 是 `http://127.0.0.1:9100/mcp`.  健康检查地址是 `http://127.0.0.1:9100/health`.
+By default the daemon listens on `127.0.0.1:9100`.  The MCP endpoint is `http://127.0.0.1:9100/mcp`, and the health check endpoint is `http://127.0.0.1:9100/health`.
 
-启动后可用下面的命令确认服务正常:
+You can verify the service with:
 
 ```bash
 curl http://127.0.0.1:9100/health
 ```
 
-## 常用参数
+## Common Flags
 
-- `--port <port>`, 指定监听端口, 默认是 `9100`.
-- `--token <token>`, 开启 Bearer token 鉴权.
-- `--db <path>`, 指定 SQLite 数据库路径.
-- `--pid-file <path>`, 指定 pid 文件路径.
+- `--port <port>`: listening port, default `9100`
+- `--token <token>`: enable Bearer token authentication
+- `--db <path>`: SQLite database path
+- `--pid-file <path>`: pid file path
 
-默认数据目录是 `~/.cross-agent-teams-mcp/`.  默认数据库文件是 `~/.cross-agent-teams-mcp/data.db`, 默认 pid 文件是 `~/.cross-agent-teams-mcp/daemon.pid`.
+The default data directory is `~/.cross-agent-teams-mcp/`.  The default database file is `~/.cross-agent-teams-mcp/data.db`, and the default pid file is `~/.cross-agent-teams-mcp/daemon.pid`.
 
-如果已有实例在运行, 启动时会报 `daemon already running pid=...`.
+If another instance is already running, startup returns `daemon already running pid=...`.
 
-## Codex app-server delivery
+## Delivery Transports
 
-当前 daemon 支持两类跨 agent 唤醒路径:
+The daemon currently supports these wake-up paths:
 
-- `tmux_pane_id`, 直接把文本注入目标 pane.
-- `delivery.kind='codex-appserver'`, 通过 Codex app-server websocket 恢复指定 thread 并发起一轮 `turn/start`.
+- `tmux_pane_id`: inject text directly into a target tmux pane
+- `delivery.kind='codex-appserver'`: resume a Codex thread over websocket and start a turn
+- `delivery.kind='claude-channel'`: bind a Claude channel session and deliver channel wake notifications
 
-如果你是在 Codex 里日常使用, 现在更推荐直接调用高层工具 `register_codex_self`, 不需要手动提供 `thread_id` 和 `ws_url`.  它会自动连接本地 Codex app-server, 执行 `thread/loaded/list`, 选择唯一可恢复的 thread, 然后把自己注册成 `codex-appserver` delivery.
+## Codex App-Server Delivery
 
-最简用法:
+For daily Codex usage, the recommended entry point is `register_codex_self`.  It connects to the local Codex app-server, calls `thread/loaded/list`, selects the single resumable thread, and registers the current session as a `codex-appserver` delivery target.
+
+Minimal example:
 
 ```text
 register_codex_self({
@@ -71,7 +74,7 @@ register_codex_self({
 })
 ```
 
-如果本地不是默认地址, 可以显式覆盖 `ws_url`:
+Override the websocket URL when needed:
 
 ```text
 register_codex_self({
@@ -82,7 +85,7 @@ register_codex_self({
 })
 ```
 
-如果 app-server 开启了 bearer token, 额外传 `auth_token_ref`, 它的值是 daemon 进程可见的环境变量名:
+If the app-server requires a Bearer token, pass `auth_token_ref` as an environment variable name visible to the daemon:
 
 ```text
 register_codex_self({
@@ -93,21 +96,21 @@ register_codex_self({
 })
 ```
 
-行为说明:
+Behavior notes:
 
-- 默认 `ws_url` 是 `ws://127.0.0.1:8799`.
-- 如果没有 loaded thread, 返回 `no_loaded_threads`.
-- 如果有多个可恢复 thread, 返回 `ambiguous_loaded_threads`, 不会擅自猜测.
-- 成功时返回 `{ agent_id, team, thread_id, ws_url }`.
+- Default `ws_url` is `ws://127.0.0.1:8799`
+- No loaded thread returns `no_loaded_threads`
+- Multiple resumable threads return `ambiguous_loaded_threads`
+- Success returns `{ agent_id, team, thread_id, ws_url }`
 
-Codex app-server 的最小使用方式:
+Minimal Codex app-server startup:
 
 ```bash
 codex app-server --listen ws://127.0.0.1:8799
 codex --remote ws://127.0.0.1:8799
 ```
 
-在目标 Codex TUI 已经进入某个 thread 后, 调用 `register_agent` 时传入 `delivery`:
+You can also register a target manually with `register_agent`:
 
 ```text
 register_agent({
@@ -123,7 +126,7 @@ register_agent({
 })
 ```
 
-如果 app-server 开启了 bearer token, 额外传 `auth_token_ref`, 其值是 daemon 进程可见的环境变量名:
+If the app-server requires a Bearer token:
 
 ```text
 register_agent({
@@ -140,13 +143,13 @@ register_agent({
 })
 ```
 
-行为说明:
+Behavior notes:
 
-- `thread_id` 必须是 UUID.
-- `ws_url` 只能是 `ws://` 或 `wss://`.
-- `auth_token_ref` 只会被解释为环境变量名.
-- 成功时, `poke()` 返回 `{ ok: true, transport_used: 'codex-appserver', thread_id }`.
-- 失败时, `poke()` 返回带 `transport_used: 'codex-appserver'` 的 machine-readable 错误, 例如 `codex_connect_failed`, `codex_initialize_failed`, `codex_resume_failed`, `codex_turn_start_failed`, `missing_auth_token`.
-- 当 target 显式注册为 `codex-appserver`, daemon 不会自动 fallback 到 tmux.
+- `thread_id` must be a UUID
+- `ws_url` must use `ws://` or `wss://`
+- `auth_token_ref` is interpreted only as an environment variable name
+- On success, `poke()` returns `{ ok: true, transport_used: 'codex-appserver', thread_id }`
+- On failure, `poke()` returns machine-readable errors such as `codex_connect_failed`, `codex_initialize_failed`, `codex_resume_failed`, `codex_turn_start_failed`, or `missing_auth_token`
+- When a target is explicitly registered as `codex-appserver`, the daemon does not fall back to tmux
 
-更完整的 Codex CLI 配置和启动示例见 [docs/configs/codex-cli.md](/Users/jtianling/workspace/cross-agent-teams-mcp-workspace/cross-agent-teams-mcp/docs/configs/codex-cli.md)。
+For a more complete Codex CLI setup example, see [docs/configs/codex-cli.md](docs/configs/codex-cli.md).
