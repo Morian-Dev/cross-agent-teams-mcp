@@ -26,6 +26,7 @@ import { BindChannelService } from './bind-channel.js'
 import { BindOpencodeSessionService } from './bind-opencode-session.js'
 import { BindRuntimeIdentityService } from './bind-runtime-identity.js'
 import { RegisterCodexSelfService } from './register-codex-self.js'
+import { UnregisterSelfService } from './unregister-self.js'
 import { detectTmuxPane } from '../daemon/tmux-pane-detect.js'
 import type { DetectAgentKind } from '../daemon/tmux-pane-detect.js'
 import type { ClientKind } from '../lib/client-kind.js'
@@ -170,6 +171,10 @@ export interface RegisterSuccessHook {
   (agent_id: string, team: string): void
 }
 
+export interface UnregisterSuccessHook {
+  (agent_id: string): void
+}
+
 export interface TransportLike {
   send(msg: Record<string, unknown>): Promise<void> | void
 }
@@ -204,13 +209,15 @@ export function registerBusinessTools(
   getSessionId?: () => string | undefined,
   channelWakeFanout?: ChannelWakeFanout,
   getTransport?: () => TransportLike,
-  getSessionClientInfo?: () => SessionClientInfo | undefined
+  getSessionClientInfo?: () => SessionClientInfo | undefined,
+  onUnregisterSuccess?: UnregisterSuccessHook
 ): void {
   const agents = new AgentsRepo(db)
   const events = new EventsOutbox(db)
   const registerSvc = new RegisterAgentService(db)
   const bindRuntimeIdentitySvc = new BindRuntimeIdentityService(db)
   const registerCodexSelfSvc = new RegisterCodexSelfService(registerSvc)
+  const unregisterSelfSvc = new UnregisterSelfService(db, agents)
 
   const autoPokeImpl = createAutoPokeImpl(db, agents, channelWakeFanout)
 
@@ -438,6 +445,18 @@ export function registerBusinessTools(
     return res
   }
 
+  function releaseRegisteredState(agentId: string): void {
+    const connectionId = getSessionId?.()
+    if (connectionId) registerSvc.releaseConnection(agentId, connectionId)
+    if (onUnregisterSuccess) {
+      try { onUnregisterSuccess(agentId) } catch { /* best-effort */ }
+      return
+    }
+    if (fanout) {
+      try { fanout.detach(agentId) } catch { /* best-effort */ }
+    }
+  }
+
   // register_agent — bootstrap: callable before an agents row exists for this session
   server.registerTool(
     'detect_tmux_pane',
@@ -542,6 +561,38 @@ export function registerBusinessTools(
       ui_pid: args.ui_pid,
       channel_session_id: args.channel_session_id,
     }))
+  )
+
+  server.registerTool(
+    'unregister_self',
+    {
+      title: 'Unregister current agent',
+      description: [
+        'Remove the caller session\'s current agent registration.',
+        'This tool only unregisters the currently bound agent identity; it does not delete other agents.',
+        'If the caller still owns any in-progress task, it returns `tasks_in_progress` and leaves all state unchanged.',
+        'On success it deletes the agent row, removes the caller\'s contract subscriptions, and immediately releases the current MCP session back to an unregistered state.'
+      ].join(' '),
+      inputSchema: z.object({}).strict()
+    },
+    async () => {
+      const who = requireAgent()
+      if (typeof who !== 'string') return toText(who)
+      const result = await wrapStorage(() => unregisterSelfSvc.unregister({ caller: who }))
+      if (
+        typeof result === 'object' &&
+        result !== null &&
+        'ok' in result &&
+        result.ok === true &&
+        'agent_id' in result &&
+        typeof result.agent_id === 'string'
+      ) {
+        releaseRegisteredState(result.agent_id)
+        return toText(result)
+      }
+      touchIfRegistered()
+      return toText(result)
+    }
   )
 
   // list_agents

@@ -73,6 +73,14 @@ export function mountMcp(
       agentIdHolder.current = agent_id
     }
 
+    const onUnregisterSuccess = (agent_id: string): void => {
+      try { fanout.detach(agent_id) } catch { /* ignore */ }
+      if (sessionIdForCaller && channelWakeFanout) {
+        try { channelWakeFanout.detachBySession(sessionIdForCaller) } catch { /* ignore */ }
+      }
+      if (agentIdHolder.current === agent_id) agentIdHolder.current = undefined
+    }
+
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sid: string) => {
@@ -105,7 +113,8 @@ export function mountMcp(
         const sid = sessionIdForCaller
         if (!sid) return undefined
         return sessions.get(sid)?.clientInfo
-      }
+      },
+      onUnregisterSuccess
     )
     server.connect(transport)
     return { transport, server, sessionId: '', agentIdHolder }

@@ -195,6 +195,15 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     expect(d).toMatch(/client: "claude-code"|client.*claude-code/i)
   })
 
+  it('unregister_self description makes the self-only teardown semantics discoverable', async () => {
+    const tools = await listTools()
+    const d = tools.find(t => t.name === 'unregister_self')!.description!
+    expect(d).toMatch(/current agent registration|current agent/i)
+    expect(d).toMatch(/does not delete other agents|self/i)
+    expect(d).toMatch(/tasks_in_progress/)
+    expect(d).toMatch(/unregistered state/i)
+  })
+
   it('bind_opencode_session description marks it as a low-level rebind tool', async () => {
     const tools = await listTools()
     const d = tools.find(t => t.name === 'bind_opencode_session')!.description!
