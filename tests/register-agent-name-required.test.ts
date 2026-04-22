@@ -72,7 +72,7 @@ describe('register_agent name field validation', () => {
     const b = await boot(); teardown.push(() => b.cleanup()); teardown.push(() => b.app.close())
     const { c, t } = await connect(b.host, b.port)
     teardown.push(async () => { await t.close(); await c.close() })
-    const resp = await c.callTool({ name: 'register_agent', arguments: { model: 'opus', name: 'alice', tmux_pane_id: '%1' } })
+    const resp = await c.callTool({ name: 'register_agent', arguments: { model: 'opus', name: 'alice' } })
     const obj = JSON.parse((resp.content as Array<{ text: string }>)[0].text) as { agent_id: string }
     const db = openDb(b.dbPath); applySchema(db)
     const row = db.prepare('SELECT role FROM agents WHERE agent_id=?').get(obj.agent_id) as { role: string }
@@ -84,7 +84,7 @@ describe('register_agent name field validation', () => {
     const b = await boot(); teardown.push(() => b.cleanup()); teardown.push(() => b.app.close())
     const { c, t } = await connect(b.host, b.port)
     teardown.push(async () => { await t.close(); await c.close() })
-    const resp = await c.callTool({ name: 'register_agent', arguments: { model: 'opus', name: 'alice', role: 'backend', tmux_pane_id: '%1' } })
+    const resp = await c.callTool({ name: 'register_agent', arguments: { model: 'opus', name: 'alice', role: 'backend' } })
     const obj = JSON.parse((resp.content as Array<{ text: string }>)[0].text) as { team: string }
     expect(obj.team).toBe('default')
   })

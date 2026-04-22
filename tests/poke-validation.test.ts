@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { startServer } from '../src/daemon/server.js'
+import { openDb } from '../src/storage/db.js'
+import { applySchema } from '../src/storage/schema.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-poke-'))
 
@@ -26,6 +28,7 @@ async function register(c: Client, args: {
   role?: string
   team?: string
   tmux_pane_id?: string
+  dbPath?: string
   delivery?: Record<string, unknown>
 } = {}): Promise<string> {
   const resp = await c.callTool({
@@ -35,12 +38,19 @@ async function register(c: Client, args: {
       model: 'opus-4-7',
       role: args.role ?? 'dev',
       team: args.team,
-      tmux_pane_id: args.tmux_pane_id,
       delivery: args.delivery,
     }
   })
   const obj = await parseTool(resp)
-  return obj.agent_id as string
+  const agentId = obj.agent_id as string
+  if (args.dbPath && args.tmux_pane_id) {
+    const db = openDb(args.dbPath)
+    applySchema(db)
+    db.prepare('UPDATE agents SET tmux_pane_id=? WHERE agent_id=?')
+      .run(args.tmux_pane_id, agentId)
+    db.close()
+  }
+  return agentId
 }
 
 type EventName = 'open' | 'message' | 'error' | 'close'
@@ -137,9 +147,10 @@ describe('poke validation', () => {
 
   it('returns self_poke_denied when caller pokes itself', async () => {
     const dir = tmp(); cleanups.push(dir)
-    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+    const dbPath = join(dir, 'data.db')
+    const { app, port, host } = await startServer({ dbPath, port: 0 })
     const { c, t } = await connectClient(host, port)
-    const selfId = await register(c, { tmux_pane_id: '%1' })
+    const selfId = await register(c, { tmux_pane_id: '%1', dbPath })
 
     const resp = await c.callTool({ name: 'poke', arguments: { target_agent_id: selfId, prompt: 'p' } })
     const obj = await parseTool(resp)
@@ -160,7 +171,7 @@ describe('poke validation', () => {
 
     const resp = await A.c.callTool({ name: 'poke', arguments: { target_agent_id: targetId, prompt: 'p' } })
     const obj = await parseTool(resp)
-    expect(obj).toEqual({ error: 'no_transport_available', detail: { channel_subscribed: false, tmux_pane_set: false } })
+    expect(obj).toEqual({ error: 'no_transport_available', detail: { channel_subscribed: false, opencode_bound: false, tmux_pane_set: false } })
 
     await A.t.terminateSession(); await B.t.terminateSession()
     await A.c.close(); await B.c.close()
@@ -169,11 +180,12 @@ describe('poke validation', () => {
 
   it('returns prompt_too_long when prompt byte length exceeds 8192', async () => {
     const dir = tmp(); cleanups.push(dir)
-    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+    const dbPath = join(dir, 'data.db')
+    const { app, port, host } = await startServer({ dbPath, port: 0 })
     const A = await connectClient(host, port)
     const B = await connectClient(host, port)
     await register(A.c, { role: 'caller' })
-    const targetId = await register(B.c, { role: 'target', tmux_pane_id: '%9' })
+    const targetId = await register(B.c, { role: 'target', tmux_pane_id: '%9', dbPath })
 
     const longPrompt = 'a'.repeat(10240)
     const resp = await A.c.callTool({ name: 'poke', arguments: { target_agent_id: targetId, prompt: longPrompt } })
@@ -187,11 +199,12 @@ describe('poke validation', () => {
 
   it('returns cross_team_denied when caller and target are in different teams', async () => {
     const dir = tmp(); cleanups.push(dir)
-    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+    const dbPath = join(dir, 'data.db')
+    const { app, port, host } = await startServer({ dbPath, port: 0 })
     const A = await connectClient(host, port)
     const B = await connectClient(host, port)
     await register(A.c, { role: 'caller', team: 'alpha' })
-    const targetId = await register(B.c, { role: 'target', team: 'beta', tmux_pane_id: '%9' })
+    const targetId = await register(B.c, { role: 'target', team: 'beta', tmux_pane_id: '%9', dbPath })
 
     const resp = await A.c.callTool({ name: 'poke', arguments: { target_agent_id: targetId, prompt: 'p' } })
     const obj = await parseTool(resp)

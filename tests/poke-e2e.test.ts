@@ -7,6 +7,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { startServer } from '../src/daemon/server.js'
 import { isTmuxAvailable, _resetTmuxAvailableCache } from '../src/daemon/tmux-cli.js'
+import { openDb } from '../src/storage/db.js'
+import { applySchema } from '../src/storage/schema.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-poke-e2e-'))
 
@@ -23,13 +25,21 @@ async function connectClient(host: string, port: number): Promise<{ c: Client; t
   return { c, t }
 }
 
-async function register(c: Client, args: { name?: string; role?: string; team?: string; tmux_pane_id?: string } = {}): Promise<string> {
+async function register(c: Client, args: { name?: string; role?: string; team?: string; tmux_pane_id?: string; dbPath?: string } = {}): Promise<string> {
   const resp = await c.callTool({
     name: 'register_agent',
-    arguments: { name: args.name ?? 'tester-6', model: 'opus-4-7', role: args.role ?? 'dev', team: args.team, tmux_pane_id: args.tmux_pane_id }
+    arguments: { name: args.name ?? 'tester-6', model: 'opus-4-7', role: args.role ?? 'dev', team: args.team }
   })
   const obj = await parseTool(resp)
-  return obj.agent_id as string
+  const agentId = obj.agent_id as string
+  if (args.dbPath && args.tmux_pane_id) {
+    const db = openDb(args.dbPath)
+    applySchema(db)
+    db.prepare('UPDATE agents SET tmux_pane_id=? WHERE agent_id=?')
+      .run(args.tmux_pane_id, agentId)
+    db.close()
+  }
+  return agentId
 }
 
 describe('poke e2e (real tmux)', () => {
@@ -57,11 +67,12 @@ describe('poke e2e (real tmux)', () => {
     }
 
     const dir = tmp(); cleanups.push(dir)
-    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+    const dbPath = join(dir, 'data.db')
+    const { app, port, host } = await startServer({ dbPath, port: 0 })
     const A = await connectClient(host, port)
     const B = await connectClient(host, port)
     await register(A.c, { name: 'tester-6-caller', role: 'caller' })
-    const targetId = await register(B.c, { name: 'tester-6-target', role: 'target', tmux_pane_id: paneId })
+    const targetId = await register(B.c, { name: 'tester-6-target', role: 'target', tmux_pane_id: paneId, dbPath })
 
     execFileSync('tmux', ['kill-session', '-t', session])
 
@@ -88,11 +99,12 @@ describe('poke e2e (real tmux)', () => {
       paneId = execFileSync('tmux', ['list-panes', '-t', session, '-F', '#{pane_id}']).toString().trim()
 
       const dir = tmp(); cleanups.push(dir)
-      const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+      const dbPath = join(dir, 'data.db')
+      const { app, port, host } = await startServer({ dbPath, port: 0 })
       const A = await connectClient(host, port)
       const B = await connectClient(host, port)
       await register(A.c, { name: 'tester-6-caller', role: 'caller' })
-      const targetId = await register(B.c, { name: 'tester-6-target', role: 'target', tmux_pane_id: paneId })
+      const targetId = await register(B.c, { name: 'tester-6-target', role: 'target', tmux_pane_id: paneId, dbPath })
 
       const resp = await A.c.callTool({ name: 'poke', arguments: { target_agent_id: targetId, prompt: 'hello' } })
       const obj = await parseTool(resp)

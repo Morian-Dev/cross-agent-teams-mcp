@@ -27,6 +27,8 @@ describe('dispatchPoke', () => {
       {
         delivery: { kind: 'claude-channel', channel_session_id: 'csid-bob' },
         tmux_pane_id: '%99',
+        opencode_base_url: null,
+        opencode_session_id: null,
       },
       { content: 'hi', meta: { source: 'x' } }
     )
@@ -43,6 +45,8 @@ describe('dispatchPoke', () => {
       {
         delivery: { kind: 'claude-channel', channel_session_id: 'csid-bob' },
         tmux_pane_id: '%99',
+        opencode_base_url: null,
+        opencode_session_id: null,
       },
       { content: 'hi', meta: {} }
     )
@@ -55,7 +59,7 @@ describe('dispatchPoke', () => {
     const tmux = stubTmux({ ok: true, pane_tail_before: 'x', pane_tail_after: 'y' })
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
-      { delivery: { kind: 'none' }, tmux_pane_id: '%42' },
+      { delivery: { kind: 'none' }, tmux_pane_id: '%42', opencode_base_url: null, opencode_session_id: null },
       { content: 'hi', meta: {} }
     )
     expect(res).toMatchObject({ ok: true, transport_used: 'tmux-poke' })
@@ -66,12 +70,12 @@ describe('dispatchPoke', () => {
     const tmux = stubTmux({ ok: true, pane_tail_before: '', pane_tail_after: '' })
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
-      { delivery: { kind: 'none' }, tmux_pane_id: null },
+      { delivery: { kind: 'none' }, tmux_pane_id: null, opencode_base_url: null, opencode_session_id: null },
       { content: 'hi', meta: {} }
     )
     expect(res).toEqual({
       error: 'no_transport_available',
-      detail: { channel_subscribed: false, tmux_pane_set: false }
+      detail: { channel_subscribed: false, opencode_bound: false, tmux_pane_set: false }
     })
     expect(tmux.calls).toHaveLength(0)
   })
@@ -84,12 +88,14 @@ describe('dispatchPoke', () => {
       {
         delivery: { kind: 'claude-channel', channel_session_id: 'csid-x' },
         tmux_pane_id: null,
+        opencode_base_url: null,
+        opencode_session_id: null,
       },
       { content: 'hi', meta: {} }
     )
     expect(res).toEqual({
       error: 'no_transport_available',
-      detail: { channel_subscribed: false, tmux_pane_set: false }
+      detail: { channel_subscribed: false, opencode_bound: false, tmux_pane_set: false }
     })
   })
 
@@ -98,7 +104,7 @@ describe('dispatchPoke', () => {
     const tmux = stubTmux({ error: 'pane_dead', detail: 'no pane' })
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
-      { delivery: { kind: 'none' }, tmux_pane_id: '%42' },
+      { delivery: { kind: 'none' }, tmux_pane_id: '%42', opencode_base_url: null, opencode_session_id: null },
       { content: 'hi', meta: {} }
     )
     expect(res).toMatchObject({ error: 'pane_dead', transport_used: 'tmux-poke' })
@@ -132,6 +138,8 @@ describe('dispatchPoke', () => {
           ws_url: 'wss://example.test/ws',
         },
         tmux_pane_id: '%42',
+        opencode_base_url: null,
+        opencode_session_id: null,
       },
       { content: 'hi', meta: {} }
     )
@@ -170,6 +178,8 @@ describe('dispatchPoke', () => {
           ws_url: 'wss://example.test/ws',
         },
         tmux_pane_id: '%42',
+        opencode_base_url: null,
+        opencode_session_id: null,
       },
       { content: 'hi', meta: {} }
     )

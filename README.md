@@ -59,10 +59,11 @@ The daemon currently supports these wake-up paths:
 - `tmux_pane_id`: inject text directly into a target tmux pane
 - `delivery.kind='codex-appserver'`: resume a Codex thread over websocket and start a turn
 - `delivery.kind='claude-channel'`: bind a Claude channel session and deliver channel wake notifications
+- `opencode-server`: send a prompt to an opencode session via HTTP (auto-bound with `bind_opencode_session`)
 
 ## Codex App-Server Delivery
 
-For daily Codex usage, the recommended entry point is `register_codex_self`.  It connects to the local Codex app-server and registers a caller-supplied `thread_id` as a `codex-appserver` delivery target.  It also best-effort records `tmux_pane_id`: explicit `tmux_pane_id` wins, otherwise the tool tries to discover the Codex UI pane.
+For daily Codex usage, the recommended entry point is `register_codex_self`.  It connects to the local Codex app-server and registers a caller-supplied `thread_id` as a `codex-appserver` delivery target.  It does not auto-bind a tmux pane.  If you want tmux fallback delivery, call `bind_runtime_identity(...)` after registration.
 
 `register_codex_self` no longer guesses the caller's current thread from `thread/loaded/list`.  The daemon cannot safely infer "which loaded thread is mine" from the MCP session alone.  If `thread_id` is omitted, the tool returns `thread_id_required` with resumable thread ids for debugging instead of registering the wrong thread.
 
@@ -77,28 +78,22 @@ register_codex_self({
 })
 ```
 
-If you already know the pane id, pass it directly:
+If you also want tmux fallback routing, bind runtime identity explicitly after registration:
 
 ```text
-register_codex_self({
-  name: "lead",
-  team: "default",
-  role: "worker",
-  thread_id: "11111111-1111-4111-8111-111111111111",
-  tmux_pane_id: "%42"
+bind_runtime_identity({
+  agent: "codex",
+  ui_pid: 81979
 })
 ```
 
-If the shell pane and the visible Codex UI may differ, you can narrow the best-effort pane lookup:
+If you do not have the UI pid, you can fall back to `ui_tty + tmux_pane_id`:
 
 ```text
-register_codex_self({
-  name: "lead",
-  team: "default",
-  role: "worker",
-  thread_id: "11111111-1111-4111-8111-111111111111",
-  cwd: "/workspace/project",
-  title_contains: "project"
+bind_runtime_identity({
+  agent: "codex",
+  ui_tty: "/dev/ttys026",
+  tmux_pane_id: "%1902"
 })
 ```
 
@@ -130,9 +125,8 @@ Behavior notes:
 
 - Default `ws_url` is `ws://127.0.0.1:8799`
 - `thread_id` is required for successful registration
-- `tmux_pane_id` is persisted when provided explicitly or when a unique Codex pane can be detected
-- Optional pane-detect hints are `cwd`, `tty`, and `title_contains`
-- Failure to find a unique tmux pane does not fail `register_codex_self`; it only means no new pane id is written
+- tmux pane binding is handled separately by `bind_runtime_identity`
+- `detect_tmux_pane(...)` remains available for debugging, but does not write registry state
 - No loaded thread returns `no_loaded_threads`
 - Omitted `thread_id` returns `thread_id_required` with resumable thread ids for debugging
 - Success returns `{ agent_id, team, thread_id, ws_url }`
@@ -187,3 +181,55 @@ Behavior notes:
 - When a target is explicitly registered as `codex-appserver`, the daemon does not fall back to tmux
 
 For a more complete Codex CLI setup example, see [docs/configs/codex-cli.md](docs/configs/codex-cli.md).
+
+## Opencode Delivery
+
+For opencode users who want server-based poke delivery (without relying on tmux), use `bind_opencode_session` after registering an agent.  This binds your agent row to an opencode server session so the daemon can deliver pokes via HTTP.
+
+First, start opencode with a fixed port (omit `--port` to use the default random port):
+
+```bash
+opencode serve --port 4096
+```
+
+Then, in your opencode session, create a session and note its `id`:
+
+```text
+# The session id is shown when you create a session, or query via:
+GET http://127.0.0.1:4096/session
+```
+
+Register your agent and bind the opencode session:
+
+```text
+register_agent({
+  model: "anthropic/claude-3-5-sonnet-20241022",
+  name: "my-opencode-agent",
+  team: "default",
+  role: "worker"
+})
+
+bind_opencode_session({
+  base_url: "http://127.0.0.1:4096",
+  session_id: "ses_xxxxx"
+})
+```
+
+Requirements:
+
+- `base_url` must be a loopback address (`127.0.0.1`, `localhost`, or `::1`)
+- `session_id` is the opencode session identifier from the server
+- Only the registered agent can bind its own row (self-binding)
+
+On success, `poke()` will route to your opencode session via HTTP:
+
+```json
+{
+  "ok": true,
+  "transport_used": "opencode-server",
+  "base_url": "http://127.0.0.1:4096",
+  "session_id": "ses_xxxxx"
+}
+```
+
+The transport priority is: `claude-channel` > `opencode-server` > `tmux-poke`.  If your agent has both `channel_session_id` (Claude channel) and opencode session bound, the channel takes priority.

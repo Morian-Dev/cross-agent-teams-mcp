@@ -27,6 +27,8 @@ const DDL = [
     runtime_verification_mode TEXT,
     runtime_bound_at TEXT,
     channel_session_id TEXT,
+    opencode_base_url TEXT,
+    opencode_session_id TEXT,
     delivery_kind TEXT NOT NULL DEFAULT 'none',
     delivery_payload TEXT
   )`,
@@ -90,13 +92,17 @@ function migrateAgentsDeliveryColumns(db: Database.Database): void {
   const needRuntimeTty = !existing.has('runtime_tty')
   const needRuntimeVerificationMode = !existing.has('runtime_verification_mode')
   const needRuntimeBoundAt = !existing.has('runtime_bound_at')
+  const needOpencodeBaseUrl = !existing.has('opencode_base_url')
+  const needOpencodeSessionId = !existing.has('opencode_session_id')
   if (
     !needKind &&
     !needPayload &&
     !needRuntimeUiPid &&
     !needRuntimeTty &&
     !needRuntimeVerificationMode &&
-    !needRuntimeBoundAt
+    !needRuntimeBoundAt &&
+    !needOpencodeBaseUrl &&
+    !needOpencodeSessionId
   ) return
   const tx = db.transaction(() => {
     if (needKind) {
@@ -116,6 +122,12 @@ function migrateAgentsDeliveryColumns(db: Database.Database): void {
     }
     if (needRuntimeBoundAt) {
       db.exec(`ALTER TABLE agents ADD COLUMN runtime_bound_at TEXT`)
+    }
+    if (needOpencodeBaseUrl) {
+      db.exec(`ALTER TABLE agents ADD COLUMN opencode_base_url TEXT`)
+    }
+    if (needOpencodeSessionId) {
+      db.exec(`ALTER TABLE agents ADD COLUMN opencode_session_id TEXT`)
     }
     if (needKind || needPayload) {
       db.exec(`UPDATE agents

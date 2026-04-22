@@ -3,9 +3,45 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="${LOG_DIR:-$ROOT_DIR/logs}"
+PROJECT_CODEX_DIR="${PROJECT_CODEX_DIR:-$ROOT_DIR/.codex}"
+GLOBAL_CODEX_DIR="${GLOBAL_CODEX_DIR:-$HOME/.codex}"
 
 DAEMON_PID_FILE="${DAEMON_PID_FILE:-$LOG_DIR/cross-agent-teams-mcp-daemon.pid}"
 APPSERVER_PID_FILE="${APPSERVER_PID_FILE:-$LOG_DIR/codex-app-server.pid}"
+OPENCODE_PID_FILE="${OPENCODE_PID_FILE:-$LOG_DIR/opencode-server.pid}"
+
+STOP_DAEMON=1
+STOP_OPENCODE_SERVER=1
+STOP_APP_SERVER=1
+RUN_CLEANUP_CACHES=1
+
+print_usage() {
+  cat <<'EOF'
+usage: ./stop-server.sh [--daemon-only] [--keep-cache]
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    --daemon-only)
+      STOP_OPENCODE_SERVER=0
+      STOP_APP_SERVER=0
+      RUN_CLEANUP_CACHES=0
+      ;;
+    --keep-cache)
+      RUN_CLEANUP_CACHES=0
+      ;;
+    --help|-h)
+      print_usage
+      exit 0
+      ;;
+    *)
+      echo "unknown argument: $arg" >&2
+      print_usage >&2
+      exit 2
+      ;;
+  esac
+done
 
 wait_for_exit() {
   local pid="$1"
@@ -69,5 +105,46 @@ stop_daemon_pid_file() {
   rm -f "$pid_file"
 }
 
-stop_daemon_pid_file "$DAEMON_PID_FILE" "daemon"
-stop_plain_pid_file "$APPSERVER_PID_FILE" "codex app-server"
+remove_path() {
+  local path="$1"
+  if [[ -e "$path" ]]; then
+    rm -rf "$path"
+    echo "removed cache: $path"
+  fi
+}
+
+cleanup_caches() {
+  local paths=(
+    "$LOG_DIR/cross-agent-teams-mcp-daemon.db"
+    "$LOG_DIR/cross-agent-teams-mcp-daemon.db-shm"
+    "$LOG_DIR/cross-agent-teams-mcp-daemon.db-wal"
+    "$LOG_DIR/cross-agent-teams-mcp-daemon.log"
+    "$LOG_DIR/codex-app-server.log"
+    "$LOG_DIR/opencode-server.log"
+    "$PROJECT_CODEX_DIR/log"
+    "$PROJECT_CODEX_DIR/tmp"
+    "$PROJECT_CODEX_DIR/.tmp"
+    "$GLOBAL_CODEX_DIR/logs_2.sqlite"
+    "$GLOBAL_CODEX_DIR/logs_2.sqlite-shm"
+    "$GLOBAL_CODEX_DIR/logs_2.sqlite-wal"
+    "$GLOBAL_CODEX_DIR/cache/codex_apps_tools"
+  )
+
+  local path
+  for path in "${paths[@]}"; do
+    remove_path "$path"
+  done
+}
+
+if (( STOP_DAEMON == 1 )); then
+  stop_daemon_pid_file "$DAEMON_PID_FILE" "daemon"
+fi
+if (( STOP_OPENCODE_SERVER == 1 )); then
+  stop_plain_pid_file "$OPENCODE_PID_FILE" "opencode server"
+fi
+if (( STOP_APP_SERVER == 1 )); then
+  stop_plain_pid_file "$APPSERVER_PID_FILE" "codex app-server"
+fi
+if (( RUN_CLEANUP_CACHES == 1 )); then
+  cleanup_caches
+fi

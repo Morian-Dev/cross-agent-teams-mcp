@@ -63,28 +63,22 @@ Every MCP tool invocation by an authenticated agent SHALL update the caller's `a
 
 ### Requirement: Tmux pane id persistence
 
-Agents MAY report a tmux pane identifier at registration time to enable cross-session interrupt delivery (e.g. future `poke` MCP tool). The field is optional and MUST NOT be required in non-tmux environments. The daemon treats the value as an opaque string — it does not parse or validate tmux pane id format, leaving the interpretation to downstream consumers.
+The daemon MAY resolve and persist a tmux pane identifier during registration to enable cross-session interrupt delivery.  The MCP tool surface MUST NOT require callers to supply `tmux_pane_id`.  The daemon treats the stored value as an opaque string — it does not parse or validate tmux pane id format, leaving the interpretation to downstream consumers.
 
-#### Scenario: Missing tmux_pane_id persists as NULL
+#### Scenario: New registration with no resolved pane persists NULL
 
-- **GIVEN** a `register_agent` call that omits the `tmux_pane_id` field
+- **GIVEN** a `register_agent` call that does not resolve any usable pane
 - **WHEN** the daemon processes the registration
 - **THEN** the agents row's `tmux_pane_id` column stores NULL
 - **AND** the call returns success
 - **AND** `list_agents` entry for this agent has `tmux_pane_id === null`
 
-#### Scenario: Non-tmux environment unaffected by new field
+#### Scenario: Non-tmux environment unaffected by internal detection
 
-- **GIVEN** a register_agent call from an IDE plugin (no tmux) omitting `tmux_pane_id`
+- **GIVEN** a register_agent call from an IDE plugin or desktop app with no tmux environment
 - **WHEN** the call is processed
-- **THEN** the daemon does not error, does not warn, and persists the row with `tmux_pane_id IS NULL`
-
-#### Scenario: Opaque string preserved regardless of format
-
-- **GIVEN** a register_agent call with `tmux_pane_id = 'custom-pane-token-xyz'` (not a standard tmux pane id)
-- **WHEN** the call is processed
-- **THEN** the daemon stores the literal string `'custom-pane-token-xyz'` in the column
-- **AND** `list_agents` returns the literal string unchanged
+- **THEN** the daemon does not error
+- **AND** it persists the row with `tmux_pane_id IS NULL`
 
 ### Requirement: detect_tmux_pane discovers the real agent UI pane
 
@@ -110,37 +104,31 @@ The detector SHALL scan tmux panes globally, map each pane to its tty, inspect t
 
 ### Requirement: register_agent response hints when tmux_pane_id missing
 
-The daemon MUST attach a `hint: string` field to the successful `register_agent` response if and only if the caller did NOT provide a usable `tmux_pane_id` AND did NOT provide a non-tmux delivery in the same call.  "Not usable" means the field is (a) omitted, (b) an empty string, or (c) a string consisting only of whitespace.  A trimmed non-empty value suppresses the hint.  Error envelopes MUST NEVER carry a hint.
+The daemon MUST attach a `hint: string` field to the successful `register_agent` response if and only if the call still ends without a usable registered `tmux_pane_id` AND did NOT provide a non-tmux delivery in the same call.  "Not usable" means the field is (a) omitted, (b) an empty string, or (c) a string consisting only of whitespace.  A trimmed non-empty value suppresses the hint.  A pane id discovered automatically during registration also suppresses the hint.  Error envelopes MUST NEVER carry a hint.
 
-The hint text MUST advise the caller how to discover a usable pane id before re-registering.  When the shell pane and visible agent UI are expected to be the same, the hint MUST mention `echo "$TMUX_PANE"` as the primary shell command and MAY mention `tmux display-message -p '#{pane_id}'` only as a fallback.  When the shell pane and visible agent UI may differ, the hint SHOULD mention `detect_tmux_pane({ agent, cwd })` as the safer path.  The text SHOULD mention cross-agent poke delivery as the motivation.
+The hint text MUST advise the caller that tmux pane detection is internal to `register_agent` and that the caller does not provide pane ids or pane-detect hints through the register interface.  The hint MAY mention `detect_tmux_pane(...)` as a debugging aid for ambiguous or missing matches.  The text SHOULD mention cross-agent poke delivery as the motivation.
 
-#### Scenario: Omitted tmux_pane_id triggers hint
+#### Scenario: Register succeeds without a usable pane and returns a hint
 
-- **GIVEN** a caller that invokes `register_agent({ model, role })` with no `tmux_pane_id` key at all
+- **GIVEN** a caller that invokes `register_agent({ model, role })`
 - **WHEN** the call is processed and succeeds
 - **THEN** the response contains `hint: <string>`
 - **AND** the hint string contains the substring `tmux_pane_id`
-- **AND** the hint string contains the substring `TMUX_PANE`
+- **AND** the hint string contains the substring `agent`
 
-#### Scenario: Hint mentions detect_tmux_pane for split shell and UI setups
+#### Scenario: Hint mentions detector debugging for split shell and UI setups
 
-- **GIVEN** a caller that succeeds in `register_agent(...)` without `tmux_pane_id`
+- **GIVEN** a caller that succeeds in `register_agent(...)` without registering a usable pane
 - **AND** the deployment may execute shell tools in a helper pane while the visible agent UI runs in another pane
 - **WHEN** the daemon returns the success envelope
 - **THEN** the `hint` string contains the substring `detect_tmux_pane`
-- **AND** the hint string recommends re-registering with the detected `pane_id`
+- **AND** the hint string recommends using the detector for debugging rather than passing pane data into `register_agent`
 
-#### Scenario: Empty string tmux_pane_id triggers hint
+#### Scenario: Explicit tmux_pane_id input is rejected at the schema layer
 
-- **GIVEN** a caller that invokes `register_agent({ model, name, role, tmux_pane_id: '', delivery: { kind: 'none' } })`
-- **WHEN** the call is processed and succeeds
-- **THEN** the response contains `hint: <string>` with the same form as the omitted case
-
-#### Scenario: Whitespace-only tmux_pane_id triggers hint
-
-- **GIVEN** a caller that invokes `register_agent({ model, role, tmux_pane_id: '   ' })`
-- **WHEN** the call is processed and succeeds
-- **THEN** the response contains `hint: <string>` with the same form as the omitted case
+- **WHEN** a caller invokes `register_agent({ model, name, role, tmux_pane_id: '%42' })`
+- **THEN** the call is rejected at the schema layer as an unrecognized top-level key
+- **AND** no row is created or updated
 
 #### Scenario: Non-tmux delivery suppresses hint
 
@@ -156,19 +144,32 @@ The hint text MUST advise the caller how to discover a usable pane id before re-
 
 ### Requirement: register_agent reuses agent_id by (team, name, role) identity
 
-The `register_agent` MCP tool SHALL take `{ model: string, name: string, role?: string = 'default', team?: string = 'default', tmux_pane_id?: string }` and:
+The `register_agent` MCP tool SHALL take `{ model: string, name: string, role?: string = 'default', team?: string = 'default', delivery?: DeliverySpec }` and:
 
 1. Trim `name` and reject with a validation error if empty.
-2. Execute an atomic UPSERT keyed on `(team, name)`:
+2. Resolve an effective `tmux_pane_id` for this registration attempt:
+   - The daemon MUST NOT accept caller-supplied pane ids or pane-detect hints through the MCP tool surface.
+   - The daemon MUST best-effort invoke the same pane detector behind `detect_tmux_pane` using internal built-in matcher selection.
+   - If `delivery.kind` implies a specific built-in client, the daemon SHOULD prefer that matcher; otherwise it MAY try the built-in matchers conservatively and only persist a pane when they converge on one unique result.
+   - If the detector returns `ambiguous_match`, `not_found`, or `tmux_unavailable`, the daemon MUST treat this attempt as having no new pane id rather than failing the registration.
+3. Execute an atomic UPSERT keyed on `(team, name)`:
    - If no row exists for `(team, name)`: INSERT a new row with a freshly generated `agent_id = randomUUID()`, the provided `role`, `model`, `registered_at = now`, `last_seen_at = now`, and `tmux_pane_id` (or NULL when omitted/blank).
-   - If a row already exists for `(team, name)`: UPDATE that row's `role`, `model`, `last_seen_at`; preserve `agent_id`, `registered_at`, and `last_processed_event_id`; set `tmux_pane_id` to the new value when the caller provided one, else preserve the existing value.
-3. Return `{ agent_id, team }` where `agent_id` is either the preserved or newly generated id.
+   - If a row already exists for `(team, name)`: UPDATE that row's `role`, `model`, `last_seen_at`; preserve `agent_id`, `registered_at`, and `last_processed_event_id`; set `tmux_pane_id` to the new value when this registration attempt resolved a usable pane id, else preserve the existing value.
+4. Return `{ agent_id, team }` where `agent_id` is either the preserved or newly generated id.
 
 The returned `agent_id` MUST be considered the stable identity for this `(team, name)` pair across reconnects AND across role changes. Changing the `role` parameter on a subsequent register does NOT produce a new `agent_id`; it updates the existing row's `role` column in place. The MCP session id is an orthogonal transport-level artifact and MUST NOT be conflated with `agent_id`.
 
-When `tmux_pane_id` is provided (a non-empty, non-whitespace string), its value MUST be persisted. If omitted or blank, the column value in the reuse case MUST remain the previously-persisted value (i.e. omission means "no change"); in the create-new case it MUST be NULL.
+When a registration attempt resolves a usable `tmux_pane_id`, its value MUST be persisted. If the attempt resolves no new pane id, the column value in the reuse case MUST remain the previously-persisted value; in the create-new case it MUST be NULL.
 
 The hint-on-missing-pane-id semantics (see Requirement "register_agent response hints when tmux_pane_id missing") apply unchanged.
+
+#### Scenario: Auto-detected pane is persisted during register_agent
+
+- **GIVEN** the caller invokes `register_agent({ model, name: 'alice' })`
+- **AND** internal built-in matcher selection converges on a single pane `%1902`
+- **WHEN** the call is processed and succeeds
+- **THEN** the stored `tmux_pane_id` is `'%1902'`
+- **AND** the response object MUST NOT have a `hint` field
 
 #### Scenario: New identity creates a fresh agent_id
 
@@ -196,18 +197,20 @@ The hint-on-missing-pane-id semantics (see Requirement "register_agent response 
 - **AND** that row's `role` is now `'frontend'`
 - **AND** that row's `last_processed_event_id` (mailbox cursor) is preserved across the role change
 
-#### Scenario: Reuse updates tmux_pane_id when provided
+#### Scenario: Reuse updates tmux_pane_id when a later registration finds a new unique pane
 
 - **GIVEN** agent `(default, alice)` exists with `agent_id='X'`, `role='backend'`, and `tmux_pane_id='%42'`
-- **WHEN** a new session calls `register_agent({ model, role: 'backend', name: 'alice', tmux_pane_id: '%99' })`
+- **AND** a later registration attempt auto-detects `%99` as the unique pane for the same identity
+- **WHEN** a new session calls `register_agent({ model, role: 'backend', name: 'alice' })`
 - **THEN** response is `{ agent_id: 'X', team: 'default' }`
 - **AND** the row's `tmux_pane_id` is now `'%99'`
 
 #### Scenario: Reuse preserves tmux_pane_id when omitted
 
 - **GIVEN** agent `(default, alice)` exists with `tmux_pane_id='%42'`
-- **WHEN** a new session calls `register_agent({ model, role: 'backend', name: 'alice' })` (omitting `tmux_pane_id`)
-- **THEN** the row's `tmux_pane_id` remains `'%42'` (omission = no change)
+- **WHEN** a new session calls `register_agent({ model, role: 'backend', name: 'alice' })`
+- **AND** that registration attempt does not resolve any new pane
+- **THEN** the row's `tmux_pane_id` remains `'%42'`
 
 #### Scenario: Team change produces new agent_id
 
@@ -240,12 +243,13 @@ The hint-on-missing-pane-id semantics (see Requirement "register_agent response 
 
 Any subsequent `register_agent` call for a `(team, name)` pair that already has a row in the agents table SHALL upsert metadata on that existing row without producing a new `agent_id`, regardless of whether the call originates from the same MCP session or a new one, and regardless of whether the `role` parameter on the subsequent call matches the persisted `role`.
 
-Upsert fields: `role`, `model`, `last_seen_at` are overwritten by the incoming values; `tmux_pane_id` is overwritten only when the caller provides a non-blank value; `agent_id`, `registered_at`, and `last_processed_event_id` are preserved.
+Upsert fields: `role`, `model`, `last_seen_at` are overwritten by the incoming values; `tmux_pane_id` is overwritten only when the current registration attempt resolves a usable pane id; `agent_id`, `registered_at`, and `last_processed_event_id` are preserved.
 
-#### Scenario: Same session re-registers with new tmux_pane_id
+#### Scenario: Same session re-registers and replaces tmux_pane_id after a new detector result
 
 - **GIVEN** session `sess-A` has registered `(default, alice)` with `role='backend'`, `tmux_pane_id='%42'` and received `agent_id='X'`
-- **WHEN** the same session calls `register_agent({ model, role: 'backend', name: 'alice', tmux_pane_id: '%99' })`
+- **AND** a later registration attempt auto-detects `%99` as the unique pane for that same identity
+- **WHEN** the same session calls `register_agent({ model, role: 'backend', name: 'alice' })`
 - **THEN** response is `{ agent_id: 'X', team: 'default' }`
 - **AND** the row's `tmux_pane_id` becomes `'%99'`
 
@@ -384,25 +388,23 @@ Validation failures SHALL return `{error: 'invalid_delivery', reason: ...}` with
 
 ### Requirement: register_codex_self autodetects and registers a Codex app-server delivery
 
-The daemon SHALL expose a tool `register_codex_self` for Codex remote sessions.  The tool accepts human-facing identity fields such as `name`, `team`, and `role`, plus optional `ws_url`, `auth_token_ref`, `thread_id`, `tmux_pane_id`, `cwd`, `tty`, and `title_contains`.  It SHALL:
+The daemon SHALL expose a tool `register_codex_self` for Codex remote sessions.  The tool accepts human-facing identity fields such as `name`, `team`, and `role`, plus optional `ws_url`, `auth_token_ref`, and `thread_id`.  It SHALL:
 
 1. Connect to the Codex app-server websocket, defaulting `ws_url` to `ws://127.0.0.1:8799` when not provided.
 2. Initialize the Codex protocol.
 3. If `thread_id` is provided, attempt `thread/resume` only for that thread id.
 4. If `thread_id` is omitted, call `thread/loaded/list`, attempt `thread/resume` against the loaded thread ids, and return `{ error: 'thread_id_required', detail: { ws_url, thread_ids: [...] } }` instead of registering any thread.
 5. Register the caller as `delivery.kind='codex-appserver'` only after a caller-supplied `thread_id` has been confirmed resumable.
-6. Persist a `tmux_pane_id` alongside the Codex delivery when either:
-   - the caller supplied a usable `tmux_pane_id`, or
-   - the caller omitted `tmux_pane_id` and the tool can derive a single Codex tmux pane via the existing Codex pane-detection logic, optionally narrowed by `cwd`, `tty`, or `title_contains`.
+6. Best-effort derive a single Codex tmux pane internally via the existing Codex pane-detection logic and persist it alongside the Codex delivery when successful.
 7. Treat tmux pane capture as best-effort.  If pane detection returns `not_found`, `ambiguous_match`, or `tmux_unavailable`, the tool MUST still succeed with the Codex delivery registration and MUST NOT fail the overall call solely because tmux pane discovery was incomplete.
 
-The daemon MUST NOT infer the caller's current Codex thread solely from the set of loaded or resumable threads.  When a usable `tmux_pane_id` is supplied directly, the tool MUST prefer that explicit value and MUST NOT replace it with detector output.  When no new usable pane id is available, the persisted `tmux_pane_id` follows the normal registration semantics: omit on first insert yields `NULL`, omit on re-registration preserves the existing value.
+The daemon MUST NOT infer the caller's current Codex thread solely from the set of loaded or resumable threads.  The tool surface MUST NOT accept caller-supplied tmux pane ids or pane-detect hints.  When no new usable pane id is available, the persisted `tmux_pane_id` follows the normal registration semantics: omit on first insert yields `NULL`, omit on re-registration preserves the existing value.
 
 The tool is Codex-only.  If the websocket endpoint is unreachable or does not speak the expected Codex protocol, the tool SHALL return `{error: 'unsupported_client', detail: { expected: 'codex', reason: ..., ws_url, cause? }}` rather than guessing.
 
 #### Scenario: register_codex_self registers a caller-supplied thread_id and detected pane
 
-- **GIVEN** the caller invokes `register_codex_self({ name: 'lead', team: 'default', role: 'worker', thread_id: '11111111-1111-4111-8111-111111111111', cwd: '/workspace/project' })`
+- **GIVEN** the caller invokes `register_codex_self({ name: 'lead', team: 'default', role: 'worker', thread_id: '11111111-1111-4111-8111-111111111111' })`
 - **AND** `thread/resume` succeeds for `11111111-1111-4111-8111-111111111111`
 - **AND** Codex tmux pane detection returns a single pane `%1902`
 - **WHEN** the tool completes successfully
@@ -410,17 +412,15 @@ The tool is Codex-only.  If the websocket endpoint is unreachable or does not sp
 - **AND** the caller's `agents` row is persisted with `delivery.kind='codex-appserver'`
 - **AND** the caller's `agents` row is persisted with `tmux_pane_id='%1902'`
 
-#### Scenario: explicit tmux_pane_id overrides pane detection
+#### Scenario: register_codex_self rejects explicit tmux override inputs at the tool layer
 
-- **GIVEN** the caller invokes `register_codex_self({ name: 'lead', thread_id: '11111111-1111-4111-8111-111111111111', tmux_pane_id: '%42', cwd: '/workspace/project' })`
-- **AND** `thread/resume` succeeds for `11111111-1111-4111-8111-111111111111`
-- **WHEN** the tool completes successfully
-- **THEN** the caller's `agents` row is persisted with `tmux_pane_id='%42'`
-- **AND** the tool does not require detector output to accept the pane value
+- **WHEN** a caller invokes `register_codex_self({ name: 'lead', thread_id: '11111111-1111-4111-8111-111111111111', tmux_pane_id: '%42' })`
+- **THEN** the MCP tool schema rejects the request as carrying an unknown top-level key
+- **AND** the tool does not accept caller-supplied tmux pane data
 
 #### Scenario: ambiguous pane detection does not block codex registration
 
-- **GIVEN** the caller invokes `register_codex_self({ name: 'lead', thread_id: '11111111-1111-4111-8111-111111111111', cwd: '/workspace/project' })`
+- **GIVEN** the caller invokes `register_codex_self({ name: 'lead', thread_id: '11111111-1111-4111-8111-111111111111' })`
 - **AND** `thread/resume` succeeds for `11111111-1111-4111-8111-111111111111`
 - **AND** Codex tmux pane detection returns `ambiguous_match`
 - **WHEN** the tool completes successfully

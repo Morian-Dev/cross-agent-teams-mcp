@@ -18,27 +18,17 @@ url = "http://127.0.0.1:9100/mcp"
 Authorization = "Bearer YOUR_TOKEN"
 ```
 
-## 方案 1, 使用 tmux pane 作为 poke delivery
+## 方案 1, 使用 tmux 作为兜底 delivery
 
-如果你运行 Codex CLI 的进程本身就在 tmux pane 里, 并且希望 `poke` 直接把文本注入当前 pane, 第一次 `register_agent` 时应该上报 `tmux_pane_id`.
+`register_agent` 现在不再在注册时内部探测 tmux pane.  调用方也不再向 `register_agent` 传 `tmux_pane_id`.
 
-先在 shell 里取 pane id.  优先用 `$TMUX_PANE`, 这是 tmux 按进程注入的可靠值:
-
-    echo "$TMUX_PANE"
-
-输出通常类似 `%42`.  不要把 `tmux display-message -p '#{pane_id}'` 当成首选, 它返回的是当前聚焦 pane, 多 agent 共用 session 时可能拿到别的 pane.  只有 `$TMUX_PANE` 为空时, 才把它当 fallback.
-
-把结果传给 `register_agent`:
-
-    register_agent({ model: "...", role: "...", team: "...", tmux_pane_id: "%42" })
-
-如果你省略 `tmux_pane_id`, daemon 会在响应里附带一个 `hint`, 提醒你重新注册 pane id.  这个 hint 只针对依赖 tmux 的 delivery.  非 tmux delivery 不会收到这条提示.
+如果注册成功但响应里带了 `hint`, 说明当前还没有绑定可用的 `tmux_pane_id`.  这时调用 `bind_runtime_identity(...)` 完成 runtime 绑定.  `detect_tmux_pane(...)` 只作为调试工具, 不再负责写 registry.
 
 ## 方案 2, 使用 Codex app-server websocket delivery
 
 如果你希望 daemon 通过 Codex 自带的 websocket app-server 唤醒一个正在运行的 Codex thread, 可以在 agent 侧启动 app-server, 然后把 `delivery.kind='codex-appserver'` 注册到 daemon.
 
-优先推荐直接用高层工具 `register_codex_self`.  它会把你显式提供的 `thread_id` 注册成 `codex-appserver` delivery, 同时 best-effort 登记 `tmux_pane_id`: 显式传入的 pane id 优先, 否则会按 Codex matcher 尝试发现唯一 tmux pane.
+优先推荐直接用高层工具 `register_codex_self`.  它会把你显式提供的 `thread_id` 注册成 `codex-appserver` delivery, 但不会自动绑定 tmux pane.  如果你还需要 tmux fallback delivery, 再单独调用 `bind_runtime_identity(...)`.
 
 `register_codex_self` 不会再根据 loaded threads 自动猜“当前调用者自己的 thread”.  daemon 没有协议级信号把当前 MCP 调用者和某个 Codex loaded thread 强绑定.  如果你省略 `thread_id`, 工具会返回 `thread_id_required`, 并把当前可恢复的 thread ids 放在 detail 里供排查, 但不会继续注册.
 
@@ -86,32 +76,6 @@ register_codex_self({
 })
 ```
 
-如果你已经知道自己的 pane id, 可以直接传:
-
-```text
-register_codex_self({
-  name: "lead",
-  team: "default",
-  role: "worker",
-  thread_id: "11111111-1111-4111-8111-111111111111",
-  tmux_pane_id: "%42"
-})
-```
-
-如果调用工具的 shell pane 和可见的 Codex UI pane 可能不同, 可以传 hint 缩小探测范围:
-
-```text
-register_codex_self({
-  name: "lead",
-  team: "default",
-  role: "worker",
-  thread_id: "11111111-1111-4111-8111-111111111111",
-  cwd: "/workspace/project",
-  tty: "ttys026",
-  title_contains: "project"
-})
-```
-
 可选覆盖:
 
 ```text
@@ -138,10 +102,9 @@ register_codex_self({
 
 补充说明:
 
-- `tmux_pane_id` 明确传入时会直接持久化
-- 未传 `tmux_pane_id` 时, 工具会尝试按 Codex pane detector 写入唯一 pane
-- `cwd`, `tty`, `title_contains` 只是 detector hint, 不会写入数据库
-- detector 找不到唯一 pane 不会让注册失败, 只是这次不会更新 `tmux_pane_id`
+- `register_codex_self` 只负责 Codex delivery 绑定
+- `bind_runtime_identity` 才是写入 `tmux_pane_id` 的路径
+- `detect_tmux_pane(...)` 仅用于调试
 
 如果没有 loaded thread, 工具会返回:
 

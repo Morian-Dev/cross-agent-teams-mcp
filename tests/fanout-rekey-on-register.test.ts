@@ -57,7 +57,7 @@ describe('fanout re-key on register_agent', () => {
     const b = await boot(); teardown.push(() => b.cleanup()); teardown.push(() => b.app.close())
     const { c, t } = await connectClient(b.host, b.port)
     teardown.push(async () => { await t.close(); await c.close() })
-    const reg = parseTool(await c.callTool({ name: 'register_agent', arguments: { model: 'opus', role: 'backend', name: 'alice', tmux_pane_id: '%42' } }))
+    const reg = parseTool(await c.callTool({ name: 'register_agent', arguments: { model: 'opus', role: 'backend', name: 'alice' } }))
     const sessionId = t.sessionId!
     const peek = b.fanout.peek()
     expect(peek).toEqual([{ agent_id: reg.agent_id, team: 'default' }])
@@ -68,7 +68,7 @@ describe('fanout re-key on register_agent', () => {
     const b = await boot(); teardown.push(() => b.cleanup()); teardown.push(() => b.app.close())
 
     const first = await connectClient(b.host, b.port)
-    const regA = parseTool(await first.c.callTool({ name: 'register_agent', arguments: { model: 'opus', role: 'backend', name: 'alice', tmux_pane_id: '%42' } }))
+    const regA = parseTool(await first.c.callTool({ name: 'register_agent', arguments: { model: 'opus', role: 'backend', name: 'alice' } }))
     const peekA = b.fanout.peek()
     expect(peekA).toEqual([{ agent_id: regA.agent_id, team: 'default' }])
 
@@ -78,7 +78,7 @@ describe('fanout re-key on register_agent', () => {
 
     const second = await connectClient(b.host, b.port)
     teardown.push(async () => { await second.t.close(); await second.c.close() })
-    const regB = parseTool(await second.c.callTool({ name: 'register_agent', arguments: { model: 'opus', role: 'backend', name: 'alice', tmux_pane_id: '%99' } }))
+    const regB = parseTool(await second.c.callTool({ name: 'register_agent', arguments: { model: 'opus', role: 'backend', name: 'alice' } }))
     expect(regB.agent_id).toBe(regA.agent_id)
     const peekB = b.fanout.peek()
     expect(peekB).toEqual([{ agent_id: regA.agent_id, team: 'default' }])
@@ -87,7 +87,7 @@ describe('fanout re-key on register_agent', () => {
   it('session close detaches the agent_id sink', async () => {
     const b = await boot(); teardown.push(() => b.cleanup()); teardown.push(() => b.app.close())
     const { c, t } = await connectClient(b.host, b.port)
-    const reg = parseTool(await c.callTool({ name: 'register_agent', arguments: { model: 'opus', role: 'backend', name: 'alice', tmux_pane_id: '%42' } }))
+    const reg = parseTool(await c.callTool({ name: 'register_agent', arguments: { model: 'opus', role: 'backend', name: 'alice' } }))
     expect(b.fanout.peek().map(p => p.agent_id)).toContain(reg.agent_id)
     // terminateSession issues a DELETE so the server transport fires onclose
     await t.terminateSession()

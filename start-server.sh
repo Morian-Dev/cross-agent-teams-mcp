@@ -17,7 +17,47 @@ APPSERVER_HEALTH_URL="${APPSERVER_HEALTH_URL:-http://${APPSERVER_HOST}:${APPSERV
 APPSERVER_PID_FILE="${APPSERVER_PID_FILE:-$LOG_DIR/codex-app-server.pid}"
 APPSERVER_LOG_FILE="${APPSERVER_LOG_FILE:-$LOG_DIR/codex-app-server.log}"
 
+OPENCODE_HOST="${OPENCODE_HOST:-127.0.0.1}"
+OPENCODE_PORT="${OPENCODE_PORT:-4096}"
+OPENCODE_URL="${OPENCODE_URL:-http://${OPENCODE_HOST}:${OPENCODE_PORT}}"
+OPENCODE_HEALTH_URL="${OPENCODE_HEALTH_URL:-http://${OPENCODE_HOST}:${OPENCODE_PORT}/global/health}"
+OPENCODE_PID_FILE="${OPENCODE_PID_FILE:-$LOG_DIR/opencode-server.pid}"
+OPENCODE_LOG_FILE="${OPENCODE_LOG_FILE:-$LOG_DIR/opencode-server.log}"
+
 WAIT_TIMEOUT_SECONDS="${WAIT_TIMEOUT_SECONDS:-20}"
+
+RUN_APP_SERVER=1
+RUN_OPENCODE_SERVER=1
+
+print_usage() {
+  cat <<'EOF'
+usage: ./start-server.sh [--daemon-only] [--skip-app-server] [--skip-opencode-server]
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    --daemon-only)
+      RUN_APP_SERVER=0
+      RUN_OPENCODE_SERVER=0
+      ;;
+    --skip-app-server)
+      RUN_APP_SERVER=0
+      ;;
+    --skip-opencode-server)
+      RUN_OPENCODE_SERVER=0
+      ;;
+    --help|-h)
+      print_usage
+      exit 0
+      ;;
+    *)
+      echo "unknown argument: $arg" >&2
+      print_usage >&2
+      exit 2
+      ;;
+  esac
+done
 
 mkdir -p "$LOG_DIR"
 
@@ -84,15 +124,24 @@ read_daemon_pid() {
 }
 
 print_health_summary() {
-  local daemon_port daemon_health_url app_health_body daemon_health_body
+  local daemon_port daemon_health_url daemon_health_body
   daemon_port="$(read_daemon_port "$DAEMON_PID_FILE")"
   daemon_health_url="http://${DAEMON_HOST}:${daemon_port}/health"
-  app_health_body="$(curl -fsS "$APPSERVER_HEALTH_URL")"
   daemon_health_body="$(curl -fsS "$daemon_health_url")"
 
   echo "health check passed"
-  echo "  codex app-server: $APPSERVER_HEALTH_URL"
-  echo "  response: $app_health_body"
+  if (( RUN_APP_SERVER == 1 )); then
+    local app_health_body
+    app_health_body="$(curl -fsS "$APPSERVER_HEALTH_URL")"
+    echo "  codex app-server: $APPSERVER_HEALTH_URL"
+    echo "  response: $app_health_body"
+  fi
+  if (( RUN_OPENCODE_SERVER == 1 )); then
+    local opencode_health_body
+    opencode_health_body="$(curl -fsS "$OPENCODE_HEALTH_URL")"
+    echo "  opencode server: $OPENCODE_HEALTH_URL"
+    echo "  response: $opencode_health_body"
+  fi
   echo "  daemon: $daemon_health_url"
   echo "  response: $daemon_health_body"
   echo "server startup succeeded"
@@ -120,6 +169,30 @@ start_app_server() {
   fi
 
   echo "codex app-server started in background, pid=$pid, ws=$APPSERVER_WS_URL"
+}
+
+start_opencode_server() {
+  cleanup_plain_pid_file "$OPENCODE_PID_FILE"
+
+  if curl -fsS "$OPENCODE_HEALTH_URL" >/dev/null 2>&1; then
+    echo "opencode server already healthy at $OPENCODE_URL"
+    return 0
+  fi
+
+  : >"$OPENCODE_LOG_FILE"
+  nohup opencode serve --port "$OPENCODE_PORT" --hostname "$OPENCODE_HOST" >>"$OPENCODE_LOG_FILE" 2>&1 &
+  local pid=$!
+  echo "$pid" >"$OPENCODE_PID_FILE"
+
+  if ! wait_for_http "$OPENCODE_HEALTH_URL" "opencode server"; then
+    kill "$pid" >/dev/null 2>&1 || true
+    rm -f "$OPENCODE_PID_FILE"
+    echo "opencode server log:" >&2
+    tail -n 50 "$OPENCODE_LOG_FILE" >&2 || true
+    return 1
+  fi
+
+  echo "opencode server started in background, pid=$pid, url=$OPENCODE_URL"
 }
 
 start_daemon() {
@@ -185,7 +258,12 @@ echo "building project with pnpm build"
   pnpm build
 )
 
-start_app_server
+if (( RUN_APP_SERVER == 1 )); then
+  start_app_server
+fi
+if (( RUN_OPENCODE_SERVER == 1 )); then
+  start_opencode_server
+fi
 start_daemon
 print_health_summary
 

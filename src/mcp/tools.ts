@@ -23,6 +23,7 @@ import type { SseFanout } from '../daemon/sse-fanout.js'
 import type { ChannelWakeFanout } from '../daemon/channel-wake-fanout.js'
 import { SubscribeChannelWakeService } from './subscribe-channel-wake.js'
 import { BindChannelService } from './bind-channel.js'
+import { BindOpencodeSessionService } from './bind-opencode-session.js'
 import { BindRuntimeIdentityService } from './bind-runtime-identity.js'
 import { RegisterCodexSelfService } from './register-codex-self.js'
 import { detectTmuxPane } from '../daemon/tmux-pane-detect.js'
@@ -742,6 +743,34 @@ export function registerBusinessTools(
       }
     )
   }
+
+  // bind_opencode_session — self-binding for opencode hosts
+  const bindOpencodeSvc = new BindOpencodeSessionService(db)
+  server.registerTool(
+    'bind_opencode_session',
+    {
+      title: 'Bind opencode session to caller',
+      description: [
+        'Bind the caller session\'s agent row to an opencode server session.',
+        'Call this after starting an opencode session to enable server-based poke delivery.',
+        'The base_url must be a loopback address (127.0.0.1, localhost, or ::1).',
+        'The session_id is the opencode session identifier from the server.'
+      ].join(' '),
+      inputSchema: {
+        base_url: z.string().min(1),
+        session_id: z.string().min(1)
+      }
+    },
+    async (args: { base_url: string; session_id: string }) => {
+      const who = requireAgent()
+      if (typeof who !== 'string') return toText(who)
+      return run(() => bindOpencodeSvc.bind({
+        callerAgentId: who,
+        base_url: args.base_url,
+        session_id: args.session_id
+      }))
+    }
+  )
 
   // pending_contract_events
   server.registerTool(
