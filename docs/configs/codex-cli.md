@@ -24,6 +24,14 @@ Authorization = "Bearer YOUR_TOKEN"
 
 如果注册成功但响应里仍然带了 `hint`, 说明这次自动 runtime 绑定没有收敛, 当前还没有可用的 `tmux_pane_id`.  这时调用 `bind_runtime_identity(...)` 完成显式绑定.  `detect_tmux_pane(...)` 只作为调试工具, 不再负责写 registry.
 
+如果你的 Codex 使用场景是“模型自己调用 MCP 工具”, 而不是外部客户端包装自动传参, 一个稳定的本地兜底方案是直接运行仓库里的注册脚本:
+
+```bash
+node scripts/register-codex-self.mjs --name gpt --team default --role default --model gpt-5
+```
+
+这个脚本会先读取当前 tmux pane 的 tty, 再在该 tty 上定位真实 Codex UI 进程 pid, 最后把 `ui_pid` 一起带进 `register_agent`.  对多 Codex pane 并行的场景, 这比只靠 `detect_tmux_pane({ agent: "codex" })` 更稳.
+
 ## 方案 2, 使用 Codex app-server websocket delivery
 
 如果你希望 daemon 通过 Codex 自带的 websocket app-server 唤醒一个正在运行的 Codex thread, 可以在 agent 侧启动 app-server, 然后把 `delivery.kind='codex-appserver'` 注册到 daemon.
