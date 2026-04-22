@@ -5,7 +5,7 @@ import { createProxyServer, relayChannelWake } from '../src/proxy.js'
 import { buildStartupHint } from '../src/cli.js'
 
 describe('proxy startup channel notification', () => {
-  it('emits a claude/channel notification containing csid and bind_channel instruction', async () => {
+  it('emits a claude/channel notification containing csid and Claude self-registration guidance', async () => {
     const server = createProxyServer()
     const client = new Client({ name: 'fake-claude', version: '0.0.0' })
     const [clientT, serverT] = InMemoryTransport.createLinkedPair()
@@ -29,7 +29,10 @@ describe('proxy startup channel notification', () => {
     expect(hit, `got ${JSON.stringify(received)}`).toBeDefined()
     const params = hit!.params as { content: string; meta: Record<string, string> }
     expect(params.content).toContain(csid)
+    expect(params.content).toContain('register_claude_self')
     expect(params.content).toContain('bind_channel')
+    expect(params.content).toContain('register_agent')
+    expect(params.content).toContain('curl')
     expect(params.meta.kind).toBe('startup_bind_hint')
     // Brand-contract assertions
     expect(params.content).toContain('cross-agent-teams-mcp')

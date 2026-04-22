@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +11,13 @@ import { openDb } from '../src/storage/db.js'
 import { applySchema } from '../src/storage/schema.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-register-delivery-'))
+const { detectTmuxPaneMock } = vi.hoisted(() => ({
+  detectTmuxPaneMock: vi.fn(),
+}))
+
+vi.mock('../src/daemon/tmux-pane-detect.js', () => ({
+  detectTmuxPane: detectTmuxPaneMock,
+}))
 
 async function parseTool(resp: unknown): Promise<Record<string, unknown>> {
   const result = resp as { content: Array<{ text: string }> }
@@ -22,9 +29,11 @@ describe('register_agent delivery integration', () => {
   afterEach(() => {
     cleanups.forEach(d => rmSync(d, { recursive: true, force: true }))
     cleanups.length = 0
+    detectTmuxPaneMock.mockReset()
   })
 
   async function setup(channelWakeFanout?: ChannelWakeFanout) {
+    detectTmuxPaneMock.mockResolvedValue({ error: 'not_found', candidates: [] })
     const dir = tmp()
     cleanups.push(dir)
     const dbPath = join(dir, 'data.db')

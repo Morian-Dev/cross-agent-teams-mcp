@@ -123,6 +123,14 @@ function suppressTmuxHint(
   return args.delivery?.kind !== undefined && args.delivery.kind !== 'none'
 }
 
+function defaultClaudeSelfModel(
+  clientInfo: SessionClientInfo | undefined
+): string {
+  const raw = `${clientInfo?.name ?? ''} ${clientInfo?.version ?? ''}`.trim()
+  if (/claude/i.test(raw)) return raw
+  return 'claude-code'
+}
+
 export function buildAutoPokeHint(
   row: { name?: string | null } | undefined,
   fromAgentId: string
@@ -277,7 +285,7 @@ export function registerBusinessTools(
     return 'ok' in bound && bound.ok
   }
 
-  const registerAgentArgsSchema = z.object({
+  const registerAgentInputSchema = z.object({
     model: z.string(),
     name: z.string().min(1).refine(v => v.trim().length > 0, { message: 'name must not be empty' }),
     role: z.string().optional(),
@@ -291,7 +299,9 @@ export function registerBusinessTools(
     ws_url: z.string().optional(),
     auth_token_ref: z.string().min(1).optional(),
     delivery: deliverySchema.optional(),
-  }).strict().superRefine((value, ctx) => {
+  }).strict()
+
+  const registerAgentArgsSchema = registerAgentInputSchema.superRefine((value, ctx) => {
     const hasCodexFields =
       value.thread_id !== undefined ||
       value.ws_url !== undefined ||
@@ -327,6 +337,106 @@ export function registerBusinessTools(
       })
     }
   })
+
+  const registerClaudeSelfInputSchema = z.object({
+    name: z.string().min(1).refine(v => v.trim().length > 0, { message: 'name must not be empty' }),
+    model: z.string().optional(),
+    role: z.string().optional(),
+    team: z.string().optional(),
+    ui_pid: z.number().int().positive().optional(),
+    channel_session_id: z.string().min(1).optional(),
+  }).strict()
+
+  async function executeRegister(
+    args: {
+      client?: ClientKind
+      model: string
+      name: string
+      role?: string
+      team?: string
+      ui_pid?: number
+      channel_session_id?: string
+      base_url?: string
+      session_id?: string
+      thread_id?: string
+      ws_url?: string
+      auth_token_ref?: string
+      delivery?: { kind: string; [key: string]: unknown }
+    }
+  ): Promise<unknown> {
+    let nativeDeliveryBound = suppressTmuxHint(args)
+    const bindChannelSvc = channelWakeFanout
+      ? new BindChannelService(db, channelWakeFanout)
+      : undefined
+    const bindOpencodeSvc = new BindOpencodeSessionService(db)
+    const connectionId = getSessionId?.() ?? caller()
+    if (!connectionId) return { error: 'unknown_agent' }
+    const res =
+      args.client === 'codex' && args.delivery === undefined
+        ? await registerCodexSelfSvc.register({
+            connection_id: connectionId,
+            name: args.name,
+            model: args.model,
+            role: args.role,
+            team: args.team,
+            thread_id: args.thread_id,
+            ws_url: args.ws_url,
+            auth_token_ref: args.auth_token_ref,
+          })
+        : registerSvc.register({
+            connection_id: connectionId,
+            client: args.client,
+            model: args.model,
+            name: args.name,
+            role: args.role,
+            team: args.team,
+            delivery: args.delivery,
+          })
+    if ('thread_id' in res && 'agent_id' in res) {
+      nativeDeliveryBound = true
+    }
+    if ('agent_id' in res) {
+      if (onRegisterSuccess) {
+        try { onRegisterSuccess(res.agent_id, res.team) } catch { /* best-effort */ }
+      } else if (fanout) {
+        try { fanout.rebind(res.agent_id, res.team) } catch { /* best-effort */ }
+      }
+      if (args.client === 'claude-code' && args.channel_session_id !== undefined) {
+        const channelBind = bindChannelSvc
+          ? bindChannelSvc.bind({
+              callerAgentId: res.agent_id,
+              channel_session_id: args.channel_session_id,
+            })
+          : { error: 'unknown_channel_session' as const }
+        if ('ok' in channelBind && channelBind.ok) {
+          nativeDeliveryBound = true
+        } else {
+          return channelBind
+        }
+      }
+      if (args.client === 'opencode' && args.base_url !== undefined && args.session_id !== undefined) {
+        const opencodeBind = bindOpencodeSvc.bind({
+          callerAgentId: res.agent_id,
+          base_url: args.base_url,
+          session_id: args.session_id,
+        })
+        if ('ok' in opencodeBind && opencodeBind.ok) {
+          nativeDeliveryBound = true
+        } else {
+          return opencodeBind
+        }
+      }
+      const autoBound = await autoBindRuntimeIdentity(args, res.agent_id)
+      if (autoBound) return res
+      if (!nativeDeliveryBound) {
+        return {
+          ...res,
+          hint: "No usable tmux_pane_id is bound yet — automatic runtime binding did not converge for this session, so cross-agent poke delivery via tmux is still off. Call `bind_runtime_identity(...)` to bind explicitly, or use `detect_tmux_pane(...)` for debugging. Claude Code users who loaded the cross-agent-teams-mcp channel plugin can also route pokes via channel_session_id — that path does not require tmux binding."
+        }
+      }
+    }
+    return res
+  }
 
   // register_agent — bootstrap: callable before an agents row exists for this session
   server.registerTool(
@@ -385,7 +495,7 @@ export function registerBusinessTools(
         '`detect_tmux_pane(...)` remains available as a debugging aid for ambiguous or missing matches, but it does not write registry state by itself.',
         'When registration still has no usable `tmux_pane_id`, tmux-based poke delivery stays unavailable until automatic or explicit runtime binding succeeds.'
       ].join(' '),
-      inputSchema: registerAgentArgsSchema
+      inputSchema: registerAgentInputSchema
     },
     async (args: {
       client?: ClientKind
@@ -399,83 +509,39 @@ export function registerBusinessTools(
       auth_token_ref?: string
       delivery?: { kind: string; [key: string]: unknown }
     }) => {
-      // connection_id for collision detection must be the stable session id,
-      // NOT agentIdHolder.current (which becomes the agent_id after success).
-      const connectionId = getSessionId?.() ?? caller()
-      if (!connectionId) return toText({ error: 'unknown_agent' })
-      return run(async () => {
-        let nativeDeliveryBound = suppressTmuxHint(args)
-        const bindChannelSvc = channelWakeFanout
-          ? new BindChannelService(db, channelWakeFanout)
-          : undefined
-        const bindOpencodeSvc = new BindOpencodeSessionService(db)
-        const res =
-          args.client === 'codex' && args.delivery === undefined
-            ? await registerCodexSelfSvc.register({
-                connection_id: connectionId,
-                name: args.name,
-                model: args.model,
-                role: args.role,
-                team: args.team,
-                thread_id: args.thread_id,
-                ws_url: args.ws_url,
-                auth_token_ref: args.auth_token_ref,
-              })
-            : registerSvc.register({
-                connection_id: connectionId,
-                client: args.client,
-                model: args.model,
-                name: args.name,
-                role: args.role,
-                team: args.team,
-                delivery: args.delivery,
-              })
-        if ('thread_id' in res && 'agent_id' in res) {
-          nativeDeliveryBound = true
-        }
-        if ('agent_id' in res) {
-          if (onRegisterSuccess) {
-            try { onRegisterSuccess(res.agent_id, res.team) } catch { /* best-effort */ }
-          } else if (fanout) {
-            try { fanout.rebind(res.agent_id, res.team) } catch { /* best-effort */ }
-          }
-          if (args.client === 'claude-code' && args.channel_session_id !== undefined) {
-            const channelBind = bindChannelSvc
-              ? bindChannelSvc.bind({
-                  callerAgentId: res.agent_id,
-                  channel_session_id: args.channel_session_id,
-                })
-              : { error: 'unknown_channel_session' as const }
-            if ('ok' in channelBind && channelBind.ok) {
-              nativeDeliveryBound = true
-            } else {
-              return channelBind
-            }
-          }
-          if (args.client === 'opencode' && args.base_url !== undefined && args.session_id !== undefined) {
-            const opencodeBind = bindOpencodeSvc.bind({
-              callerAgentId: res.agent_id,
-              base_url: args.base_url,
-              session_id: args.session_id,
-            })
-            if ('ok' in opencodeBind && opencodeBind.ok) {
-              nativeDeliveryBound = true
-            } else {
-              return opencodeBind
-            }
-          }
-          const autoBound = await autoBindRuntimeIdentity(args, res.agent_id)
-          if (autoBound) return res
-          if (!nativeDeliveryBound) {
-            return {
-              ...res,
-              hint: "No usable tmux_pane_id is bound yet — automatic runtime binding did not converge for this session, so cross-agent poke delivery via tmux is still off. Call `bind_runtime_identity(...)` to bind explicitly, or use `detect_tmux_pane(...)` for debugging. Claude Code users who loaded the cross-agent-teams-mcp channel plugin can also route pokes via channel_session_id — that path does not require tmux binding."
-            }
-          }
-        }
-        return res
-      })
+      return run(async () => executeRegister(args))
     }
+  )
+
+  server.registerTool(
+    'register_claude_self',
+    {
+      title: 'Register Claude Code session',
+      description: [
+        'Register the current Claude Code MCP session as an agent and optionally bind the live channel_session_id in one call.',
+        'Prefer this helper inside Claude Code when you want to avoid session-mismatch issues caused by external HTTP or curl registration.',
+        'This tool always writes on the caller\'s current MCP session, so follow-up tools like get_inbox use the same identity immediately.',
+        'If channel_session_id is provided, it binds claude-channel delivery through the same path used by register_agent({ client: "claude-code", ... }).',
+        'model is optional here; when omitted it falls back to a Claude-specific default.'
+      ].join(' '),
+      inputSchema: registerClaudeSelfInputSchema
+    },
+    async (args: {
+      name: string
+      model?: string
+      role?: string
+      team?: string
+      ui_pid?: number
+      channel_session_id?: string
+    }) => run(async () => executeRegister({
+      client: 'claude-code',
+      name: args.name,
+      model: args.model ?? defaultClaudeSelfModel(getSessionClientInfo?.()),
+      role: args.role,
+      team: args.team,
+      ui_pid: args.ui_pid,
+      channel_session_id: args.channel_session_id,
+    }))
   )
 
   // list_agents

@@ -14,9 +14,12 @@ cross-agent-teams-proxy --daemon-url http://localhost:8787 --agent-team default 
 
 或通过环境变量 `CROSS_AGENT_TEAMS_MCP_DAEMON_URL` 提供 daemon URL.
 
-## 持久化
+## Session model
 
-proxy 将生成的 `channel_session_id` 持久化到 `<cache_dir>/cross-agent-teams-channel/<team>-<name>.json`, 其中 `<cache_dir>` 是 `$XDG_CACHE_HOME` 或 `~/.cache` (POSIX) / `%LOCALAPPDATA%` (Windows).
+- proxy 每次启动都会生成新的 `channel_session_id`, 不做持久化。
+- proxy 连 daemon 时注册的是自己的 `__channel_proxy__` session, 只负责 `subscribe_channel_wake(...)` 和中继 `notifications/claude/channel`。
+- owner Claude host 需要在自己的当前 MCP session 里完成自注册。  推荐直接调用 `register_claude_self(...)`, 或调用 `register_agent({ client: "claude-code", ... })`。
+- 不要用外部 `curl` 给 Claude host 代注册。  那样会新建另一个 daemon-side MCP session, 不能替代当前 Claude 会话的身份绑定。
 
 ## 安全
 

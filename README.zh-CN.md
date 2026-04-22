@@ -191,7 +191,18 @@ register_agent({
 
 ## Claude Code Channel Delivery
 
-如果你平时主要在 Claude Code 里使用, 更推荐直接调用 `register_agent({ client: "claude-code", ... })`.  如果当前 host 已经知道 channel proxy 宣告的 `channel_session_id`, 可以在统一入口里直接完成 Claude channel 绑定:
+如果你平时主要在 Claude Code 里使用, 更推荐直接在当前 Claude 会话里调用 `register_claude_self(...)`.  这条 helper 会把注册写到当前 host session 上, 可以直接避免外部 `curl` 注册带来的 session 错位。  如果当前 host 已经知道 channel proxy 宣告的 `channel_session_id`, 可以这样完成自注册和 channel 绑定:
+
+```text
+register_claude_self({
+  name: "lead",
+  team: "default",
+  role: "worker",
+  channel_session_id: "csid-abc"
+})
+```
+
+如果你更想走统一入口, 也可以在当前 Claude 会话里直接调用 `register_agent({ client: "claude-code", ... })`:
 
 ```text
 register_agent({
@@ -206,6 +217,8 @@ register_agent({
 
 行为说明:
 
+- Claude Code 的 proxy session 不是 owner Claude session。  不要用外部 `curl` 代替当前 Claude 会话做注册, 否则后续工具调用仍然可能看到 `unknown_agent`
+- `register_claude_self(...)` 是 Claude Code 的首选路径, 因为它天然运行在当前 session 上
 - `client="claude-code"` 时, `poke` 会优先走 `claude-channel`, 失败后再回退到 `tmux`
 - 如果注册响应里仍然带 `hint`, 说明 tmux fallback 还没有完成绑定, 这时调用 `bind_runtime_identity(...)`
 - `bind_channel(...)` 仍然保留, 但它只是低层重绑工具, 适合已注册 row 在 proxy 切换到新 `channel_session_id` 后补绑
