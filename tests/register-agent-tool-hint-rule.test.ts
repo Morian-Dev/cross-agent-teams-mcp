@@ -39,11 +39,12 @@ describe('register_agent tool hint rule (tmux only)', () => {
     expect(obj.agent_id).toBeDefined()
     expect(typeof obj.hint).toBe('string')
     expect(obj.hint).toMatch(/tmux_pane_id/i)
+    expect(obj.hint).toMatch(/bind_runtime_identity/)
 
     await t.close(); await app.close()
   })
 
-  it('hint suppressed when tmux_pane_id is provided', async () => {
+  it('explicit tmux_pane_id is rejected by the strict schema', async () => {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
     const { c, t } = await connectClient(host, port)
@@ -52,9 +53,9 @@ describe('register_agent tool hint rule (tmux only)', () => {
       name: 'register_agent',
       arguments: { model: 'opus-4-7', role: 'frontend', name: 'alice', tmux_pane_id: '%42' }
     })
-    const obj = await parseTool(resp)
-    expect(obj.agent_id).toBeDefined()
-    expect(obj.hint).toBeUndefined()
+    const errResp = resp as { isError?: boolean; content: Array<{ text: string }> }
+    expect(errResp.isError).toBe(true)
+    expect(errResp.content[0].text).toMatch(/tmux_pane_id/i)
     await t.close(); await app.close()
   })
 
@@ -95,7 +96,7 @@ describe('register_agent tool hint rule (tmux only)', () => {
     const resp = await c.callTool({
       name: 'register_agent',
       arguments: {
-        model: 'opus-4-7', role: 'frontend', name: 'alice', tmux_pane_id: '%42',
+        model: 'opus-4-7', role: 'frontend', name: 'alice',
         channel_session_id: 'csid-should-not-be-written'
       }
     })

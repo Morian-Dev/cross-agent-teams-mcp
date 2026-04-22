@@ -8,11 +8,6 @@ import {
   type CodexWebSocketFactory,
   type JsonRpcResponse,
 } from './codex-appserver-rpc.js'
-import {
-  detectTmuxPane,
-  type DetectTmuxPaneInput,
-  type DetectTmuxPaneResult,
-} from '../daemon/tmux-pane-detect.js'
 
 export interface RegisterCodexSelfInput {
   connection_id: string
@@ -50,9 +45,6 @@ export type RegisterCodexSelfResult =
 export interface RegisterCodexSelfDeps {
   env?: NodeJS.ProcessEnv
   webSocketFactory?: CodexWebSocketFactory
-  detectTmuxPane?: (
-    input: DetectTmuxPaneInput
-  ) => Promise<DetectTmuxPaneResult>
 }
 
 type RpcErrorCode =
@@ -99,25 +91,6 @@ function trimToUndefined(value: string | undefined): string | undefined {
   return trimmed ? trimmed : undefined
 }
 
-async function resolveTmuxPaneId(
-  input: RegisterCodexSelfInput,
-  detectFn: (
-    input: DetectTmuxPaneInput
-  ) => Promise<DetectTmuxPaneResult>
-): Promise<string | undefined> {
-  const explicitPaneId = trimToUndefined(input.tmux_pane_id)
-  if (explicitPaneId) return explicitPaneId
-
-  const detected = await detectFn({
-    agent: 'codex',
-    cwd: trimToUndefined(input.cwd),
-    tty: trimToUndefined(input.tty),
-    title_contains: trimToUndefined(input.title_contains),
-  })
-  if ('ok' in detected && detected.ok) return detected.pane.pane_id
-  return undefined
-}
-
 export class RegisterCodexSelfService {
   constructor(
     private readonly registerSvc: RegisterAgentService,
@@ -129,7 +102,6 @@ export class RegisterCodexSelfService {
   ): Promise<RegisterCodexSelfResult> {
     const env = this.deps.env ?? process.env
     const wsUrl = resolveWsUrl(input, env)
-    const detectPane = this.deps.detectTmuxPane ?? detectTmuxPane
     const token = resolveAuthToken(input.auth_token_ref, env)
     if ('error' in token) return token
     const headers = token.ok === undefined
@@ -259,7 +231,7 @@ export class RegisterCodexSelfService {
         }
       }
 
-      const tmuxPaneId = await resolveTmuxPaneId(input, detectPane)
+      const tmuxPaneId = trimToUndefined(input.tmux_pane_id)
 
       const result = this.registerSvc.register({
         connection_id: input.connection_id,

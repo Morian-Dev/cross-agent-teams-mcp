@@ -124,6 +124,34 @@ export class AgentsRepo {
     ).run(serialized.delivery_kind, serialized.delivery_payload, agent_id)
   }
 
+  setRuntimeBinding(
+    agent_id: string,
+    args: {
+      tmux_pane_id: string
+      runtime_ui_pid: number | null
+      runtime_tty: string
+      runtime_verification_mode: string
+      runtime_bound_at?: string
+    }
+  ): void {
+    this.db.prepare(
+      `UPDATE agents
+       SET tmux_pane_id=?,
+           runtime_ui_pid=?,
+           runtime_tty=?,
+           runtime_verification_mode=?,
+           runtime_bound_at=?
+       WHERE agent_id=?`
+    ).run(
+      args.tmux_pane_id,
+      args.runtime_ui_pid,
+      args.runtime_tty,
+      args.runtime_verification_mode,
+      args.runtime_bound_at ?? new Date().toISOString(),
+      agent_id
+    )
+  }
+
   list(args: { team: string }): AgentListRow[] {
     const rows = this.db.prepare(
       `SELECT

@@ -7,7 +7,6 @@ import { applySchema } from '../src/storage/schema.js'
 import { RegisterAgentService } from '../src/mcp/register-agent.js'
 import { RegisterCodexSelfService } from '../src/mcp/register-codex-self.js'
 import type { WebSocketLike } from '../src/mcp/codex-appserver-rpc.js'
-import type { DetectTmuxPaneResult } from '../src/daemon/tmux-pane-detect.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-register-codex-self-'))
 
@@ -79,8 +78,7 @@ describe('RegisterCodexSelfService', () => {
 
   function setup(
     harness: ReturnType<typeof createHarness>,
-    env: NodeJS.ProcessEnv = {},
-    detectResult: DetectTmuxPaneResult = { error: 'not_found', candidates: [] }
+    env: NodeJS.ProcessEnv = {}
   ) {
     const dir = tmp()
     cleanups.push(dir)
@@ -90,12 +88,11 @@ describe('RegisterCodexSelfService', () => {
     const svc = new RegisterCodexSelfService(registerSvc, {
       webSocketFactory: harness.factory,
       env,
-      detectTmuxPane: async () => detectResult,
     })
     return { db, svc }
   }
 
-  it('registers the caller-supplied thread_id and detected pane', async () => {
+  it('registers the caller-supplied thread_id without auto-binding a pane', async () => {
     const harness = createHarness({
       onCreate: (ws) => queueMicrotask(() => ws.emit('open', {})),
       onSend: (message, ws) => {
@@ -112,23 +109,7 @@ describe('RegisterCodexSelfService', () => {
         }
       },
     })
-    const { db, svc } = setup(harness, {}, {
-      ok: true,
-      pane: {
-        pane_id: '%1902',
-        session_name: 's1',
-        window_index: 0,
-        pane_index: 2,
-        active: true,
-        tty: 'ttys001',
-        current_path: '/workspace/project',
-        current_command: 'codex',
-        title: 'project',
-        matched_processes: ['123 1 S+ codex --remote ws://127.0.0.1:8799'],
-        score: 99,
-      },
-      candidates: [],
-    })
+    const { db, svc } = setup(harness)
 
     const result = await svc.register({
       connection_id: 'conn-1',
@@ -156,10 +137,10 @@ describe('RegisterCodexSelfService', () => {
       thread_id: '11111111-1111-4111-8111-111111111111',
       ws_url: 'ws://127.0.0.1:8799',
     })
-    expect(row.tmux_pane_id).toBe('%1902')
+    expect(row.tmux_pane_id).toBeNull()
   })
 
-  it('prefers explicit tmux_pane_id over detector output', async () => {
+  it('still accepts explicit tmux_pane_id for direct service callers', async () => {
     const harness = createHarness({
       onCreate: (ws) => queueMicrotask(() => ws.emit('open', {})),
       onSend: (message, ws) => {
@@ -176,23 +157,7 @@ describe('RegisterCodexSelfService', () => {
         }
       },
     })
-    const { db, svc } = setup(harness, {}, {
-      ok: true,
-      pane: {
-        pane_id: '%1902',
-        session_name: 's1',
-        window_index: 0,
-        pane_index: 2,
-        active: true,
-        tty: 'ttys001',
-        current_path: '/workspace/project',
-        current_command: 'codex',
-        title: 'project',
-        matched_processes: ['123 1 S+ codex --remote ws://127.0.0.1:8799'],
-        score: 99,
-      },
-      candidates: [],
-    })
+    const { db, svc } = setup(harness)
 
     await svc.register({
       connection_id: 'conn-1',
@@ -209,7 +174,7 @@ describe('RegisterCodexSelfService', () => {
     expect(row.tmux_pane_id).toBe('%42')
   })
 
-  it('keeps codex registration successful when pane detection is ambiguous', async () => {
+  it('keeps codex registration successful when no pane binding is requested', async () => {
     const harness = createHarness({
       onCreate: (ws) => queueMicrotask(() => ws.emit('open', {})),
       onSend: (message, ws) => {
@@ -226,37 +191,7 @@ describe('RegisterCodexSelfService', () => {
         }
       },
     })
-    const { db, svc } = setup(harness, {}, {
-      error: 'ambiguous_match',
-      candidates: [
-        {
-          pane_id: '%1902',
-          session_name: 's1',
-          window_index: 0,
-          pane_index: 2,
-          active: true,
-          tty: 'ttys001',
-          current_path: '/workspace/project',
-          current_command: 'codex',
-          title: 'project',
-          matched_processes: ['123 1 S+ codex --remote ws://127.0.0.1:8799'],
-          score: 99,
-        },
-        {
-          pane_id: '%1903',
-          session_name: 's1',
-          window_index: 0,
-          pane_index: 3,
-          active: false,
-          tty: 'ttys002',
-          current_path: '/workspace/project',
-          current_command: 'codex',
-          title: 'project',
-          matched_processes: ['124 1 S+ codex --remote ws://127.0.0.1:8799'],
-          score: 99,
-        },
-      ],
-    })
+    const { db, svc } = setup(harness)
 
     const result = await svc.register({
       connection_id: 'conn-1',

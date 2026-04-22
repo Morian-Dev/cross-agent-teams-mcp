@@ -128,36 +128,31 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     expect(d).toMatch(/< 200 characters|200 characters/)
   })
 
-  it('register_agent description demands a pre-call tmux check (imperative, not advisory)', async () => {
+  it('register_agent description documents separate runtime binding instead of in-call discovery', async () => {
     const tools = await listTools()
     const tool = tools.find(t => t.name === 'register_agent')
     expect(tool).toBeDefined()
     const d = tool!.description!
-    expect(d).toMatch(/BEFORE calling this tool/i)
-    expect(d).toMatch(/MUST/)
-    expect(d).toMatch(/TMUX_PANE/)
+    expect(d).toMatch(/does NOT try to guess tmux panes|does not try to guess tmux panes/i)
+    expect(d).toMatch(/bind_runtime_identity/)
+    expect(d).toMatch(/detect_tmux_pane/)
     expect(d).toMatch(/tmux_pane_id/)
-    expect(d).toMatch(/Do not skip the check/i)
+    expect(d).not.toMatch(/do not pass pane ids|do not pass pane ids or pane-detect hints/i)
   })
 
-  it('register_agent description prefers $TMUX_PANE over tmux display-message (per-pane reliability)', async () => {
+  it('register_agent description no longer documents internal matcher selection', async () => {
     const tools = await listTools()
     const tool = tools.find(t => t.name === 'register_agent')
     const d = tool!.description!
-    expect(d).toMatch(/\$TMUX_PANE/)
-    expect(d).toMatch(/echo "\$TMUX_PANE"/)
-    expect(d).toMatch(/Do NOT use `tmux display-message/i)
-    expect(d).toMatch(/focused/i)
-    expect(d).toMatch(/fallback/i)
+    expect(d).not.toMatch(/converge|conservatively/i)
   })
 
-  it('register_agent description instructs how to handle both branches (in-tmux / not-in-tmux)', async () => {
+  it('register_agent description explains tmux remains unavailable until runtime binding succeeds', async () => {
     const tools = await listTools()
     const tool = tools.find(t => t.name === 'register_agent')
     const d = tool!.description!
-    expect(d).toMatch(/pane id/i)
-    expect(d).toMatch(/not a tmux client|errors|error/i)
-    expect(d).toMatch(/skip/i)
+    expect(d).toMatch(/tmux-based poke delivery stays unavailable/i)
+    expect(d).toMatch(/runtime binding succeeds/i)
   })
 
   it('register_agent description states identity reuse on (team, name, role)', async () => {
@@ -167,6 +162,16 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     expect(d).toMatch(/reuse|reuses/i)
     expect(d).toMatch(/team.*name.*role|\(team, name, role\)/i)
     expect(d).toMatch(/tmux_pane_id/)
+  })
+
+  it('bind_runtime_identity description documents pid-first verification', async () => {
+    const tools = await listTools()
+    const tool = tools.find(t => t.name === 'bind_runtime_identity')
+    expect(tool).toBeDefined()
+    const d = tool!.description!
+    expect(d).toMatch(/ui_pid/)
+    expect(d).toMatch(/pid .* tty .* pane|pid → tty → pane/i)
+    expect(d).toMatch(/detect_tmux_pane/)
   })
 
   it('send_message description documents the fan-out online filter and to_agent_id exception', async () => {

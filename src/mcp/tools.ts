@@ -23,6 +23,7 @@ import type { SseFanout } from '../daemon/sse-fanout.js'
 import type { ChannelWakeFanout } from '../daemon/channel-wake-fanout.js'
 import { SubscribeChannelWakeService } from './subscribe-channel-wake.js'
 import { BindChannelService } from './bind-channel.js'
+import { BindRuntimeIdentityService } from './bind-runtime-identity.js'
 import { RegisterCodexSelfService } from './register-codex-self.js'
 import { detectTmuxPane } from '../daemon/tmux-pane-detect.js'
 
@@ -54,6 +55,34 @@ const detectTmuxPaneSchema = z.object({
   }
 })
 
+const bindRuntimeIdentitySchema = z.object({
+  agent: z.enum(['codex', 'claude-code', 'opencode', 'custom']),
+  ui_pid: z.number().int().positive().optional(),
+  ui_tty: z.string().optional(),
+  tmux_pane_id: z.string().min(1).optional(),
+  process_pattern: z.string().optional(),
+}).superRefine((value, ctx) => {
+  if (value.agent === 'custom' && (!value.process_pattern || value.process_pattern.trim().length === 0)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['process_pattern'],
+      message: 'process_pattern is required when agent=custom',
+    })
+  }
+  const hasPid = value.ui_pid !== undefined
+  const hasTtyPair =
+    value.ui_tty !== undefined &&
+    value.ui_tty.trim().length > 0 &&
+    value.tmux_pane_id !== undefined &&
+    value.tmux_pane_id.trim().length > 0
+  if (!hasPid && !hasTtyPair) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'provide ui_pid, or ui_tty together with tmux_pane_id',
+    })
+  }
+})
+
 const SEND_MESSAGE_DESC = [
   'Private 1→1 message to another agent.  By default auto-poke=true with quiet-guard (auto_poke:false opts out).',
   'Provide exactly one of to_agent_id (UUID) or to_agent_name (the target\'s `name` in its team); to_agent_name is preferred when you know the target by (team, name).',
@@ -78,11 +107,6 @@ const BROADCAST_TO_ROLE_DESC = [
   'Auto-poke default true with quiet-guard + 30s/180s/600s retry (auto_poke:false opts out); injects only a SHORT wake-up hint, not the message body.  Recipients read via get_inbox.',
   'Returns unknown_recipient when no same-team agent matches to_role.'
 ].join(' ')
-
-function hasUsableTmuxPaneId(args: { tmux_pane_id?: string }): boolean {
-  const tp = args.tmux_pane_id
-  return typeof tp === 'string' && tp.trim().length > 0
-}
 
 function suppressTmuxHint(
   args: { delivery?: { kind?: string } }
@@ -146,6 +170,7 @@ export function registerBusinessTools(
   const agents = new AgentsRepo(db)
   const events = new EventsOutbox(db)
   const registerSvc = new RegisterAgentService(db)
+  const bindRuntimeIdentitySvc = new BindRuntimeIdentityService(db)
   const registerCodexSelfSvc = new RegisterCodexSelfService(registerSvc)
 
   const autoPokeImpl = createAutoPokeImpl(db, agents, channelWakeFanout)
@@ -227,47 +252,34 @@ export function registerBusinessTools(
         'Register this session as an agent in a team.',
         'Calling this tool again with the same `(team, name, role)` identity reuses the existing',
         '`agent_id` and refreshes `tmux_pane_id` and `model`; no duplicate row is created.',
-        'BEFORE calling this tool, you MUST first check whether this process is running inside tmux.',
-        'Run your shell tool with `echo "$TMUX_PANE"` (this env var is set per-pane by tmux and is',
-        "the RELIABLE way to get your own pane id). Do NOT use `tmux display-message -p '#{pane_id}'`",
-        'as the primary source: it returns the tmux *focused* pane, which may be a different agent\'s',
-        "pane if multiple clients share the session. `tmux display-message` is only acceptable as a",
-        'fallback when `$TMUX_PANE` is empty.',
-        'If `echo "$TMUX_PANE"` prints a pane id like `%42` (non-empty output): you ARE in tmux —',
-        'include that value as `tmux_pane_id` in THIS register_agent call. Without it, `poke` cannot',
-        'wake your session across tmux panes.',
-        'If your tool-calling shell lives in a helper pane but the real agent UI runs elsewhere, call',
-        '`detect_tmux_pane` first and register with the returned `pane_id`.',
-        'If the variable is empty AND `tmux display-message` also errors with "not a tmux client":',
-        'skip the tmux_pane_id field.',
-        'Most LLM coding agents (Claude Code, opencode, codex) run inside tmux by default, so the',
-        'first branch is usually the right one. Do not skip the check.'
+        'This tool only registers identity and delivery metadata; it does NOT try to guess tmux panes during registration.',
+        'If you need tmux-based poke delivery, call `bind_runtime_identity(...)` after registration so the daemon can verify and persist your pane binding.',
+        '`detect_tmux_pane(...)` remains available as a debugging aid for ambiguous or missing matches, but it does not write registry state.',
+        'When registration still has no usable `tmux_pane_id`, tmux-based poke delivery stays unavailable until a later runtime binding succeeds.'
       ].join(' '),
       inputSchema: z.object({
         model: z.string(),
         name: z.string().min(1).refine(v => v.trim().length > 0, { message: 'name must not be empty' }),
         role: z.string().optional(),
         team: z.string().optional(),
-        tmux_pane_id: z.string().optional(),
         delivery: deliverySchema.optional(),
       }).strict()
     },
     async (args: {
       model: string; name: string; role?: string; team?: string;
-      tmux_pane_id?: string; delivery?: { kind: string; [key: string]: unknown }
+      delivery?: { kind: string; [key: string]: unknown }
     }) => {
       // connection_id for collision detection must be the stable session id,
       // NOT agentIdHolder.current (which becomes the agent_id after success).
       const connectionId = getSessionId?.() ?? caller()
       if (!connectionId) return toText({ error: 'unknown_agent' })
-      return run(() => {
+      return run(async () => {
         const res = registerSvc.register({
           connection_id: connectionId,
           model: args.model,
           name: args.name,
           role: args.role,
           team: args.team,
-          tmux_pane_id: args.tmux_pane_id,
           delivery: args.delivery,
         })
         if ('agent_id' in res) {
@@ -276,10 +288,10 @@ export function registerBusinessTools(
           } else if (fanout) {
             try { fanout.rebind(res.agent_id, res.team) } catch { /* best-effort */ }
           }
-          if (!hasUsableTmuxPaneId(args) && !suppressTmuxHint(args)) {
+          if (!suppressTmuxHint(args)) {
             return {
               ...res,
-              hint: "No tmux_pane_id provided — cross-agent poke delivery via tmux is off until you re-register with a usable pane id. If your shell and visible agent UI are the same pane, run `echo \"$TMUX_PANE\"` first; fall back to `tmux display-message -p '#{pane_id}'` only if $TMUX_PANE is empty. If they differ, call `detect_tmux_pane({ agent, cwd })` and use the returned `pane_id`. Claude Code users who loaded the cross-agent-teams-mcp channel plugin can also route pokes via channel_session_id — the plugin's proxy emits a startup <channel> notification telling Claude to call bind_channel({channel_session_id}); that path does not involve register_agent."
+              hint: "No usable tmux_pane_id is bound yet — cross-agent poke delivery via tmux is off. Call `register_agent` first, then `bind_runtime_identity(...)` so the daemon can verify and persist your pane binding. `detect_tmux_pane(...)` is available for debugging only. Claude Code users who loaded the cross-agent-teams-mcp channel plugin can also route pokes via channel_session_id — that path does not require tmux binding."
             }
           }
         }
@@ -298,9 +310,7 @@ export function registerBusinessTools(
         'Use this when the user says to register to cross-agent-teams and only provides human-facing fields like name, role, and team.',
         'The daemon cannot safely infer the caller\'s current Codex thread from loaded threads alone, so callers should provide `thread_id` explicitly.',
         'When `thread_id` is omitted, the tool returns `thread_id_required` plus resumable thread ids for debugging instead of guessing.',
-        'When `tmux_pane_id` is provided, the tool persists it alongside the Codex delivery. Otherwise it best-effort tries to discover the Codex tmux pane.',
-        'Optional `cwd`, `tty`, and `title_contains` narrow tmux pane detection when the visible Codex UI may differ from the shell running MCP tools.',
-        'Tmux pane discovery is best-effort only: if no unique pane is found, the tool still succeeds as long as Codex thread registration succeeds.',
+        'This tool registers Codex app-server delivery only; tmux runtime binding is handled separately by `bind_runtime_identity`.',
         'Optional `ws_url` overrides the default websocket URL; optional `auth_token_ref` names an environment variable that stores the bearer token.',
         'If the Codex app-server is unreachable or does not speak the expected protocol, the tool returns `unsupported_client` instead of guessing.'
       ].join(' '),
@@ -310,10 +320,6 @@ export function registerBusinessTools(
         role: z.string().optional(),
         team: z.string().optional(),
         thread_id: z.string().min(1).refine(v => v.trim().length > 0, { message: 'thread_id must not be empty' }).optional(),
-        tmux_pane_id: z.string().optional(),
-        cwd: z.string().optional(),
-        tty: z.string().optional(),
-        title_contains: z.string().optional(),
         ws_url: z.string().optional(),
         auth_token_ref: z.string().min(1).optional(),
       }).strict()
@@ -324,10 +330,6 @@ export function registerBusinessTools(
       role?: string
       team?: string
       thread_id?: string
-      tmux_pane_id?: string
-      cwd?: string
-      tty?: string
-      title_contains?: string
       ws_url?: string
       auth_token_ref?: string
     }) => {
@@ -341,10 +343,6 @@ export function registerBusinessTools(
           role: args.role,
           team: args.team,
           thread_id: args.thread_id,
-          tmux_pane_id: args.tmux_pane_id,
-          cwd: args.cwd,
-          tty: args.tty,
-          title_contains: args.title_contains,
           ws_url: args.ws_url,
           auth_token_ref: args.auth_token_ref,
         })
@@ -676,6 +674,38 @@ export function registerBusinessTools(
       }
     )
   }
+
+  server.registerTool(
+    'bind_runtime_identity',
+    {
+      title: 'Bind runtime identity to caller',
+      description: [
+        'Bind the caller session\'s agent row to a verified tmux runtime identity.',
+        'Prefer passing `ui_pid` for the visible agent UI process; the daemon verifies pid → tty → pane before persisting `tmux_pane_id`.',
+        'If `ui_pid` is unavailable, pass `ui_tty` together with `tmux_pane_id` for a weaker but still verified binding path.',
+        'This tool writes registry state; `detect_tmux_pane` is for debugging only.'
+      ].join(' '),
+      inputSchema: bindRuntimeIdentitySchema,
+    },
+    async (args: {
+      agent: 'codex' | 'claude-code' | 'opencode' | 'custom'
+      ui_pid?: number
+      ui_tty?: string
+      tmux_pane_id?: string
+      process_pattern?: string
+    }) => {
+      const who = requireAgent()
+      if (typeof who !== 'string') return toText(who)
+      return run(() => bindRuntimeIdentitySvc.bind({
+        callerAgentId: who,
+        agent: args.agent,
+        ui_pid: args.ui_pid,
+        ui_tty: args.ui_tty,
+        tmux_pane_id: args.tmux_pane_id,
+        process_pattern: args.process_pattern,
+      }))
+    }
+  )
 
   // subscribe_channel_wake — reserved for channel proxies (role=__channel_proxy__)
   if (channelWakeFanout) {

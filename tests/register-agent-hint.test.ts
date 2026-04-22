@@ -37,59 +37,9 @@ describe('register_agent tmux_pane_id hint', () => {
     expect(obj.team).toBe('default')
     expect(typeof obj.hint).toBe('string')
     expect(obj.hint).toMatch(/tmux_pane_id/i)
-    expect(obj.hint).toMatch(/TMUX_PANE/)
-    expect(obj.hint).toMatch(/tmux display-message/)
-
-    await t.close(); await app.close()
-  })
-
-  it('response includes hint when tmux_pane_id is empty string', async () => {
-    const dir = tmp(); cleanups.push(dir)
-    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
-    const { c, t } = await connectClient(host, port)
-
-    const resp = await c.callTool({
-      name: 'register_agent',
-      arguments: { model: 'opus-4-7', role: 'frontend', name: 'alice', tmux_pane_id: '' }
-    })
-    const obj = await parseTool(resp)
-
-    expect(obj.agent_id).toBeDefined()
-    expect(typeof obj.hint).toBe('string')
-
-    await t.close(); await app.close()
-  })
-
-  it('response includes hint when tmux_pane_id is whitespace-only', async () => {
-    const dir = tmp(); cleanups.push(dir)
-    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
-    const { c, t } = await connectClient(host, port)
-
-    const resp = await c.callTool({
-      name: 'register_agent',
-      arguments: { model: 'opus-4-7', role: 'frontend', name: 'alice', tmux_pane_id: '   ' }
-    })
-    const obj = await parseTool(resp)
-
-    expect(typeof obj.hint).toBe('string')
-
-    await t.close(); await app.close()
-  })
-
-  it('response has no hint field when tmux_pane_id is provided', async () => {
-    const dir = tmp(); cleanups.push(dir)
-    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
-    const { c, t } = await connectClient(host, port)
-
-    const resp = await c.callTool({
-      name: 'register_agent',
-      arguments: { model: 'opus-4-7', role: 'frontend', name: 'alice', tmux_pane_id: '%42' }
-    })
-    const obj = await parseTool(resp)
-
-    expect(obj.agent_id).toBeDefined()
-    expect(obj.team).toBe('default')
-    expect(obj.hint).toBeUndefined()
+    expect(obj.hint).toMatch(/register_agent/)
+    expect(obj.hint).toMatch(/bind_runtime_identity/)
+    expect(obj.hint).toMatch(/agent/)
 
     await t.close(); await app.close()
   })
@@ -110,12 +60,28 @@ describe('register_agent tmux_pane_id hint', () => {
           thread_id: '11111111-1111-4111-8111-111111111111',
           ws_url: 'ws://127.0.0.1:8799',
         },
-      },
+      }
     })
     const obj = await parseTool(resp)
 
     expect(obj.agent_id).toBeDefined()
     expect(obj.hint).toBeUndefined()
+
+    await t.close(); await app.close()
+  })
+
+  it('response rejects explicit tmux_pane_id input at the schema layer', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+    const { c, t } = await connectClient(host, port)
+
+    const resp = await c.callTool({
+      name: 'register_agent',
+      arguments: { model: 'opus-4-7', role: 'frontend', name: 'alice', tmux_pane_id: '%42' }
+    })
+    const errResp = resp as { isError?: boolean; content: Array<{ text: string }> }
+    expect(errResp.isError).toBe(true)
+    expect(errResp.content[0].text).toMatch(/tmux_pane_id/i)
 
     await t.close(); await app.close()
   })
@@ -143,7 +109,7 @@ describe('register_agent tmux_pane_id hint', () => {
     await t.close(); await app.close()
   })
 
-  it('hint survives re-register flow: first omit → hint, second include → no hint', async () => {
+  it('hint survives re-register flow: first omit → hint, second non-tmux delivery → no hint', async () => {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
     const { c, t } = await connectClient(host, port)
@@ -156,7 +122,16 @@ describe('register_agent tmux_pane_id hint', () => {
 
     const second = await parseTool(await c.callTool({
       name: 'register_agent',
-      arguments: { model: 'opus-4-7', role: 'frontend', name: 'alice', tmux_pane_id: '%71' }
+      arguments: {
+        model: 'opus-4-7',
+        role: 'frontend',
+        name: 'alice',
+        delivery: {
+          kind: 'codex-appserver',
+          thread_id: '11111111-1111-4111-8111-111111111111',
+          ws_url: 'ws://127.0.0.1:8799',
+        },
+      }
     }))
     expect(second.hint).toBeUndefined()
     expect(second.agent_id).toBe(first.agent_id)
