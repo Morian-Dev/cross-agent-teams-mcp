@@ -400,39 +400,39 @@ Validation failures SHALL return `{error: 'invalid_delivery', reason: ...}` with
 - **THEN** it returns `{error: 'invalid_delivery', reason: 'invalid_thread_id'}`
 - **AND** no row is inserted for that identity
 
-### Requirement: register_codex_self registers a Codex app-server delivery without implicit tmux binding
+### Requirement: register_agent registers a Codex app-server delivery without implicit tmux binding
 
-The daemon SHALL expose a tool `register_codex_self` for Codex remote sessions.  The tool accepts human-facing identity fields such as `name`, `team`, and `role`, plus optional `ws_url`, `auth_token_ref`, and `thread_id`.  It SHALL:
+The daemon SHALL expose Codex app-server registration through `register_agent({ client: 'codex', ... })`.  For Codex callers, the tool accepts the normal identity fields plus optional `ws_url`, `auth_token_ref`, and `thread_id`.  It SHALL:
 
 1. Connect to the Codex app-server websocket, defaulting `ws_url` to `ws://127.0.0.1:8799` when not provided.
 2. Initialize the Codex protocol.
 3. If `thread_id` is provided, attempt `thread/resume` only for that thread id.
 4. If `thread_id` is omitted, call `thread/loaded/list`, attempt `thread/resume` against the loaded thread ids, and return `{ error: 'thread_id_required', detail: { ws_url, thread_ids: [...] } }` instead of registering any thread.
 5. Register the caller as `delivery.kind='codex-appserver'` only after a caller-supplied `thread_id` has been confirmed resumable.
-6. Leave tmux pane binding unchanged.  If the caller wants tmux fallback delivery, it MUST rely on the normal `register_agent` automatic binding path or invoke `bind_runtime_identity(...)` explicitly afterward.
+6. Leave tmux pane binding unchanged.  If the caller wants tmux fallback delivery, it MUST rely on the normal runtime-binding path or invoke `bind_runtime_identity(...)` explicitly afterward.
 
-The daemon MUST NOT infer the caller's current Codex thread solely from the set of loaded or resumable threads.  The tool surface MUST NOT accept caller-supplied tmux pane ids or pane-detect hints.  When no new usable pane id is available, the persisted `tmux_pane_id` follows the normal registration semantics: omit on first insert yields `NULL`, omit on re-registration preserves the existing value.
+The daemon MUST NOT infer the caller's current Codex thread solely from the set of loaded or resumable threads.  The tool surface MUST reject Codex-only top-level fields unless `client='codex'`.  When no new usable pane id is available, the persisted `tmux_pane_id` follows the normal registration semantics: omit on first insert yields `NULL`, omit on re-registration preserves the existing value.
 
-The tool is Codex-only.  If the websocket endpoint is unreachable or does not speak the expected Codex protocol, the tool SHALL return `{error: 'unsupported_client', detail: { expected: 'codex', reason: ..., ws_url, cause? }}` rather than guessing.
+The Codex registration path is Codex-only.  If the websocket endpoint is unreachable or does not speak the expected Codex protocol, the tool SHALL return `{error: 'unsupported_client', detail: { expected: 'codex', reason: ..., ws_url, cause? }}` rather than guessing.
 
-#### Scenario: register_codex_self registers a caller-supplied thread_id without changing tmux pane state
+#### Scenario: register_agent registers a caller-supplied Codex thread_id without changing tmux pane state
 
-- **GIVEN** the caller invokes `register_codex_self({ name: 'lead', team: 'default', role: 'worker', thread_id: '11111111-1111-4111-8111-111111111111' })`
+- **GIVEN** the caller invokes `register_agent({ client: 'codex', name: 'lead', model: 'gpt-5', team: 'default', role: 'worker', thread_id: '11111111-1111-4111-8111-111111111111' })`
 - **AND** `thread/resume` succeeds for `11111111-1111-4111-8111-111111111111`
 - **WHEN** the tool completes successfully
 - **THEN** it returns `{ agent_id, team: 'default', thread_id: '11111111-1111-4111-8111-111111111111', ws_url: 'ws://127.0.0.1:8799' }`
 - **AND** the caller's `agents` row is persisted with `delivery.kind='codex-appserver'`
 - **AND** the tool does not require tmux pane discovery to succeed
 
-#### Scenario: register_codex_self rejects explicit tmux override inputs at the tool layer
+#### Scenario: register_agent rejects Codex thread inputs without client=codex
 
-- **WHEN** a caller invokes `register_codex_self({ name: 'lead', thread_id: '11111111-1111-4111-8111-111111111111', tmux_pane_id: '%42' })`
+- **WHEN** a caller invokes `register_agent({ name: 'lead', model: 'gpt-5', thread_id: '11111111-1111-4111-8111-111111111111' })`
 - **THEN** the MCP tool schema rejects the request as carrying an unknown top-level key
-- **AND** the tool does not accept caller-supplied tmux pane data
+- **AND** the tool does not accept Codex-only fields unless `client='codex'`
 
-#### Scenario: explicit runtime binding can follow register_codex_self
+#### Scenario: explicit runtime binding can follow Codex register_agent
 
-- **GIVEN** the caller first succeeds with `register_codex_self({ name: 'lead', thread_id: '11111111-1111-4111-8111-111111111111' })`
+- **GIVEN** the caller first succeeds with `register_agent({ client: 'codex', name: 'lead', model: 'gpt-5', thread_id: '11111111-1111-4111-8111-111111111111' })`
 - **AND** the caller still has no usable persisted `tmux_pane_id`
 - **WHEN** the caller later invokes `bind_runtime_identity(...)` successfully
 - **THEN** the existing `delivery.kind='codex-appserver'` remains intact
@@ -441,38 +441,38 @@ The tool is Codex-only.  If the websocket endpoint is unreachable or does not sp
 #### Scenario: re-registration preserves existing pane when no new pane is found
 
 - **GIVEN** agent `(default, lead)` already exists with `tmux_pane_id='%42'`
-- **AND** the caller invokes `register_codex_self({ name: 'lead', team: 'default', thread_id: '11111111-1111-4111-8111-111111111111' })`
+- **AND** the caller invokes `register_agent({ client: 'codex', name: 'lead', model: 'gpt-5', team: 'default', thread_id: '11111111-1111-4111-8111-111111111111' })`
 - **AND** `thread/resume` succeeds for `11111111-1111-4111-8111-111111111111`
 - **AND** Codex tmux pane detection returns `not_found`
 - **WHEN** the tool completes successfully
 - **THEN** the caller's `agents` row keeps `tmux_pane_id='%42'`
 - **AND** the caller's `agents` row is updated with the newly confirmed `delivery.kind='codex-appserver'`
 
-#### Scenario: register_codex_self requires explicit thread_id when resumable threads exist
+#### Scenario: register_agent requires explicit thread_id when resumable threads exist for Codex
 
-- **GIVEN** the caller invokes `register_codex_self({ name: 'lead' })`
+- **GIVEN** the caller invokes `register_agent({ client: 'codex', name: 'lead', model: 'gpt-5' })`
 - **AND** the default websocket endpoint reports resumable thread ids `['11111111-1111-4111-8111-111111111111']`
 - **WHEN** the tool completes
 - **THEN** it returns `{ error: 'thread_id_required', detail: { ws_url: 'ws://127.0.0.1:8799', thread_ids: ['11111111-1111-4111-8111-111111111111'] } }`
 - **AND** no `agents` row is inserted or updated for the caller
 
-#### Scenario: register_codex_self returns no_loaded_threads
+#### Scenario: register_agent returns no_loaded_threads for Codex
 
-- **GIVEN** the caller invokes `register_codex_self({ name: 'lead' })`
+- **GIVEN** the caller invokes `register_agent({ client: 'codex', name: 'lead', model: 'gpt-5' })`
 - **AND** the Codex app-server reports zero loaded threads
 - **WHEN** the tool completes
 - **THEN** it returns `{ error: 'no_loaded_threads', detail: { ws_url: 'ws://127.0.0.1:8799' } }`
 
-#### Scenario: register_codex_self returns codex_resume_failed for an explicit thread_id
+#### Scenario: register_agent returns codex_resume_failed for an explicit thread_id
 
-- **GIVEN** the caller invokes `register_codex_self({ name: 'lead', thread_id: '11111111-1111-4111-8111-111111111111' })`
+- **GIVEN** the caller invokes `register_agent({ client: 'codex', name: 'lead', model: 'gpt-5', thread_id: '11111111-1111-4111-8111-111111111111' })`
 - **AND** the app-server returns a JSON-RPC error for `thread/resume`
 - **WHEN** the tool completes
 - **THEN** it returns `{ error: 'codex_resume_failed', detail: { thread_id: '11111111-1111-4111-8111-111111111111', cause: ... } }`
 
-#### Scenario: register_codex_self returns unsupported_client outside Codex
+#### Scenario: register_agent returns unsupported_client outside Codex
 
-- **GIVEN** the caller invokes `register_codex_self({ name: 'lead', thread_id: '11111111-1111-4111-8111-111111111111' })`
+- **GIVEN** the caller invokes `register_agent({ client: 'codex', name: 'lead', model: 'gpt-5', thread_id: '11111111-1111-4111-8111-111111111111' })`
 - **AND** the websocket endpoint is unreachable or does not implement the Codex protocol
 - **WHEN** the tool completes
 - **THEN** it returns `{ error: 'unsupported_client', detail: { expected: 'codex', reason: ..., ws_url, cause? } }`

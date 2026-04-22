@@ -86,6 +86,7 @@ describe('opencode schema and binding', () => {
 
     expect(res).toEqual({ ok: true })
     const row = repo.getById(alice.agent_id)
+    expect(row?.client).toBe('opencode')
     expect(row?.opencode_base_url).toBe('http://localhost:4096')
     expect(row?.opencode_session_id).toBe('sess-xyz')
     db.close()

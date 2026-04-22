@@ -28,6 +28,7 @@ import { BindRuntimeIdentityService } from './bind-runtime-identity.js'
 import { RegisterCodexSelfService } from './register-codex-self.js'
 import { detectTmuxPane } from '../daemon/tmux-pane-detect.js'
 import type { DetectAgentKind } from '../daemon/tmux-pane-detect.js'
+import type { ClientKind } from '../lib/client-kind.js'
 
 export interface AgentIdHolder { current: string | undefined }
 
@@ -40,6 +41,8 @@ function toText(value: unknown): TextContent {
 const deliverySchema = z.object({
   kind: z.string(),
 }).passthrough()
+
+const clientSchema = z.enum(['codex', 'claude-code', 'opencode'])
 
 const detectTmuxPaneSchema = z.object({
   agent: z.enum(['codex', 'claude-code', 'opencode', 'custom']),
@@ -169,9 +172,10 @@ export interface SessionClientInfo {
 }
 
 function inferRuntimeAgentKind(
-  args: { delivery?: { kind?: string }; model: string },
+  args: { client?: ClientKind; delivery?: { kind?: string }; model: string },
   clientInfo: SessionClientInfo | undefined
 ): DetectAgentKind | undefined {
+  if (args.client) return args.client
   if (args.delivery?.kind === 'codex-appserver') return 'codex'
 
   const raw = `${clientInfo?.name ?? ''} ${clientInfo?.version ?? ''} ${args.model}`.toLowerCase()
@@ -241,7 +245,12 @@ export function registerBusinessTools(
   }
 
   async function autoBindRuntimeIdentity(
-    args: { model: string; delivery?: { kind?: string }; ui_pid?: number },
+    args: {
+      client?: ClientKind
+      model: string
+      delivery?: { kind?: string }
+      ui_pid?: number
+    },
     callerAgentId: string
   ): Promise<boolean> {
     const inferredAgent = inferRuntimeAgentKind(args, getSessionClientInfo?.())
@@ -267,6 +276,57 @@ export function registerBusinessTools(
     })
     return 'ok' in bound && bound.ok
   }
+
+  const registerAgentArgsSchema = z.object({
+    model: z.string(),
+    name: z.string().min(1).refine(v => v.trim().length > 0, { message: 'name must not be empty' }),
+    role: z.string().optional(),
+    team: z.string().optional(),
+    client: clientSchema.optional(),
+    ui_pid: z.number().int().positive().optional(),
+    channel_session_id: z.string().min(1).optional(),
+    base_url: z.string().min(1).optional(),
+    session_id: z.string().min(1).optional(),
+    thread_id: z.string().min(1).refine(v => v.trim().length > 0, { message: 'thread_id must not be empty' }).optional(),
+    ws_url: z.string().optional(),
+    auth_token_ref: z.string().min(1).optional(),
+    delivery: deliverySchema.optional(),
+  }).strict().superRefine((value, ctx) => {
+    const hasCodexFields =
+      value.thread_id !== undefined ||
+      value.ws_url !== undefined ||
+      value.auth_token_ref !== undefined
+    if (hasCodexFields && value.client !== 'codex') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['client'],
+        message: 'client=codex is required when thread_id, ws_url, or auth_token_ref is provided',
+      })
+    }
+    if (value.channel_session_id !== undefined && value.client !== 'claude-code') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['client'],
+        message: 'client=claude-code is required when channel_session_id is provided',
+      })
+    }
+    const hasOpencodeFields =
+      value.base_url !== undefined ||
+      value.session_id !== undefined
+    if (hasOpencodeFields && value.client !== 'opencode') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['client'],
+        message: 'client=opencode is required when base_url or session_id is provided',
+      })
+    }
+    if ((value.base_url === undefined) !== (value.session_id === undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'base_url and session_id must be provided together',
+      })
+    }
+  })
 
   // register_agent — bootstrap: callable before an agents row exists for this session
   server.registerTool(
@@ -312,26 +372,31 @@ export function registerBusinessTools(
       title: 'Register agent',
       description: [
         'Register this session as an agent in a team.',
+        'This is the unified registration entry point.',
         'Calling this tool again with the same `(team, name, role)` identity reuses the existing',
         '`agent_id` and refreshes `tmux_pane_id` and `model`; no duplicate row is created.',
+        'Callers may pass `client` to declare the runtime explicitly instead of relying on local-client inference.',
+        'Claude Code sessions can pass `client="claude-code"` together with `channel_session_id` to bind channel delivery through this same tool.',
+        'Opencode sessions can pass `client="opencode"` together with `base_url` and `session_id` to bind server delivery through this same tool.',
+        'Codex sessions can pass `client="codex"` together with `thread_id` to register Codex app-server delivery through this same tool.',
         'When available, callers may pass `ui_pid` so automatic runtime binding can use verified pid → tty → pane evidence instead of heuristic pane detection.',
         'After registration, the daemon best-effort attempts runtime binding for recognized local clients so tmux-based poke delivery can come up without a second tool call.',
         'If automatic runtime binding does not converge, call `bind_runtime_identity(...)` explicitly so the daemon can verify and persist your pane binding.',
         '`detect_tmux_pane(...)` remains available as a debugging aid for ambiguous or missing matches, but it does not write registry state by itself.',
         'When registration still has no usable `tmux_pane_id`, tmux-based poke delivery stays unavailable until automatic or explicit runtime binding succeeds.'
       ].join(' '),
-      inputSchema: z.object({
-        model: z.string(),
-        name: z.string().min(1).refine(v => v.trim().length > 0, { message: 'name must not be empty' }),
-        role: z.string().optional(),
-        team: z.string().optional(),
-        ui_pid: z.number().int().positive().optional(),
-        delivery: deliverySchema.optional(),
-      }).strict()
+      inputSchema: registerAgentArgsSchema
     },
     async (args: {
+      client?: ClientKind
       model: string; name: string; role?: string; team?: string;
       ui_pid?: number;
+      channel_session_id?: string
+      base_url?: string
+      session_id?: string
+      thread_id?: string
+      ws_url?: string
+      auth_token_ref?: string
       delivery?: { kind: string; [key: string]: unknown }
     }) => {
       // connection_id for collision detection must be the stable session id,
@@ -339,87 +404,73 @@ export function registerBusinessTools(
       const connectionId = getSessionId?.() ?? caller()
       if (!connectionId) return toText({ error: 'unknown_agent' })
       return run(async () => {
-          const res = registerSvc.register({
-            connection_id: connectionId,
-            model: args.model,
-            name: args.name,
-            role: args.role,
-            team: args.team,
-            delivery: args.delivery,
-          })
+        let nativeDeliveryBound = suppressTmuxHint(args)
+        const bindChannelSvc = channelWakeFanout
+          ? new BindChannelService(db, channelWakeFanout)
+          : undefined
+        const bindOpencodeSvc = new BindOpencodeSessionService(db)
+        const res =
+          args.client === 'codex' && args.delivery === undefined
+            ? await registerCodexSelfSvc.register({
+                connection_id: connectionId,
+                name: args.name,
+                model: args.model,
+                role: args.role,
+                team: args.team,
+                thread_id: args.thread_id,
+                ws_url: args.ws_url,
+                auth_token_ref: args.auth_token_ref,
+              })
+            : registerSvc.register({
+                connection_id: connectionId,
+                client: args.client,
+                model: args.model,
+                name: args.name,
+                role: args.role,
+                team: args.team,
+                delivery: args.delivery,
+              })
+        if ('thread_id' in res && 'agent_id' in res) {
+          nativeDeliveryBound = true
+        }
         if ('agent_id' in res) {
           if (onRegisterSuccess) {
             try { onRegisterSuccess(res.agent_id, res.team) } catch { /* best-effort */ }
           } else if (fanout) {
             try { fanout.rebind(res.agent_id, res.team) } catch { /* best-effort */ }
           }
-          const autoBound = !suppressTmuxHint(args)
-            ? await autoBindRuntimeIdentity(args, res.agent_id)
-            : false
+          if (args.client === 'claude-code' && args.channel_session_id !== undefined) {
+            const channelBind = bindChannelSvc
+              ? bindChannelSvc.bind({
+                  callerAgentId: res.agent_id,
+                  channel_session_id: args.channel_session_id,
+                })
+              : { error: 'unknown_channel_session' as const }
+            if ('ok' in channelBind && channelBind.ok) {
+              nativeDeliveryBound = true
+            } else {
+              return channelBind
+            }
+          }
+          if (args.client === 'opencode' && args.base_url !== undefined && args.session_id !== undefined) {
+            const opencodeBind = bindOpencodeSvc.bind({
+              callerAgentId: res.agent_id,
+              base_url: args.base_url,
+              session_id: args.session_id,
+            })
+            if ('ok' in opencodeBind && opencodeBind.ok) {
+              nativeDeliveryBound = true
+            } else {
+              return opencodeBind
+            }
+          }
+          const autoBound = await autoBindRuntimeIdentity(args, res.agent_id)
           if (autoBound) return res
-          if (!suppressTmuxHint(args)) {
+          if (!nativeDeliveryBound) {
             return {
               ...res,
               hint: "No usable tmux_pane_id is bound yet — automatic runtime binding did not converge for this session, so cross-agent poke delivery via tmux is still off. Call `bind_runtime_identity(...)` to bind explicitly, or use `detect_tmux_pane(...)` for debugging. Claude Code users who loaded the cross-agent-teams-mcp channel plugin can also route pokes via channel_session_id — that path does not require tmux binding."
             }
-          }
-        }
-        return res
-      })
-    }
-  )
-
-  server.registerTool(
-    'register_codex_self',
-    {
-      title: 'Register codex self',
-      description: [
-        'Codex-only shortcut. Register this session as a codex-appserver delivery target using an explicit Codex thread id.',
-        'Use this only for Codex remote sessions. Do NOT use this tool from Claude Code or opencode; they should call `register_agent` instead.',
-        'Use this when the user says to register to cross-agent-teams and only provides human-facing fields like name, role, and team.',
-        'The daemon cannot safely infer the caller\'s current Codex thread from loaded threads alone, so callers should provide `thread_id` explicitly.',
-        'When `thread_id` is omitted, the tool returns `thread_id_required` plus resumable thread ids for debugging instead of guessing.',
-        'This tool registers Codex app-server delivery only; tmux runtime binding is handled separately by `bind_runtime_identity`.',
-        'Optional `ws_url` overrides the default websocket URL; optional `auth_token_ref` names an environment variable that stores the bearer token.',
-        'If the Codex app-server is unreachable or does not speak the expected protocol, the tool returns `unsupported_client` instead of guessing.'
-      ].join(' '),
-      inputSchema: z.object({
-        name: z.string().min(1).refine(v => v.trim().length > 0, { message: 'name must not be empty' }),
-        model: z.string().optional(),
-        role: z.string().optional(),
-        team: z.string().optional(),
-        thread_id: z.string().min(1).refine(v => v.trim().length > 0, { message: 'thread_id must not be empty' }).optional(),
-        ws_url: z.string().optional(),
-        auth_token_ref: z.string().min(1).optional(),
-      }).strict()
-    },
-    async (args: {
-      name: string
-      model?: string
-      role?: string
-      team?: string
-      thread_id?: string
-      ws_url?: string
-      auth_token_ref?: string
-    }) => {
-      const connectionId = getSessionId?.() ?? caller()
-      if (!connectionId) return toText({ error: 'unknown_agent' })
-      return run(async () => {
-        const res = await registerCodexSelfSvc.register({
-          connection_id: connectionId,
-          name: args.name,
-          model: args.model,
-          role: args.role,
-          team: args.team,
-          thread_id: args.thread_id,
-          ws_url: args.ws_url,
-          auth_token_ref: args.auth_token_ref,
-        })
-        if ('agent_id' in res) {
-          if (onRegisterSuccess) {
-            try { onRegisterSuccess(res.agent_id, res.team) } catch { /* best-effort */ }
-          } else if (fanout) {
-            try { fanout.rebind(res.agent_id, res.team) } catch { /* best-effort */ }
           }
         }
         return res
@@ -724,8 +775,10 @@ export function registerBusinessTools(
       {
         title: 'Bind channel_session_id to caller',
         description: [
+          'Low-level rebind tool for Claude channel delivery.',
           'Bind the caller session\'s agent row to a channel_session_id produced by the cross-agent-teams-mcp channel proxy.',
-          'Call this after receiving a startup <channel> notification from the proxy announcing your csid.',
+          'Most callers should prefer `register_agent({ client: "claude-code", channel_session_id, ... })` on the unified registration path.',
+          'Call this when you need to rebind an already-registered row after the proxy announces a new csid.',
           'Rejects proxy callers (role=__channel_proxy__).',
           'Rejects unknown csid (no live proxy sink attached).'
         ].join(' '),
@@ -827,8 +880,10 @@ export function registerBusinessTools(
     {
       title: 'Bind opencode session to caller',
       description: [
+        'Low-level rebind tool for opencode server delivery.',
         'Bind the caller session\'s agent row to an opencode server session.',
-        'Call this after starting an opencode session to enable server-based poke delivery.',
+        'Most callers should prefer `register_agent({ client: "opencode", base_url, session_id, ... })` on the unified registration path.',
+        'Call this when you need to rebind an already-registered row after the opencode session metadata changes.',
         'The base_url must be a loopback address (127.0.0.1, localhost, or ::1).',
         'The session_id is the opencode session identifier from the server.'
       ].join(' '),

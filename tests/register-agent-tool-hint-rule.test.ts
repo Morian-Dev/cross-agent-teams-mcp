@@ -85,15 +85,11 @@ describe('register_agent tool hint rule (tmux only)', () => {
     await t.close(); await app.close()
   })
 
-  it('register_agent rejects unknown channel_session_id argument (strict schema)', async () => {
+  it('register_agent rejects channel_session_id without client=claude-code', async () => {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
     const { c, t } = await connectClient(host, port)
 
-    // register_agent is no longer a writer for channel_session_id. After the
-    // delivery-abstraction refactor, the MCP tool schema is strict and returns
-    // a validation error envelope (isError: true) for unknown top-level args.
-    // No agent row must be created.
     const resp = await c.callTool({
       name: 'register_agent',
       arguments: {
@@ -103,9 +99,50 @@ describe('register_agent tool hint rule (tmux only)', () => {
     })
     const errResp = resp as { isError?: boolean; content: Array<{ text: string }> }
     expect(errResp.isError).toBe(true)
-    expect(errResp.content[0].text).toMatch(/channel_session_id/i)
-    expect(errResp.content[0].text).toMatch(/unrecognized_keys|Input validation/i)
-    // Schema rejection happens before any DB write, so no agent row exists.
+    expect(errResp.content[0].text).toMatch(/client=claude-code/i)
+
+    await t.close(); await app.close()
+  })
+
+  it('register_agent rejects top-level codex thread arguments without client=codex', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+    const { c, t } = await connectClient(host, port)
+
+    const resp = await c.callTool({
+      name: 'register_agent',
+      arguments: {
+        model: 'gpt-5',
+        role: 'frontend',
+        name: 'alice',
+        thread_id: '11111111-1111-4111-8111-111111111111',
+      }
+    })
+    const errResp = resp as { isError?: boolean; content: Array<{ text: string }> }
+    expect(errResp.isError).toBe(true)
+    expect(errResp.content[0].text).toMatch(/client=codex/i)
+
+    await t.close(); await app.close()
+  })
+
+  it('register_agent rejects opencode fields without client=opencode', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+    const { c, t } = await connectClient(host, port)
+
+    const resp = await c.callTool({
+      name: 'register_agent',
+      arguments: {
+        model: 'gpt-5',
+        role: 'frontend',
+        name: 'alice',
+        base_url: 'http://127.0.0.1:4096',
+        session_id: 'sess-1',
+      }
+    })
+    const errResp = resp as { isError?: boolean; content: Array<{ text: string }> }
+    expect(errResp.isError).toBe(true)
+    expect(errResp.content[0].text).toMatch(/client=opencode/i)
 
     await t.close(); await app.close()
   })

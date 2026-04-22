@@ -133,6 +133,7 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     const tool = tools.find(t => t.name === 'register_agent')
     expect(tool).toBeDefined()
     const d = tool!.description!
+    expect(d).toMatch(/client/)
     expect(d).toMatch(/ui_pid/)
     expect(d).toMatch(/best-effort attempts runtime binding|best-effort runtime binding/i)
     expect(d).toMatch(/bind_runtime_identity/)
@@ -165,6 +166,16 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     expect(d).toMatch(/tmux_pane_id/)
   })
 
+  it('register_agent description documents the unified Codex registration path', async () => {
+    const tools = await listTools()
+    const d = tools.find(t => t.name === 'register_agent')!.description!
+    expect(d).toMatch(/unified registration entry point/i)
+    expect(d).toMatch(/client/)
+    expect(d).toMatch(/codex/i)
+    expect(d).toMatch(/thread_id/)
+    expect(d).toMatch(/same tool|through this same tool/i)
+  })
+
   it('bind_runtime_identity description documents pid-first verification', async () => {
     const tools = await listTools()
     const tool = tools.find(t => t.name === 'bind_runtime_identity')
@@ -174,6 +185,22 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     expect(d).toMatch(/ui_pid/)
     expect(d).toMatch(/pid .* tty .* pane|pid → tty → pane/i)
     expect(d).toMatch(/detect_tmux_pane/)
+  })
+
+  it('bind_channel description marks it as a low-level rebind tool', async () => {
+    const tools = await listTools()
+    const d = tools.find(t => t.name === 'bind_channel')!.description!
+    expect(d).toMatch(/low-level rebind tool/i)
+    expect(d).toMatch(/register_agent/)
+    expect(d).toMatch(/client: "claude-code"|client.*claude-code/i)
+  })
+
+  it('bind_opencode_session description marks it as a low-level rebind tool', async () => {
+    const tools = await listTools()
+    const d = tools.find(t => t.name === 'bind_opencode_session')!.description!
+    expect(d).toMatch(/low-level rebind tool/i)
+    expect(d).toMatch(/register_agent/)
+    expect(d).toMatch(/client: "opencode"|client.*opencode/i)
   })
 
   it('send_message description documents the fan-out online filter and to_agent_id exception', async () => {

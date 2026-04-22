@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { ChannelWakeFanout } from '../src/daemon/channel-wake-fanout.js'
 import { registerBusinessTools } from '../src/mcp/tools.js'
 import { openDb } from '../src/storage/db.js'
 import { applySchema } from '../src/storage/schema.js'
@@ -23,7 +24,7 @@ describe('register_agent delivery integration', () => {
     cleanups.length = 0
   })
 
-  async function setup() {
+  async function setup(channelWakeFanout?: ChannelWakeFanout) {
     const dir = tmp()
     cleanups.push(dir)
     const dbPath = join(dir, 'data.db')
@@ -39,6 +40,8 @@ describe('register_agent delivery integration', () => {
       undefined,
       (agentId) => { holder.current = agentId },
       () => sessionId
+      ,
+      channelWakeFanout
     )
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
     await server.connect(serverTransport)
@@ -181,6 +184,71 @@ describe('register_agent delivery integration', () => {
       `SELECT agent_id FROM agents WHERE team='default' AND name='alice'`
     ).get() as { agent_id: string } | undefined
     expect(row).toBeUndefined()
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it('register with client=claude-code and channel_session_id binds channel delivery', async () => {
+    const channelWakeFanout = new ChannelWakeFanout()
+    channelWakeFanout.attach('csid-abc', () => { /* sink */ }, 'sess-proxy')
+    const { db, server, client, transport } = await setup(channelWakeFanout)
+    const result = await parseTool(await client.callTool({
+      name: 'register_agent',
+      arguments: {
+        client: 'claude-code',
+        model: 'opus',
+        role: 'backend',
+        name: 'alice',
+        channel_session_id: 'csid-abc',
+      },
+    }))
+    expect(result.agent_id).toBeDefined()
+    const row = db.prepare(
+      `SELECT client, delivery_kind, delivery_payload FROM agents WHERE team='default' AND name='alice'`
+    ).get() as {
+      client: string | null
+      delivery_kind: string
+      delivery_payload: string | null
+    }
+    expect(row.client).toBe('claude-code')
+    expect(row.delivery_kind).toBe('claude-channel')
+    expect(JSON.parse(row.delivery_payload as string)).toEqual({
+      channel_session_id: 'csid-abc',
+    })
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it('register with client=opencode and session metadata binds opencode delivery', async () => {
+    const { db, server, client, transport } = await setup()
+    const result = await parseTool(await client.callTool({
+      name: 'register_agent',
+      arguments: {
+        client: 'opencode',
+        model: 'anthropic/claude-3-5-sonnet-20241022',
+        role: 'backend',
+        name: 'alice',
+        base_url: 'http://127.0.0.1:4096',
+        session_id: 'sess-xyz',
+      },
+    }))
+    expect(result.agent_id).toBeDefined()
+    const row = db.prepare(
+      `SELECT client, opencode_base_url, opencode_session_id FROM agents WHERE team='default' AND name='alice'`
+    ).get() as {
+      client: string | null
+      opencode_base_url: string | null
+      opencode_session_id: string | null
+    }
+    expect(row).toEqual({
+      client: 'opencode',
+      opencode_base_url: 'http://127.0.0.1:4096',
+      opencode_session_id: 'sess-xyz',
+    })
     await transport.close()
     await client.close()
     db.close()

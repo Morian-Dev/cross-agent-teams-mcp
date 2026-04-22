@@ -31,6 +31,7 @@ describe('opencode transport dispatch', () => {
         },
       },
       {
+        client: 'claude-code',
         delivery: { kind: 'claude-channel', channel_session_id: 'csid-bob' },
         tmux_pane_id: '%99',
         opencode_base_url: 'http://127.0.0.1:4096',
@@ -49,7 +50,7 @@ describe('opencode transport dispatch', () => {
     expect(tmux.calls).toHaveLength(0)
   })
 
-  it('uses opencode when channel sink absent and opencode bound', async () => {
+  it('falls back to tmux when channel sink absent for a claude-code target', async () => {
     const fanout = new ChannelWakeFanout()
     const tmux = createTmuxStub({ ok: true, pane_tail_before: 'before', pane_tail_after: 'after' })
 
@@ -60,6 +61,7 @@ describe('opencode transport dispatch', () => {
         opencodeDispatch: async () => ({ ok: true }),
       },
       {
+        client: 'claude-code',
         delivery: { kind: 'claude-channel', channel_session_id: 'csid-bob' },
         tmux_pane_id: '%99',
         opencode_base_url: 'http://127.0.0.1:4096',
@@ -70,11 +72,12 @@ describe('opencode transport dispatch', () => {
 
     expect(result).toEqual({
       ok: true,
-      transport_used: 'opencode-server',
-      base_url: 'http://127.0.0.1:4096',
-      session_id: 'sess-bob',
+      transport_used: 'tmux-poke',
+      pane_id: '%99',
+      pane_tail_before: 'before',
+      pane_tail_after: 'after',
     })
-    expect(tmux.calls).toHaveLength(0)
+    expect(tmux.calls).toEqual([{ pane_id: '%99', content: 'wake up' }])
   })
 
   it('falls back to tmux when opencode not bound', async () => {
@@ -84,6 +87,7 @@ describe('opencode transport dispatch', () => {
     const result = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
       {
+        client: 'opencode',
         delivery: { kind: 'none' },
         tmux_pane_id: '%99',
         opencode_base_url: null,
@@ -106,6 +110,7 @@ describe('opencode transport dispatch', () => {
     const result = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
       {
+        client: 'opencode',
         delivery: { kind: 'none' },
         tmux_pane_id: null,
         opencode_base_url: null,
@@ -116,7 +121,7 @@ describe('opencode transport dispatch', () => {
 
     expect(result).toEqual({
       error: 'no_transport_available',
-      detail: { channel_subscribed: false, opencode_bound: false, tmux_pane_set: false },
+      detail: { opencode_bound: false, tmux_pane_set: false },
     })
   })
 
@@ -134,6 +139,7 @@ describe('opencode transport dispatch', () => {
         }),
       },
       {
+        client: 'opencode',
         delivery: { kind: 'none' },
         tmux_pane_id: null,
         opencode_base_url: 'http://127.0.0.1:4096',
@@ -164,8 +170,9 @@ describe('opencode transport dispatch', () => {
         }),
       },
       {
+        client: 'opencode',
         delivery: { kind: 'none' },
-        tmux_pane_id: null,
+        tmux_pane_id: '%99',
         opencode_base_url: 'http://127.0.0.1:4096',
         opencode_session_id: 'sess-missing',
       },
@@ -173,11 +180,12 @@ describe('opencode transport dispatch', () => {
     )
 
     expect(result).toEqual({
-      error: 'opencode_session_not_found',
-      detail: { message: 'Session not found' },
-      transport_used: 'opencode-server',
+      ok: true,
+      transport_used: 'tmux-poke',
+      pane_id: '%99',
+      pane_tail_before: 'before',
+      pane_tail_after: 'after',
     })
-    expect(tmux.calls).toHaveLength(0)
   })
 
   it('returns opencode_session_busy when session is processing', async () => {
@@ -194,8 +202,9 @@ describe('opencode transport dispatch', () => {
         }),
       },
       {
+        client: 'opencode',
         delivery: { kind: 'none' },
-        tmux_pane_id: null,
+        tmux_pane_id: '%99',
         opencode_base_url: 'http://127.0.0.1:4096',
         opencode_session_id: 'sess-busy',
       },
@@ -203,11 +212,12 @@ describe('opencode transport dispatch', () => {
     )
 
     expect(result).toEqual({
-      error: 'opencode_session_busy',
-      detail: { message: 'Session is busy' },
-      transport_used: 'opencode-server',
+      ok: true,
+      transport_used: 'tmux-poke',
+      pane_id: '%99',
+      pane_tail_before: 'before',
+      pane_tail_after: 'after',
     })
-    expect(tmux.calls).toHaveLength(0)
   })
 
   it('returns opencode_request_failed for other errors', async () => {
@@ -224,8 +234,9 @@ describe('opencode transport dispatch', () => {
         }),
       },
       {
+        client: 'opencode',
         delivery: { kind: 'none' },
-        tmux_pane_id: null,
+        tmux_pane_id: '%99',
         opencode_base_url: 'http://127.0.0.1:4096',
         opencode_session_id: 'sess-err',
       },
@@ -233,10 +244,11 @@ describe('opencode transport dispatch', () => {
     )
 
     expect(result).toEqual({
-      error: 'opencode_request_failed',
-      detail: 'Internal server error',
-      transport_used: 'opencode-server',
+      ok: true,
+      transport_used: 'tmux-poke',
+      pane_id: '%99',
+      pane_tail_before: 'before',
+      pane_tail_after: 'after',
     })
-    expect(tmux.calls).toHaveLength(0)
   })
 })

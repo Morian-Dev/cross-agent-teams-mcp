@@ -36,9 +36,9 @@ node scripts/register-codex-self.mjs --name gpt --team default --role default --
 
 如果你希望 daemon 通过 Codex 自带的 websocket app-server 唤醒一个正在运行的 Codex thread, 可以在 agent 侧启动 app-server, 然后把 `delivery.kind='codex-appserver'` 注册到 daemon.
 
-优先推荐直接用高层工具 `register_codex_self`.  它会把你显式提供的 `thread_id` 注册成 `codex-appserver` delivery, 但不会自动绑定 tmux pane.  如果你还需要 tmux fallback delivery, 再单独调用 `bind_runtime_identity(...)`.
+优先推荐直接用统一入口 `register_agent`, 并显式带上 `client: "codex"` 和 `thread_id`.  它会把你显式提供的 `thread_id` 注册成 `codex-appserver` delivery, 但不会自动绑定 tmux pane.  如果你还需要 tmux fallback delivery, 再单独调用 `bind_runtime_identity(...)`.
 
-`register_codex_self` 不会再根据 loaded threads 自动猜“当前调用者自己的 thread”.  daemon 没有协议级信号把当前 MCP 调用者和某个 Codex loaded thread 强绑定.  如果你省略 `thread_id`, 工具会返回 `thread_id_required`, 并把当前可恢复的 thread ids 放在 detail 里供排查, 但不会继续注册.
+`register_agent({ client: "codex", ... })` 不会再根据 loaded threads 自动猜“当前调用者自己的 thread”.  daemon 没有协议级信号把当前 MCP 调用者和某个 Codex loaded thread 强绑定.  如果你省略 `thread_id`, 工具会返回 `thread_id_required`, 并把当前可恢复的 thread ids 放在 detail 里供排查, 但不会继续注册.
 
 ### 1. 启动 app-server
 
@@ -76,7 +76,9 @@ codex --remote ws://127.0.0.1:8799 --remote-auth-token-env CODEX_REMOTE_TOKEN
 更简单的推荐用法:
 
 ```text
-register_codex_self({
+register_agent({
+  client: "codex",
+  model: "gpt-5",
   name: "lead",
   team: "default",
   role: "worker",
@@ -87,7 +89,9 @@ register_codex_self({
 可选覆盖:
 
 ```text
-register_codex_self({
+register_agent({
+  client: "codex",
+  model: "gpt-5",
   name: "lead",
   team: "default",
   role: "worker",
@@ -110,7 +114,7 @@ register_codex_self({
 
 补充说明:
 
-- `register_codex_self` 只负责 Codex delivery 绑定
+- `register_agent({ client: "codex", ... })` 是新的推荐入口
 - `bind_runtime_identity` 才是写入 `tmux_pane_id` 的路径
 - `detect_tmux_pane(...)` 仅用于调试
 

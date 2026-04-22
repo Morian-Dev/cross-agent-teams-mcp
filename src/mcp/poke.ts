@@ -56,6 +56,7 @@ export type PokeResult =
 
 interface TargetRow {
   agent_id: string
+  client: import('../lib/client-kind.js').ClientKind | null
   team: string
   tmux_pane_id: string | null
   opencode_base_url: string | null
@@ -139,6 +140,7 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
     .prepare(
       `SELECT
          agent_id,
+         client,
          team,
          tmux_pane_id,
          opencode_base_url,
@@ -169,7 +171,7 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
     if (delivery.kind === 'codex-appserver') {
       return dispatchPoke(
         { tmuxPoke: tmuxPokeImpl },
-        { delivery, tmux_pane_id: target.tmux_pane_id, opencode_base_url: target.opencode_base_url, opencode_session_id: target.opencode_session_id },
+        { client: target.client, delivery, tmux_pane_id: target.tmux_pane_id, opencode_base_url: target.opencode_base_url, opencode_session_id: target.opencode_session_id },
         { content: input.prompt, meta: {} }
       )
     }
@@ -191,7 +193,7 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
 
   return dispatchPoke(
     { channelWakeFanout: fanout, tmuxPoke: tmuxPokeImpl },
-    { delivery, tmux_pane_id: target.tmux_pane_id, opencode_base_url: target.opencode_base_url, opencode_session_id: target.opencode_session_id },
+    { client: target.client, delivery, tmux_pane_id: target.tmux_pane_id, opencode_base_url: target.opencode_base_url, opencode_session_id: target.opencode_session_id },
     { content: input.prompt, meta: {} }
   )
 }

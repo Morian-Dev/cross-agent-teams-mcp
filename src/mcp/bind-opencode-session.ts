@@ -45,6 +45,7 @@ export class BindOpencodeSessionService {
     const sessionId = input.session_id?.trim()
     if (!sessionId) return { error: 'invalid_opencode_session_id' }
 
+    this.repo.setClient(input.callerAgentId, 'opencode')
     this.repo.setOpencodeSession(input.callerAgentId, baseUrl, sessionId)
     return { ok: true }
   }

@@ -62,14 +62,16 @@ curl http://127.0.0.1:9100/health
 
 ## Codex App-Server Delivery
 
-如果你平时主要在 Codex 里使用, 更推荐直接调用 `register_codex_self`.  它会连接本地 Codex app-server, 用调用者显式提供的 `thread_id` 把当前会话注册成 `codex-appserver` delivery.  它不会自动绑定 tmux pane.  如果你还需要 tmux 作为兜底唤醒路径, 请在注册成功后单独调用 `bind_runtime_identity(...)`.
+如果你平时主要在 Codex 里使用, 更推荐直接调用 `register_agent({ client: "codex", ... })`.  它会用调用者显式提供的 `thread_id` 把当前会话注册成 `codex-appserver` delivery, 同时保持统一入口.  它不会自动绑定 tmux pane.  如果你还需要 tmux 作为兜底唤醒路径, 请在注册成功后单独调用 `bind_runtime_identity(...)`.
 
-`register_codex_self` 不再根据 `thread/loaded/list` 去猜“当前调用者自己的 thread”.  daemon 仅凭 MCP session 无法安全判断 loaded threads 里哪一个属于当前调用者.  如果省略 `thread_id`, 工具会返回 `thread_id_required`, 并附带可恢复的 thread id 列表供排查, 但不会继续注册.
+`register_agent({ client: "codex", ... })` 不再根据 `thread/loaded/list` 去猜“当前调用者自己的 thread”.  daemon 仅凭 MCP session 无法安全判断 loaded threads 里哪一个属于当前调用者.  如果省略 `thread_id`, 工具会返回 `thread_id_required`, 并附带可恢复的 thread id 列表供排查, 但不会继续注册.
 
 最简用法:
 
 ```text
-register_codex_self({
+register_agent({
+  client: "codex",
+  model: "gpt-5",
   name: "lead",
   team: "default",
   role: "worker",
@@ -99,7 +101,9 @@ bind_runtime_identity({
 如果本地不是默认地址, 可以显式覆盖 `ws_url`:
 
 ```text
-register_codex_self({
+register_agent({
+  client: "codex",
+  model: "gpt-5",
   name: "lead",
   team: "default",
   role: "worker",
@@ -111,7 +115,9 @@ register_codex_self({
 如果 app-server 开启了 Bearer token, 可以传 `auth_token_ref`, 它的值是 daemon 进程可见的环境变量名:
 
 ```text
-register_codex_self({
+register_agent({
+  client: "codex",
+  model: "gpt-5",
   name: "lead",
   team: "default",
   role: "worker",
@@ -122,6 +128,7 @@ register_codex_self({
 
 行为说明:
 
+- `register_agent({ client: "codex", ... })` 是新的推荐入口
 - 默认 `ws_url` 是 `ws://127.0.0.1:8799`
 - 成功注册必须显式提供 `thread_id`
 - tmux pane 绑定需要单独调用 `bind_runtime_identity(...)`
@@ -181,3 +188,51 @@ register_agent({
 - 当目标显式注册为 `codex-appserver` 时, daemon 不会自动 fallback 到 tmux
 
 更完整的 Codex CLI 配置和启动示例见 [docs/configs/codex-cli.md](docs/configs/codex-cli.md).
+
+## Claude Code Channel Delivery
+
+如果你平时主要在 Claude Code 里使用, 更推荐直接调用 `register_agent({ client: "claude-code", ... })`.  如果当前 host 已经知道 channel proxy 宣告的 `channel_session_id`, 可以在统一入口里直接完成 Claude channel 绑定:
+
+```text
+register_agent({
+  client: "claude-code",
+  model: "opus-4-7",
+  name: "lead",
+  team: "default",
+  role: "worker",
+  channel_session_id: "csid-abc"
+})
+```
+
+行为说明:
+
+- `client="claude-code"` 时, `poke` 会优先走 `claude-channel`, 失败后再回退到 `tmux`
+- 如果注册响应里仍然带 `hint`, 说明 tmux fallback 还没有完成绑定, 这时调用 `bind_runtime_identity(...)`
+- `bind_channel(...)` 仍然保留, 但它只是低层重绑工具, 适合已注册 row 在 proxy 切换到新 `channel_session_id` 后补绑
+
+更完整的 Claude Code 配置见 [docs/configs/claude-code.md](docs/configs/claude-code.md).
+
+## Opencode Delivery
+
+如果你平时主要在 opencode 里使用, 更推荐直接调用 `register_agent({ client: "opencode", ... })`.  如果当前 host 已经知道本地 opencode server 的 `base_url` 和 `session_id`, 可以在统一入口里直接完成 opencode server 绑定:
+
+```text
+register_agent({
+  client: "opencode",
+  model: "anthropic/claude-3-5-sonnet-20241022",
+  name: "worker-opencode",
+  team: "default",
+  role: "worker",
+  base_url: "http://127.0.0.1:4096",
+  session_id: "ses_xxxxx"
+})
+```
+
+行为说明:
+
+- `client="opencode"` 时, `poke` 会优先走 `opencode-server`, 失败后再回退到 `tmux`
+- `base_url` 只能是 loopback 地址, 比如 `127.0.0.1`, `localhost`, `::1`
+- 如果注册响应里仍然带 `hint`, 说明 tmux fallback 还没有完成绑定, 这时调用 `bind_runtime_identity(...)`
+- `bind_opencode_session(...)` 仍然保留, 但它只是低层重绑工具, 适合已注册 row 在本地 session 变化后补绑
+
+更完整的 opencode 配置见 [docs/configs/opencode.md](docs/configs/opencode.md).

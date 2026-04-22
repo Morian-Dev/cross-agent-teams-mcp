@@ -59,18 +59,20 @@ The daemon currently supports these wake-up paths:
 - `tmux_pane_id`: inject text directly into a target tmux pane
 - `delivery.kind='codex-appserver'`: resume a Codex thread over websocket and start a turn
 - `delivery.kind='claude-channel'`: bind a Claude channel session and deliver channel wake notifications
-- `opencode-server`: send a prompt to an opencode session via HTTP (auto-bound with `bind_opencode_session`)
+- `opencode-server`: send a prompt to an opencode session via HTTP
 
 ## Codex App-Server Delivery
 
-For daily Codex usage, the recommended entry point is `register_codex_self`.  It connects to the local Codex app-server and registers a caller-supplied `thread_id` as a `codex-appserver` delivery target.  It does not auto-bind a tmux pane.  If you want tmux fallback delivery, call `bind_runtime_identity(...)` after registration.
+For daily Codex usage, the recommended entry point is `register_agent({ client: "codex", ... })`.  It registers a caller-supplied `thread_id` as a `codex-appserver` delivery target through the unified registration API.  It does not auto-bind a tmux pane.  If you want tmux fallback delivery, call `bind_runtime_identity(...)` after registration.
 
-`register_codex_self` no longer guesses the caller's current thread from `thread/loaded/list`.  The daemon cannot safely infer "which loaded thread is mine" from the MCP session alone.  If `thread_id` is omitted, the tool returns `thread_id_required` with resumable thread ids for debugging instead of registering the wrong thread.
+`register_agent({ client: "codex", ... })` no longer guesses the caller's current thread from `thread/loaded/list`.  The daemon cannot safely infer "which loaded thread is mine" from the MCP session alone.  If `thread_id` is omitted, the tool returns `thread_id_required` with resumable thread ids for debugging instead of registering the wrong thread.
 
 Minimal example:
 
 ```text
-register_codex_self({
+register_agent({
+  client: "codex",
+  model: "gpt-5",
   name: "lead",
   team: "default",
   role: "worker",
@@ -100,7 +102,9 @@ bind_runtime_identity({
 Override the websocket URL when needed:
 
 ```text
-register_codex_self({
+register_agent({
+  client: "codex",
+  model: "gpt-5",
   name: "lead",
   team: "default",
   role: "worker",
@@ -112,7 +116,9 @@ register_codex_self({
 If the app-server requires a Bearer token, pass `auth_token_ref` as an environment variable name visible to the daemon:
 
 ```text
-register_codex_self({
+register_agent({
+  client: "codex",
+  model: "gpt-5",
   name: "lead",
   team: "default",
   role: "worker",
@@ -123,6 +129,7 @@ register_codex_self({
 
 Behavior notes:
 
+- `register_agent({ client: "codex", ... })` is the recommended entry point
 - Default `ws_url` is `ws://127.0.0.1:8799`
 - `thread_id` is required for successful registration
 - tmux pane binding is handled separately by `bind_runtime_identity`
@@ -184,7 +191,7 @@ For a more complete Codex CLI setup example, see [docs/configs/codex-cli.md](doc
 
 ## Opencode Delivery
 
-For opencode users who want server-based poke delivery (without relying on tmux), use `bind_opencode_session` after registering an agent.  This binds your agent row to an opencode server session so the daemon can deliver pokes via HTTP.
+For opencode users who want server-based poke delivery (without relying on tmux), the recommended path is `register_agent({ client: "opencode", base_url, session_id, ... })`.  This binds your agent row to an opencode server session so the daemon can deliver pokes via HTTP without a second tool call.
 
 First, start opencode with a fixed port (omit `--port` to use the default random port):
 
@@ -199,17 +206,15 @@ Then, in your opencode session, create a session and note its `id`:
 GET http://127.0.0.1:4096/session
 ```
 
-Register your agent and bind the opencode session:
+Register your agent through the unified entry point:
 
 ```text
 register_agent({
+  client: "opencode",
   model: "anthropic/claude-3-5-sonnet-20241022",
   name: "my-opencode-agent",
   team: "default",
-  role: "worker"
-})
-
-bind_opencode_session({
+  role: "worker",
   base_url: "http://127.0.0.1:4096",
   session_id: "ses_xxxxx"
 })
@@ -219,7 +224,7 @@ Requirements:
 
 - `base_url` must be a loopback address (`127.0.0.1`, `localhost`, or `::1`)
 - `session_id` is the opencode session identifier from the server
-- Only the registered agent can bind its own row (self-binding)
+- The server only accepts loopback opencode endpoints for self-binding
 
 On success, `poke()` will route to your opencode session via HTTP:
 
@@ -232,4 +237,8 @@ On success, `poke()` will route to your opencode session via HTTP:
 }
 ```
 
-The transport priority is: `claude-channel` > `opencode-server` > `tmux-poke`.  If your agent has both `channel_session_id` (Claude channel) and opencode session bound, the channel takes priority.
+Transport selection is now client-aware:
+
+- `client="claude-code"`: `claude-channel` first, then `tmux-poke`
+- `client="opencode"`: `opencode-server` first, then `tmux-poke`
+- `client="codex"`: `codex-appserver` first, then `tmux-poke`

@@ -31,4 +31,18 @@ If you started the daemon with `--token`, add the bearer header:
 
 `register_agent` now best-effort attempts runtime binding after the identity row is created, so tmux-based poke delivery can often come up without a second tool call.  Callers SHOULD NOT pass `tmux_pane_id` to `register_agent`.
 
-If registration still returns a `hint`, that means automatic runtime binding did not converge and there is still no usable `tmux_pane_id` for tmux-based poke delivery.  Call `bind_runtime_identity(...)` to bind explicitly.  Use `detect_tmux_pane(...)` only for debugging.  Non-tmux environments can ignore the hint.
+If your opencode host already knows its local server coordinates, you can bind opencode delivery directly through the unified entry point:
+
+```text
+register_agent({
+  client: "opencode",
+  model: "anthropic/claude-3-5-sonnet-20241022",
+  name: "worker-opencode",
+  team: "default",
+  role: "worker",
+  base_url: "http://127.0.0.1:4096",
+  session_id: "ses_xxxxx"
+})
+```
+
+If registration still returns a `hint`, that means automatic runtime binding did not converge and there is still no usable `tmux_pane_id` for tmux-based poke delivery.  Call `bind_runtime_identity(...)` to bind explicitly.  Use `detect_tmux_pane(...)` only for debugging.  `bind_opencode_session(...)` remains available as a low-level rebind tool when an already-registered opencode host needs to swap to a new local session.

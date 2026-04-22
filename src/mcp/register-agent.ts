@@ -3,10 +3,12 @@ import {
   validateDeliveryForWrite,
   type DeliveryValidationReason,
 } from '../lib/delivery-spec.js'
+import type { ClientKind } from '../lib/client-kind.js'
 import { AgentsRepo } from '../storage/agents-repo.js'
 
 export interface RegisterInput {
   connection_id: string
+  client?: ClientKind
   model: string
   name: string
   role?: string
@@ -44,6 +46,7 @@ export class RegisterAgentService {
     if (bound && bound !== input.connection_id) return { error: 'agent_id_collision' }
     this.connections.set(key, input.connection_id)
     return this.repo.register({
+      client: input.client,
       model: input.model,
       name: input.name,
       role,

@@ -235,6 +235,7 @@ export class RegisterCodexSelfService {
 
       const result = this.registerSvc.register({
         connection_id: input.connection_id,
+        client: 'codex',
         model: input.model ?? 'codex',
         name: input.name,
         role: input.role,

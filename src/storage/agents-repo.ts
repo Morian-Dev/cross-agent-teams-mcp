@@ -6,8 +6,10 @@ import {
   type DeliverySpec,
   type DeliveryRow,
 } from '../lib/delivery-spec.js'
+import type { ClientKind } from '../lib/client-kind.js'
 
 export interface RegisterInput {
+  client?: ClientKind
   model: string
   name: string
   role?: string
@@ -18,6 +20,7 @@ export interface RegisterInput {
 
 export interface AgentRow {
   agent_id: string
+  client: ClientKind | null
   team: string
   role: string
   name: string
@@ -38,6 +41,7 @@ export const ONLINE_MS = 5 * 60 * 1000
 
 type DbAgentRow = {
   agent_id: string
+  client: ClientKind | null
   team: string
   role: string
   name: string
@@ -52,6 +56,7 @@ function toAgentRow(row: DbAgentRow): AgentRow {
   const delivery = parseDeliveryRow(row)
   return {
     agent_id: row.agent_id,
+    client: row.client,
     team: row.team,
     role: row.role,
     name: row.name,
@@ -86,11 +91,12 @@ export class AgentsRepo {
     const preserveExistingDelivery = input.delivery === undefined ? 1 : 0
     this.db.prepare(
       `INSERT INTO agents (
-         agent_id, team, role, name, model, registered_at, last_seen_at,
+         agent_id, client, team, role, name, model, registered_at, last_seen_at,
          tmux_pane_id, delivery_kind, delivery_payload
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (team, name) DO UPDATE SET
+         client = COALESCE(excluded.client, client),
          role = excluded.role,
          model = excluded.model,
          last_seen_at = excluded.last_seen_at,
@@ -105,6 +111,7 @@ export class AgentsRepo {
          END`
     ).run(
       newId,
+      input.client ?? null,
       team,
       role,
       name,
@@ -128,6 +135,14 @@ export class AgentsRepo {
        SET delivery_kind=?, delivery_payload=?
        WHERE agent_id=?`
     ).run(serialized.delivery_kind, serialized.delivery_payload, agent_id)
+  }
+
+  setClient(agent_id: string, client: ClientKind): void {
+    this.db.prepare(
+      `UPDATE agents
+       SET client=?
+       WHERE agent_id=?`
+    ).run(client, agent_id)
   }
 
   setOpencodeSession(agent_id: string, base_url: string, session_id: string): void {
@@ -170,6 +185,7 @@ export class AgentsRepo {
     const rows = this.db.prepare(
       `SELECT
          agent_id,
+         client,
          team,
          role,
          name,
@@ -202,6 +218,7 @@ export class AgentsRepo {
     const row = this.db.prepare(
       `SELECT
          agent_id,
+         client,
          team,
          role,
          name,

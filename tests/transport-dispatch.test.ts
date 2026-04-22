@@ -25,6 +25,7 @@ describe('dispatchPoke', () => {
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
       {
+        client: 'claude-code',
         delivery: { kind: 'claude-channel', channel_session_id: 'csid-bob' },
         tmux_pane_id: '%99',
         opencode_base_url: null,
@@ -43,6 +44,7 @@ describe('dispatchPoke', () => {
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
       {
+        client: 'claude-code',
         delivery: { kind: 'claude-channel', channel_session_id: 'csid-bob' },
         tmux_pane_id: '%99',
         opencode_base_url: null,
@@ -59,7 +61,7 @@ describe('dispatchPoke', () => {
     const tmux = stubTmux({ ok: true, pane_tail_before: 'x', pane_tail_after: 'y' })
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
-      { delivery: { kind: 'none' }, tmux_pane_id: '%42', opencode_base_url: null, opencode_session_id: null },
+      { client: null, delivery: { kind: 'none' }, tmux_pane_id: '%42', opencode_base_url: null, opencode_session_id: null },
       { content: 'hi', meta: {} }
     )
     expect(res).toMatchObject({ ok: true, transport_used: 'tmux-poke' })
@@ -70,7 +72,7 @@ describe('dispatchPoke', () => {
     const tmux = stubTmux({ ok: true, pane_tail_before: '', pane_tail_after: '' })
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
-      { delivery: { kind: 'none' }, tmux_pane_id: null, opencode_base_url: null, opencode_session_id: null },
+      { client: null, delivery: { kind: 'none' }, tmux_pane_id: null, opencode_base_url: null, opencode_session_id: null },
       { content: 'hi', meta: {} }
     )
     expect(res).toEqual({
@@ -86,6 +88,7 @@ describe('dispatchPoke', () => {
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
       {
+        client: 'claude-code',
         delivery: { kind: 'claude-channel', channel_session_id: 'csid-x' },
         tmux_pane_id: null,
         opencode_base_url: null,
@@ -95,7 +98,7 @@ describe('dispatchPoke', () => {
     )
     expect(res).toEqual({
       error: 'no_transport_available',
-      detail: { channel_subscribed: false, opencode_bound: false, tmux_pane_set: false }
+      detail: { channel_subscribed: false, tmux_pane_set: false }
     })
   })
 
@@ -104,7 +107,7 @@ describe('dispatchPoke', () => {
     const tmux = stubTmux({ error: 'pane_dead', detail: 'no pane' })
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
-      { delivery: { kind: 'none' }, tmux_pane_id: '%42', opencode_base_url: null, opencode_session_id: null },
+      { client: null, delivery: { kind: 'none' }, tmux_pane_id: '%42', opencode_base_url: null, opencode_session_id: null },
       { content: 'hi', meta: {} }
     )
     expect(res).toMatchObject({ error: 'pane_dead', transport_used: 'tmux-poke' })
@@ -132,6 +135,7 @@ describe('dispatchPoke', () => {
         },
       },
       {
+        client: 'codex',
         delivery: {
           kind: 'codex-appserver',
           thread_id: '11111111-1111-4111-8111-111111111111',
@@ -158,7 +162,7 @@ describe('dispatchPoke', () => {
     expect(tmux.calls).toHaveLength(0)
   })
 
-  it('returns codex dispatcher failure without tmux fallback', async () => {
+  it('falls back to tmux when codex dispatcher fails', async () => {
     const fanout = new ChannelWakeFanout()
     const tmux = stubTmux({ ok: true, pane_tail_before: '', pane_tail_after: '' })
     const res = await dispatchPoke(
@@ -172,6 +176,7 @@ describe('dispatchPoke', () => {
         }),
       },
       {
+        client: 'codex',
         delivery: {
           kind: 'codex-appserver',
           thread_id: '11111111-1111-4111-8111-111111111111',
@@ -184,10 +189,11 @@ describe('dispatchPoke', () => {
       { content: 'hi', meta: {} }
     )
     expect(res).toEqual({
-      error: 'codex_connect_failed',
-      detail: 'ECONNREFUSED',
-      transport_used: 'codex-appserver',
+      ok: true,
+      transport_used: 'tmux-poke',
+      pane_id: '%42',
+      pane_tail_before: '',
+      pane_tail_after: '',
     })
-    expect(tmux.calls).toHaveLength(0)
   })
 })

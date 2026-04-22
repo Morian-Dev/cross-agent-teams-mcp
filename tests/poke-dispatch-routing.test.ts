@@ -23,6 +23,7 @@ describe('poke dispatch routes by delivery.kind', () => {
     const result = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
       {
+        client: 'claude-code',
         delivery: { kind: 'claude-channel', channel_session_id: 'csid-abc' },
         tmux_pane_id: '%42',
         opencode_base_url: null,
@@ -46,7 +47,7 @@ describe('poke dispatch routes by delivery.kind', () => {
 
     const result = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
-      { delivery: { kind: 'none' }, tmux_pane_id: '%42', opencode_base_url: null, opencode_session_id: null },
+      { client: null, delivery: { kind: 'none' }, tmux_pane_id: '%42', opencode_base_url: null, opencode_session_id: null },
       { content: 'wake up', meta: {} }
     )
 
@@ -64,7 +65,7 @@ describe('poke dispatch routes by delivery.kind', () => {
 
     const result = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
-      { delivery: { kind: 'none' }, tmux_pane_id: null, opencode_base_url: null, opencode_session_id: null },
+      { client: null, delivery: { kind: 'none' }, tmux_pane_id: null, opencode_base_url: null, opencode_session_id: null },
       { content: 'wake up', meta: {} }
     )
 
@@ -75,7 +76,7 @@ describe('poke dispatch routes by delivery.kind', () => {
     expect(tmux.calls).toHaveLength(0)
   })
 
-  it('routes codex-appserver to the Codex dispatcher and does not fall back to tmux', async () => {
+  it('routes codex-appserver to the Codex dispatcher before tmux fallback', async () => {
     const fanout = new ChannelWakeFanout()
     const tmux = createTmuxStub({ ok: true, pane_tail_before: 'before', pane_tail_after: 'after' })
 
@@ -90,6 +91,7 @@ describe('poke dispatch routes by delivery.kind', () => {
         }),
       },
       {
+        client: 'codex',
         delivery: {
           kind: 'codex-appserver',
           thread_id: '11111111-1111-4111-8111-111111111111',
@@ -110,7 +112,7 @@ describe('poke dispatch routes by delivery.kind', () => {
     expect(tmux.calls).toHaveLength(0)
   })
 
-  it('returns Codex transport failure without tmux fallback', async () => {
+  it('falls back to tmux when Codex transport fails', async () => {
     const fanout = new ChannelWakeFanout()
     const tmux = createTmuxStub({ ok: true, pane_tail_before: 'before', pane_tail_after: 'after' })
 
@@ -125,6 +127,7 @@ describe('poke dispatch routes by delivery.kind', () => {
         }),
       },
       {
+        client: 'codex',
         delivery: {
           kind: 'codex-appserver',
           thread_id: '11111111-1111-4111-8111-111111111111',
@@ -138,10 +141,11 @@ describe('poke dispatch routes by delivery.kind', () => {
     )
 
     expect(result).toEqual({
-      error: 'codex_turn_start_failed',
-      detail: { code: -32002, message: 'busy' },
-      transport_used: 'codex-appserver',
+      ok: true,
+      transport_used: 'tmux-poke',
+      pane_id: '%42',
+      pane_tail_before: 'before',
+      pane_tail_after: 'after',
     })
-    expect(tmux.calls).toHaveLength(0)
   })
 })

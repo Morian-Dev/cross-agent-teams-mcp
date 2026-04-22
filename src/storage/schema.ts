@@ -14,6 +14,7 @@ const DDL = [
   `CREATE INDEX IF NOT EXISTS idx_events_to_team_eventid ON events(to_team, event_id)`,
   `CREATE TABLE IF NOT EXISTS agents (
     agent_id TEXT PRIMARY KEY,
+    client TEXT,
     team TEXT NOT NULL,
     role TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -86,6 +87,7 @@ function migrateAgentsDeliveryColumns(db: Database.Database): void {
   if (!tableExists) return
   const cols = db.pragma('table_info(agents)') as Array<{ name: string }>
   const existing = new Set(cols.map(c => c.name))
+  const needClient = !existing.has('client')
   const needKind = !existing.has('delivery_kind')
   const needPayload = !existing.has('delivery_payload')
   const needRuntimeUiPid = !existing.has('runtime_ui_pid')
@@ -95,6 +97,7 @@ function migrateAgentsDeliveryColumns(db: Database.Database): void {
   const needOpencodeBaseUrl = !existing.has('opencode_base_url')
   const needOpencodeSessionId = !existing.has('opencode_session_id')
   if (
+    !needClient &&
     !needKind &&
     !needPayload &&
     !needRuntimeUiPid &&
@@ -105,6 +108,9 @@ function migrateAgentsDeliveryColumns(db: Database.Database): void {
     !needOpencodeSessionId
   ) return
   const tx = db.transaction(() => {
+    if (needClient) {
+      db.exec(`ALTER TABLE agents ADD COLUMN client TEXT`)
+    }
     if (needKind) {
       db.exec(`ALTER TABLE agents ADD COLUMN delivery_kind TEXT NOT NULL DEFAULT 'none'`)
     }
