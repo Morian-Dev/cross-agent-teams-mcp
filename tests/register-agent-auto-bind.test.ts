@@ -107,6 +107,63 @@ describe('register_agent auto runtime binding', () => {
     await app.close()
   })
 
+  it('prefers ui_pid when provided during registration', async () => {
+    bindRuntimeIdentityMock.mockResolvedValue({
+      ok: true,
+      tmux_pane_id: '%1902',
+      verification_mode: 'verified_pid_tty_pane',
+      tty: 'ttys026',
+      ui_pid: 25079,
+    })
+
+    const { startServer } = await import('../src/daemon/server.js')
+    const dir = tmp()
+    cleanups.push(dir)
+    const dbPath = join(dir, 'data.db')
+    const { app, port, host } = await startServer({ dbPath, port: 0 })
+    const url = new URL(`http://${host}:${port}/mcp`)
+    const t = new StreamableHTTPClientTransport(url)
+    const c = new Client({ name: 'codex-cli', version: '0.0.0' })
+    await c.connect(t)
+
+    const resp = await c.callTool({
+      name: 'register_agent',
+      arguments: { model: 'gpt-5', role: 'worker', name: 'alice', ui_pid: 25079 },
+    })
+    const obj = await parseTool(resp)
+
+    expect(obj.agent_id).toBeDefined()
+    expect(obj.hint).toBeUndefined()
+    expect(bindRuntimeIdentityMock).toHaveBeenCalledWith({
+      callerAgentId: expect.any(String),
+      agent: 'codex',
+      ui_pid: 25079,
+    })
+    expect(detectTmuxPaneMock).not.toHaveBeenCalled()
+
+    const db = openDb(dbPath)
+    applySchema(db)
+    const row = db.prepare(
+      'SELECT tmux_pane_id, runtime_ui_pid, runtime_tty, runtime_verification_mode FROM agents WHERE team=? AND name=?'
+    ).get('default', 'alice') as {
+      tmux_pane_id: string | null
+      runtime_ui_pid: number | null
+      runtime_tty: string | null
+      runtime_verification_mode: string | null
+    }
+    expect(row).toEqual({
+      tmux_pane_id: '%1902',
+      runtime_ui_pid: 25079,
+      runtime_tty: 'ttys026',
+      runtime_verification_mode: 'verified_pid_tty_pane',
+    })
+    db.close()
+
+    await t.close()
+    await c.close()
+    await app.close()
+  })
+
   it('falls back to a hint when automatic runtime binding does not converge', async () => {
     detectTmuxPaneMock.mockResolvedValue({ error: 'not_found', candidates: [] })
 

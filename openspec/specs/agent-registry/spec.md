@@ -144,7 +144,7 @@ The hint text MUST advise the caller that automatic runtime binding did not conv
 
 ### Requirement: register_agent reuses agent_id by (team, name, role) identity
 
-The `register_agent` MCP tool SHALL take `{ model: string, name: string, role?: string = 'default', team?: string = 'default', delivery?: DeliverySpec }` and:
+The `register_agent` MCP tool SHALL take `{ model: string, name: string, role?: string = 'default', team?: string = 'default', ui_pid?: number, delivery?: DeliverySpec }` and:
 
 1. Trim `name` and reject with a validation error if empty.
 2. Execute an atomic UPSERT keyed on `(team, name)`:
@@ -152,9 +152,10 @@ The `register_agent` MCP tool SHALL take `{ model: string, name: string, role?: 
    - If a row already exists for `(team, name)`: UPDATE that row's `role`, `model`, `last_seen_at`; preserve `agent_id`, `registered_at`, and `last_processed_event_id`; preserve the existing `tmux_pane_id` until a later automatic or explicit runtime-binding attempt writes a new usable value.
 3. After the identity row exists, best-effort attempt automatic runtime binding for this session:
    - The daemon MUST NOT accept caller-supplied pane ids or pane-detect hints through the MCP tool surface.
+   - If `ui_pid` is provided, the daemon MUST prefer the verified `ui_pid -> tty -> pane` runtime-binding path.
    - The daemon MUST infer a built-in matcher from local session evidence such as the MCP client's `clientInfo` and the supplied `model`.
    - If `delivery.kind` implies a specific built-in client, the daemon SHOULD prefer that matcher.
-   - The daemon MUST invoke the same pane detector behind `detect_tmux_pane` for the inferred matcher, and if detection succeeds, it MUST run the same verified persistence path as `bind_runtime_identity(...)` using the detected pane's tty plus pane id.
+   - If `ui_pid` is absent, the daemon MUST invoke the same pane detector behind `detect_tmux_pane` for the inferred matcher, and if detection succeeds, it MUST run the same verified persistence path as `bind_runtime_identity(...)` using the detected pane's tty plus pane id.
    - If matcher inference fails, or the detector/runtime binder returns `ambiguous_match`, `not_found`, `tmux_unavailable`, or any other non-success result, the daemon MUST treat this attempt as having no new pane id rather than failing the registration.
 4. Return `{ agent_id, team }` where `agent_id` is either the preserved or newly generated id.
 
@@ -172,6 +173,16 @@ The hint-on-missing-pane-id semantics (see Requirement "register_agent response 
 - **AND** verified runtime binding succeeds for `%1902`
 - **WHEN** the call is processed and succeeds
 - **THEN** the stored `tmux_pane_id` is `'%1902'`
+- **AND** the response object MUST NOT have a `hint` field
+
+#### Scenario: ui_pid drives automatic runtime binding during register_agent
+
+- **GIVEN** the caller invokes `register_agent({ model, name: 'alice', ui_pid: 25079 })`
+- **AND** internal client inference resolves to the Codex matcher
+- **AND** verified runtime binding via `ui_pid=25079` succeeds and resolves pane `%1902`
+- **WHEN** the call is processed and succeeds
+- **THEN** the stored `tmux_pane_id` is `'%1902'`
+- **AND** the stored `runtime_ui_pid` is `25079`
 - **AND** the response object MUST NOT have a `hint` field
 
 #### Scenario: New identity creates a fresh agent_id

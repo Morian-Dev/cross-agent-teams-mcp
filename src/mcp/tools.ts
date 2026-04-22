@@ -241,11 +241,20 @@ export function registerBusinessTools(
   }
 
   async function autoBindRuntimeIdentity(
-    args: { model: string; delivery?: { kind?: string } },
+    args: { model: string; delivery?: { kind?: string }; ui_pid?: number },
     callerAgentId: string
   ): Promise<boolean> {
     const inferredAgent = inferRuntimeAgentKind(args, getSessionClientInfo?.())
     if (!inferredAgent) return false
+
+    if (args.ui_pid !== undefined) {
+      const boundByPid = await bindRuntimeIdentitySvc.bind({
+        callerAgentId,
+        agent: inferredAgent,
+        ui_pid: args.ui_pid,
+      })
+      return 'ok' in boundByPid && boundByPid.ok
+    }
 
     const detected = await detectTmuxPane({ agent: inferredAgent })
     if (!('ok' in detected) || !detected.ok) return false
@@ -305,6 +314,7 @@ export function registerBusinessTools(
         'Register this session as an agent in a team.',
         'Calling this tool again with the same `(team, name, role)` identity reuses the existing',
         '`agent_id` and refreshes `tmux_pane_id` and `model`; no duplicate row is created.',
+        'When available, callers may pass `ui_pid` so automatic runtime binding can use verified pid → tty → pane evidence instead of heuristic pane detection.',
         'After registration, the daemon best-effort attempts runtime binding for recognized local clients so tmux-based poke delivery can come up without a second tool call.',
         'If automatic runtime binding does not converge, call `bind_runtime_identity(...)` explicitly so the daemon can verify and persist your pane binding.',
         '`detect_tmux_pane(...)` remains available as a debugging aid for ambiguous or missing matches, but it does not write registry state by itself.',
@@ -315,11 +325,13 @@ export function registerBusinessTools(
         name: z.string().min(1).refine(v => v.trim().length > 0, { message: 'name must not be empty' }),
         role: z.string().optional(),
         team: z.string().optional(),
+        ui_pid: z.number().int().positive().optional(),
         delivery: deliverySchema.optional(),
       }).strict()
     },
     async (args: {
       model: string; name: string; role?: string; team?: string;
+      ui_pid?: number;
       delivery?: { kind: string; [key: string]: unknown }
     }) => {
       // connection_id for collision detection must be the stable session id,
@@ -327,14 +339,14 @@ export function registerBusinessTools(
       const connectionId = getSessionId?.() ?? caller()
       if (!connectionId) return toText({ error: 'unknown_agent' })
       return run(async () => {
-        const res = registerSvc.register({
-          connection_id: connectionId,
-          model: args.model,
-          name: args.name,
-          role: args.role,
-          team: args.team,
-          delivery: args.delivery,
-        })
+          const res = registerSvc.register({
+            connection_id: connectionId,
+            model: args.model,
+            name: args.name,
+            role: args.role,
+            team: args.team,
+            delivery: args.delivery,
+          })
         if ('agent_id' in res) {
           if (onRegisterSuccess) {
             try { onRegisterSuccess(res.agent_id, res.team) } catch { /* best-effort */ }

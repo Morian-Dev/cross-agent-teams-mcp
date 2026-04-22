@@ -133,6 +133,7 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     const tool = tools.find(t => t.name === 'register_agent')
     expect(tool).toBeDefined()
     const d = tool!.description!
+    expect(d).toMatch(/ui_pid/)
     expect(d).toMatch(/best-effort attempts runtime binding|best-effort runtime binding/i)
     expect(d).toMatch(/bind_runtime_identity/)
     expect(d).toMatch(/detect_tmux_pane/)
