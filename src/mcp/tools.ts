@@ -27,6 +27,7 @@ import { BindOpencodeSessionService } from './bind-opencode-session.js'
 import { BindRuntimeIdentityService } from './bind-runtime-identity.js'
 import { RegisterCodexSelfService } from './register-codex-self.js'
 import { detectTmuxPane } from '../daemon/tmux-pane-detect.js'
+import type { DetectAgentKind } from '../daemon/tmux-pane-detect.js'
 
 export interface AgentIdHolder { current: string | undefined }
 
@@ -46,7 +47,9 @@ const detectTmuxPaneSchema = z.object({
   tty: z.string().optional(),
   title_contains: z.string().optional(),
   process_pattern: z.string().optional(),
-}).superRefine((value, ctx) => {
+})
+
+const detectTmuxPaneArgsSchema = detectTmuxPaneSchema.superRefine((value, ctx) => {
   if (value.agent === 'custom' && (!value.process_pattern || value.process_pattern.trim().length === 0)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -62,7 +65,9 @@ const bindRuntimeIdentitySchema = z.object({
   ui_tty: z.string().optional(),
   tmux_pane_id: z.string().min(1).optional(),
   process_pattern: z.string().optional(),
-}).superRefine((value, ctx) => {
+})
+
+const bindRuntimeIdentityArgsSchema = bindRuntimeIdentitySchema.superRefine((value, ctx) => {
   if (value.agent === 'custom' && (!value.process_pattern || value.process_pattern.trim().length === 0)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -158,6 +163,26 @@ export interface TransportLike {
   send(msg: Record<string, unknown>): Promise<void> | void
 }
 
+export interface SessionClientInfo {
+  name?: string
+  version?: string
+}
+
+function inferRuntimeAgentKind(
+  args: { delivery?: { kind?: string }; model: string },
+  clientInfo: SessionClientInfo | undefined
+): DetectAgentKind | undefined {
+  if (args.delivery?.kind === 'codex-appserver') return 'codex'
+
+  const raw = `${clientInfo?.name ?? ''} ${clientInfo?.version ?? ''} ${args.model}`.toLowerCase()
+  if (raw.includes('codex')) return 'codex'
+  if (raw.includes('gpt-')) return 'codex'
+  if (raw.includes('claude')) return 'claude-code'
+  if (raw.includes('opus') || raw.includes('sonnet')) return 'claude-code'
+  if (raw.includes('opencode')) return 'opencode'
+  return undefined
+}
+
 export function registerBusinessTools(
   server: McpServer,
   db: Database.Database,
@@ -166,7 +191,8 @@ export function registerBusinessTools(
   onRegisterSuccess?: RegisterSuccessHook,
   getSessionId?: () => string | undefined,
   channelWakeFanout?: ChannelWakeFanout,
-  getTransport?: () => TransportLike
+  getTransport?: () => TransportLike,
+  getSessionClientInfo?: () => SessionClientInfo | undefined
 ): void {
   const agents = new AgentsRepo(db)
   const events = new EventsOutbox(db)
@@ -214,6 +240,25 @@ export function registerBusinessTools(
     return c
   }
 
+  async function autoBindRuntimeIdentity(
+    args: { model: string; delivery?: { kind?: string } },
+    callerAgentId: string
+  ): Promise<boolean> {
+    const inferredAgent = inferRuntimeAgentKind(args, getSessionClientInfo?.())
+    if (!inferredAgent) return false
+
+    const detected = await detectTmuxPane({ agent: inferredAgent })
+    if (!('ok' in detected) || !detected.ok) return false
+
+    const bound = await bindRuntimeIdentitySvc.bind({
+      callerAgentId,
+      agent: inferredAgent,
+      ui_tty: detected.pane.tty,
+      tmux_pane_id: detected.pane.pane_id,
+    })
+    return 'ok' in bound && bound.ok
+  }
+
   // register_agent — bootstrap: callable before an agents row exists for this session
   server.registerTool(
     'detect_tmux_pane',
@@ -235,12 +280,19 @@ export function registerBusinessTools(
       title_contains?: string
       process_pattern?: string
     }) => run(async () => {
+      const parsed = detectTmuxPaneArgsSchema.safeParse(args)
+      if (!parsed.success) {
+        return {
+          error: 'invalid_arguments' as const,
+          detail: parsed.error.issues.map(issue => issue.message).join('; '),
+        }
+      }
       return detectTmuxPane({
-        agent: args.agent,
-        cwd: args.cwd,
-        tty: args.tty,
-        title_contains: args.title_contains,
-        process_pattern: args.process_pattern,
+        agent: parsed.data.agent,
+        cwd: parsed.data.cwd,
+        tty: parsed.data.tty,
+        title_contains: parsed.data.title_contains,
+        process_pattern: parsed.data.process_pattern,
       })
     })
   )
@@ -253,10 +305,10 @@ export function registerBusinessTools(
         'Register this session as an agent in a team.',
         'Calling this tool again with the same `(team, name, role)` identity reuses the existing',
         '`agent_id` and refreshes `tmux_pane_id` and `model`; no duplicate row is created.',
-        'This tool only registers identity and delivery metadata; it does NOT try to guess tmux panes during registration.',
-        'If you need tmux-based poke delivery, call `bind_runtime_identity(...)` after registration so the daemon can verify and persist your pane binding.',
-        '`detect_tmux_pane(...)` remains available as a debugging aid for ambiguous or missing matches, but it does not write registry state.',
-        'When registration still has no usable `tmux_pane_id`, tmux-based poke delivery stays unavailable until a later runtime binding succeeds.'
+        'After registration, the daemon best-effort attempts runtime binding for recognized local clients so tmux-based poke delivery can come up without a second tool call.',
+        'If automatic runtime binding does not converge, call `bind_runtime_identity(...)` explicitly so the daemon can verify and persist your pane binding.',
+        '`detect_tmux_pane(...)` remains available as a debugging aid for ambiguous or missing matches, but it does not write registry state by itself.',
+        'When registration still has no usable `tmux_pane_id`, tmux-based poke delivery stays unavailable until automatic or explicit runtime binding succeeds.'
       ].join(' '),
       inputSchema: z.object({
         model: z.string(),
@@ -289,10 +341,14 @@ export function registerBusinessTools(
           } else if (fanout) {
             try { fanout.rebind(res.agent_id, res.team) } catch { /* best-effort */ }
           }
+          const autoBound = !suppressTmuxHint(args)
+            ? await autoBindRuntimeIdentity(args, res.agent_id)
+            : false
+          if (autoBound) return res
           if (!suppressTmuxHint(args)) {
             return {
               ...res,
-              hint: "No usable tmux_pane_id is bound yet — cross-agent poke delivery via tmux is off. Call `register_agent` first, then `bind_runtime_identity(...)` so the daemon can verify and persist your pane binding. `detect_tmux_pane(...)` is available for debugging only. Claude Code users who loaded the cross-agent-teams-mcp channel plugin can also route pokes via channel_session_id — that path does not require tmux binding."
+              hint: "No usable tmux_pane_id is bound yet — automatic runtime binding did not converge for this session, so cross-agent poke delivery via tmux is still off. Call `bind_runtime_identity(...)` to bind explicitly, or use `detect_tmux_pane(...)` for debugging. Claude Code users who loaded the cross-agent-teams-mcp channel plugin can also route pokes via channel_session_id — that path does not require tmux binding."
             }
           }
         }
@@ -682,6 +738,7 @@ export function registerBusinessTools(
       title: 'Bind runtime identity to caller',
       description: [
         'Bind the caller session\'s agent row to a verified tmux runtime identity.',
+        'Pass `agent` to choose the built-in process matcher (`codex`, `claude-code`, `opencode`), or use `custom` together with `process_pattern`.',
         'Prefer passing `ui_pid` for the visible agent UI process; the daemon verifies pid → tty → pane before persisting `tmux_pane_id`.',
         'If `ui_pid` is unavailable, pass `ui_tty` together with `tmux_pane_id` for a weaker but still verified binding path.',
         'This tool writes registry state; `detect_tmux_pane` is for debugging only.'
@@ -695,15 +752,22 @@ export function registerBusinessTools(
       tmux_pane_id?: string
       process_pattern?: string
     }) => {
+      const parsed = bindRuntimeIdentityArgsSchema.safeParse(args)
+      if (!parsed.success) {
+        return toText({
+          error: 'invalid_arguments',
+          detail: parsed.error.issues.map(issue => issue.message).join('; '),
+        })
+      }
       const who = requireAgent()
       if (typeof who !== 'string') return toText(who)
       return run(() => bindRuntimeIdentitySvc.bind({
         callerAgentId: who,
-        agent: args.agent,
-        ui_pid: args.ui_pid,
-        ui_tty: args.ui_tty,
-        tmux_pane_id: args.tmux_pane_id,
-        process_pattern: args.process_pattern,
+        agent: parsed.data.agent,
+        ui_pid: parsed.data.ui_pid,
+        ui_tty: parsed.data.ui_tty,
+        tmux_pane_id: parsed.data.tmux_pane_id,
+        process_pattern: parsed.data.process_pattern,
       }))
     }
   )

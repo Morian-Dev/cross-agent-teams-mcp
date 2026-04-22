@@ -53,6 +53,17 @@ describe('detect_tmux_pane tool', () => {
     const tools = await c.listTools()
     const tool = tools.tools.find(x => x.name === 'detect_tmux_pane')
     expect(tool).toBeDefined()
+    expect(tool!.inputSchema).toMatchObject({
+      type: 'object',
+      properties: expect.objectContaining({
+        agent: expect.anything(),
+        cwd: expect.anything(),
+        tty: expect.anything(),
+        title_contains: expect.anything(),
+        process_pattern: expect.anything(),
+      }),
+      required: expect.arrayContaining(['agent']),
+    })
 
     const resp = await c.callTool({
       name: 'detect_tmux_pane',

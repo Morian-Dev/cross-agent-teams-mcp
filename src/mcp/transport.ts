@@ -13,6 +13,10 @@ interface Session {
   server: McpServer
   sessionId: string
   agentIdHolder: AgentIdHolder
+  clientInfo?: {
+    name?: string
+    version?: string
+  }
 }
 
 export function mountMcp(
@@ -73,7 +77,7 @@ export function mountMcp(
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sid: string) => {
         sessionIdForCaller = sid
-        sessions.set(sid, { transport, server, sessionId: sid, agentIdHolder })
+        sessions.set(sid, { transport, server, sessionId: sid, agentIdHolder, clientInfo: undefined })
       }
     })
     transport.onclose = () => {
@@ -88,7 +92,21 @@ export function mountMcp(
         sessionOwners.delete(transport.sessionId)
       }
     }
-    registerBusinessTools(server, db, getCallerAgentId, fanout, onRegisterSuccess, () => sessionIdForCaller, channelWakeFanout, () => transport)
+    registerBusinessTools(
+      server,
+      db,
+      getCallerAgentId,
+      fanout,
+      onRegisterSuccess,
+      () => sessionIdForCaller,
+      channelWakeFanout,
+      () => transport,
+      () => {
+        const sid = sessionIdForCaller
+        if (!sid) return undefined
+        return sessions.get(sid)?.clientInfo
+      }
+    )
     server.connect(transport)
     return { transport, server, sessionId: '', agentIdHolder }
   }
@@ -140,6 +158,14 @@ export function mountMcp(
     }
 
     if (!session) { session = createSession() }
+    if (body?.method === 'initialize') {
+      const params = body.params as { clientInfo?: { name?: unknown; version?: unknown } } | undefined
+      const clientInfo = params?.clientInfo
+      session.clientInfo = {
+        name: typeof clientInfo?.name === 'string' ? clientInfo.name : undefined,
+        version: typeof clientInfo?.version === 'string' ? clientInfo.version : undefined,
+      }
+    }
     await session.transport.handleRequest(req.raw, reply.raw, body)
     return reply
   })

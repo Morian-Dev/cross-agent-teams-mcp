@@ -49,7 +49,18 @@ describe('bind_runtime_identity tool', () => {
     })
 
     const tools = await c.listTools()
-    expect(tools.tools.find(x => x.name === 'bind_runtime_identity')).toBeDefined()
+    const tool = tools.tools.find(x => x.name === 'bind_runtime_identity')
+    expect(tool).toBeDefined()
+    expect(tool!.inputSchema).toMatchObject({
+      type: 'object',
+      properties: expect.objectContaining({
+        agent: expect.anything(),
+        ui_pid: expect.anything(),
+        ui_tty: expect.anything(),
+        tmux_pane_id: expect.anything(),
+      }),
+      required: expect.arrayContaining(['agent']),
+    })
 
     const resp = await c.callTool({
       name: 'bind_runtime_identity',

@@ -40,6 +40,7 @@ describe('register_agent tool hint rule (tmux only)', () => {
     expect(typeof obj.hint).toBe('string')
     expect(obj.hint).toMatch(/tmux_pane_id/i)
     expect(obj.hint).toMatch(/bind_runtime_identity/)
+    expect(obj.hint).toMatch(/automatic runtime binding did not converge/i)
 
     await t.close(); await app.close()
   })

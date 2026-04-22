@@ -37,7 +37,7 @@ describe('register_agent tmux_pane_id hint', () => {
     expect(obj.team).toBe('default')
     expect(typeof obj.hint).toBe('string')
     expect(obj.hint).toMatch(/tmux_pane_id/i)
-    expect(obj.hint).toMatch(/register_agent/)
+    expect(obj.hint).toMatch(/automatic runtime binding did not converge/i)
     expect(obj.hint).toMatch(/bind_runtime_identity/)
     expect(obj.hint).toMatch(/agent/)
 

@@ -63,7 +63,7 @@ Every MCP tool invocation by an authenticated agent SHALL update the caller's `a
 
 ### Requirement: Tmux pane id persistence
 
-The daemon MAY resolve and persist a tmux pane identifier during registration to enable cross-session interrupt delivery.  The MCP tool surface MUST NOT require callers to supply `tmux_pane_id`.  The daemon treats the stored value as an opaque string — it does not parse or validate tmux pane id format, leaving the interpretation to downstream consumers.
+The daemon MAY end a successful registration with a persisted tmux pane identifier to enable cross-session interrupt delivery.  The MCP tool surface MUST NOT require callers to supply `tmux_pane_id`.  For recognized local clients, the daemon MAY best-effort attempt runtime binding immediately after the identity row is created; otherwise the pane can still be persisted later via explicit runtime-binding tools.  The daemon treats the stored value as an opaque string — it does not parse or validate tmux pane id format, leaving the interpretation to downstream consumers.
 
 #### Scenario: New registration with no resolved pane persists NULL
 
@@ -104,9 +104,9 @@ The detector SHALL scan tmux panes globally, map each pane to its tty, inspect t
 
 ### Requirement: register_agent response hints when tmux_pane_id missing
 
-The daemon MUST attach a `hint: string` field to the successful `register_agent` response if and only if the call still ends without a usable registered `tmux_pane_id` AND did NOT provide a non-tmux delivery in the same call.  "Not usable" means the field is (a) omitted, (b) an empty string, or (c) a string consisting only of whitespace.  A trimmed non-empty value suppresses the hint.  A pane id discovered automatically during registration also suppresses the hint.  Error envelopes MUST NEVER carry a hint.
+The daemon MUST attach a `hint: string` field to the successful `register_agent` response if and only if the call still ends without a usable registered `tmux_pane_id` after any best-effort automatic runtime-binding attempt AND did NOT provide a non-tmux delivery in the same call.  "Not usable" means the field is (a) omitted, (b) an empty string, or (c) a string consisting only of whitespace.  A trimmed non-empty value suppresses the hint.  Error envelopes MUST NEVER carry a hint.
 
-The hint text MUST advise the caller that tmux pane detection is internal to `register_agent` and that the caller does not provide pane ids or pane-detect hints through the register interface.  The hint MAY mention `detect_tmux_pane(...)` as a debugging aid for ambiguous or missing matches.  The text SHOULD mention cross-agent poke delivery as the motivation.
+The hint text MUST advise the caller that automatic runtime binding did not converge for this session and that explicit `bind_runtime_identity(...)` remains available as the fallback write path.  The hint MAY mention `detect_tmux_pane(...)` as a debugging aid for ambiguous or missing matches.  The text SHOULD mention cross-agent poke delivery as the motivation.
 
 #### Scenario: Register succeeds without a usable pane and returns a hint
 
@@ -122,7 +122,7 @@ The hint text MUST advise the caller that tmux pane detection is internal to `re
 - **AND** the deployment may execute shell tools in a helper pane while the visible agent UI runs in another pane
 - **WHEN** the daemon returns the success envelope
 - **THEN** the `hint` string contains the substring `detect_tmux_pane`
-- **AND** the hint string recommends using the detector for debugging rather than passing pane data into `register_agent`
+- **AND** the hint string recommends using the detector for debugging and `bind_runtime_identity(...)` for explicit fallback binding
 
 #### Scenario: Explicit tmux_pane_id input is rejected at the schema layer
 
@@ -147,26 +147,29 @@ The hint text MUST advise the caller that tmux pane detection is internal to `re
 The `register_agent` MCP tool SHALL take `{ model: string, name: string, role?: string = 'default', team?: string = 'default', delivery?: DeliverySpec }` and:
 
 1. Trim `name` and reject with a validation error if empty.
-2. Resolve an effective `tmux_pane_id` for this registration attempt:
+2. Execute an atomic UPSERT keyed on `(team, name)`:
+   - If no row exists for `(team, name)`: INSERT a new row with a freshly generated `agent_id = randomUUID()`, the provided `role`, `model`, `registered_at = now`, `last_seen_at = now`, and `tmux_pane_id = NULL` unless an earlier runtime binding already existed for that identity.
+   - If a row already exists for `(team, name)`: UPDATE that row's `role`, `model`, `last_seen_at`; preserve `agent_id`, `registered_at`, and `last_processed_event_id`; preserve the existing `tmux_pane_id` until a later automatic or explicit runtime-binding attempt writes a new usable value.
+3. After the identity row exists, best-effort attempt automatic runtime binding for this session:
    - The daemon MUST NOT accept caller-supplied pane ids or pane-detect hints through the MCP tool surface.
-   - The daemon MUST best-effort invoke the same pane detector behind `detect_tmux_pane` using internal built-in matcher selection.
-   - If `delivery.kind` implies a specific built-in client, the daemon SHOULD prefer that matcher; otherwise it MAY try the built-in matchers conservatively and only persist a pane when they converge on one unique result.
-   - If the detector returns `ambiguous_match`, `not_found`, or `tmux_unavailable`, the daemon MUST treat this attempt as having no new pane id rather than failing the registration.
-3. Execute an atomic UPSERT keyed on `(team, name)`:
-   - If no row exists for `(team, name)`: INSERT a new row with a freshly generated `agent_id = randomUUID()`, the provided `role`, `model`, `registered_at = now`, `last_seen_at = now`, and `tmux_pane_id` (or NULL when omitted/blank).
-   - If a row already exists for `(team, name)`: UPDATE that row's `role`, `model`, `last_seen_at`; preserve `agent_id`, `registered_at`, and `last_processed_event_id`; set `tmux_pane_id` to the new value when this registration attempt resolved a usable pane id, else preserve the existing value.
+   - The daemon MUST infer a built-in matcher from local session evidence such as the MCP client's `clientInfo` and the supplied `model`.
+   - If `delivery.kind` implies a specific built-in client, the daemon SHOULD prefer that matcher.
+   - The daemon MUST invoke the same pane detector behind `detect_tmux_pane` for the inferred matcher, and if detection succeeds, it MUST run the same verified persistence path as `bind_runtime_identity(...)` using the detected pane's tty plus pane id.
+   - If matcher inference fails, or the detector/runtime binder returns `ambiguous_match`, `not_found`, `tmux_unavailable`, or any other non-success result, the daemon MUST treat this attempt as having no new pane id rather than failing the registration.
 4. Return `{ agent_id, team }` where `agent_id` is either the preserved or newly generated id.
 
 The returned `agent_id` MUST be considered the stable identity for this `(team, name)` pair across reconnects AND across role changes. Changing the `role` parameter on a subsequent register does NOT produce a new `agent_id`; it updates the existing row's `role` column in place. The MCP session id is an orthogonal transport-level artifact and MUST NOT be conflated with `agent_id`.
 
-When a registration attempt resolves a usable `tmux_pane_id`, its value MUST be persisted. If the attempt resolves no new pane id, the column value in the reuse case MUST remain the previously-persisted value; in the create-new case it MUST be NULL.
+When an automatic or explicit runtime-binding attempt resolves a usable `tmux_pane_id`, its value MUST be persisted. If the current registration attempt resolves no new pane id, the column value in the reuse case MUST remain the previously-persisted value; in the create-new case it MUST be NULL.
 
 The hint-on-missing-pane-id semantics (see Requirement "register_agent response hints when tmux_pane_id missing") apply unchanged.
 
-#### Scenario: Auto-detected pane is persisted during register_agent
+#### Scenario: Automatic runtime binding persists a detected pane during register_agent
 
 - **GIVEN** the caller invokes `register_agent({ model, name: 'alice' })`
-- **AND** internal built-in matcher selection converges on a single pane `%1902`
+- **AND** internal client inference resolves to the Codex matcher
+- **AND** the detector converges on a single pane `%1902`
+- **AND** verified runtime binding succeeds for `%1902`
 - **WHEN** the call is processed and succeeds
 - **THEN** the stored `tmux_pane_id` is `'%1902'`
 - **AND** the response object MUST NOT have a `hint` field
@@ -386,7 +389,7 @@ Validation failures SHALL return `{error: 'invalid_delivery', reason: ...}` with
 - **THEN** it returns `{error: 'invalid_delivery', reason: 'invalid_thread_id'}`
 - **AND** no row is inserted for that identity
 
-### Requirement: register_codex_self autodetects and registers a Codex app-server delivery
+### Requirement: register_codex_self registers a Codex app-server delivery without implicit tmux binding
 
 The daemon SHALL expose a tool `register_codex_self` for Codex remote sessions.  The tool accepts human-facing identity fields such as `name`, `team`, and `role`, plus optional `ws_url`, `auth_token_ref`, and `thread_id`.  It SHALL:
 
@@ -395,22 +398,20 @@ The daemon SHALL expose a tool `register_codex_self` for Codex remote sessions. 
 3. If `thread_id` is provided, attempt `thread/resume` only for that thread id.
 4. If `thread_id` is omitted, call `thread/loaded/list`, attempt `thread/resume` against the loaded thread ids, and return `{ error: 'thread_id_required', detail: { ws_url, thread_ids: [...] } }` instead of registering any thread.
 5. Register the caller as `delivery.kind='codex-appserver'` only after a caller-supplied `thread_id` has been confirmed resumable.
-6. Best-effort derive a single Codex tmux pane internally via the existing Codex pane-detection logic and persist it alongside the Codex delivery when successful.
-7. Treat tmux pane capture as best-effort.  If pane detection returns `not_found`, `ambiguous_match`, or `tmux_unavailable`, the tool MUST still succeed with the Codex delivery registration and MUST NOT fail the overall call solely because tmux pane discovery was incomplete.
+6. Leave tmux pane binding unchanged.  If the caller wants tmux fallback delivery, it MUST rely on the normal `register_agent` automatic binding path or invoke `bind_runtime_identity(...)` explicitly afterward.
 
 The daemon MUST NOT infer the caller's current Codex thread solely from the set of loaded or resumable threads.  The tool surface MUST NOT accept caller-supplied tmux pane ids or pane-detect hints.  When no new usable pane id is available, the persisted `tmux_pane_id` follows the normal registration semantics: omit on first insert yields `NULL`, omit on re-registration preserves the existing value.
 
 The tool is Codex-only.  If the websocket endpoint is unreachable or does not speak the expected Codex protocol, the tool SHALL return `{error: 'unsupported_client', detail: { expected: 'codex', reason: ..., ws_url, cause? }}` rather than guessing.
 
-#### Scenario: register_codex_self registers a caller-supplied thread_id and detected pane
+#### Scenario: register_codex_self registers a caller-supplied thread_id without changing tmux pane state
 
 - **GIVEN** the caller invokes `register_codex_self({ name: 'lead', team: 'default', role: 'worker', thread_id: '11111111-1111-4111-8111-111111111111' })`
 - **AND** `thread/resume` succeeds for `11111111-1111-4111-8111-111111111111`
-- **AND** Codex tmux pane detection returns a single pane `%1902`
 - **WHEN** the tool completes successfully
 - **THEN** it returns `{ agent_id, team: 'default', thread_id: '11111111-1111-4111-8111-111111111111', ws_url: 'ws://127.0.0.1:8799' }`
 - **AND** the caller's `agents` row is persisted with `delivery.kind='codex-appserver'`
-- **AND** the caller's `agents` row is persisted with `tmux_pane_id='%1902'`
+- **AND** the tool does not require tmux pane discovery to succeed
 
 #### Scenario: register_codex_self rejects explicit tmux override inputs at the tool layer
 
@@ -418,15 +419,13 @@ The tool is Codex-only.  If the websocket endpoint is unreachable or does not sp
 - **THEN** the MCP tool schema rejects the request as carrying an unknown top-level key
 - **AND** the tool does not accept caller-supplied tmux pane data
 
-#### Scenario: ambiguous pane detection does not block codex registration
+#### Scenario: explicit runtime binding can follow register_codex_self
 
-- **GIVEN** the caller invokes `register_codex_self({ name: 'lead', thread_id: '11111111-1111-4111-8111-111111111111' })`
-- **AND** `thread/resume` succeeds for `11111111-1111-4111-8111-111111111111`
-- **AND** Codex tmux pane detection returns `ambiguous_match`
-- **WHEN** the tool completes successfully
-- **THEN** it still returns `{ agent_id, team, thread_id: '11111111-1111-4111-8111-111111111111', ws_url }`
-- **AND** the caller's `agents` row is persisted with `delivery.kind='codex-appserver'`
-- **AND** the call does not fail with a tmux-related error
+- **GIVEN** the caller first succeeds with `register_codex_self({ name: 'lead', thread_id: '11111111-1111-4111-8111-111111111111' })`
+- **AND** the caller still has no usable persisted `tmux_pane_id`
+- **WHEN** the caller later invokes `bind_runtime_identity(...)` successfully
+- **THEN** the existing `delivery.kind='codex-appserver'` remains intact
+- **AND** the caller row gains the verified `tmux_pane_id` written by the runtime-binding path
 
 #### Scenario: re-registration preserves existing pane when no new pane is found
 

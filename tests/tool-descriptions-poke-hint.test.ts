@@ -128,31 +128,31 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     expect(d).toMatch(/< 200 characters|200 characters/)
   })
 
-  it('register_agent description documents separate runtime binding instead of in-call discovery', async () => {
+  it('register_agent description documents best-effort runtime binding plus explicit fallback', async () => {
     const tools = await listTools()
     const tool = tools.find(t => t.name === 'register_agent')
     expect(tool).toBeDefined()
     const d = tool!.description!
-    expect(d).toMatch(/does NOT try to guess tmux panes|does not try to guess tmux panes/i)
+    expect(d).toMatch(/best-effort attempts runtime binding|best-effort runtime binding/i)
     expect(d).toMatch(/bind_runtime_identity/)
     expect(d).toMatch(/detect_tmux_pane/)
     expect(d).toMatch(/tmux_pane_id/)
-    expect(d).not.toMatch(/do not pass pane ids|do not pass pane ids or pane-detect hints/i)
+    expect(d).toMatch(/recognized local clients|automatic|explicit runtime binding/i)
   })
 
-  it('register_agent description no longer documents internal matcher selection', async () => {
+  it('register_agent description avoids exposing matcher-selection details', async () => {
     const tools = await listTools()
     const tool = tools.find(t => t.name === 'register_agent')
     const d = tool!.description!
-    expect(d).not.toMatch(/converge|conservatively/i)
+    expect(d).not.toMatch(/conservatively|choose the built-in process matcher/i)
   })
 
-  it('register_agent description explains tmux remains unavailable until runtime binding succeeds', async () => {
+  it('register_agent description explains tmux remains unavailable until automatic or explicit binding succeeds', async () => {
     const tools = await listTools()
     const tool = tools.find(t => t.name === 'register_agent')
     const d = tool!.description!
     expect(d).toMatch(/tmux-based poke delivery stays unavailable/i)
-    expect(d).toMatch(/runtime binding succeeds/i)
+    expect(d).toMatch(/automatic or explicit runtime binding succeeds/i)
   })
 
   it('register_agent description states identity reuse on (team, name, role)', async () => {
@@ -169,6 +169,7 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     const tool = tools.find(t => t.name === 'bind_runtime_identity')
     expect(tool).toBeDefined()
     const d = tool!.description!
+    expect(d).toMatch(/agent/)
     expect(d).toMatch(/ui_pid/)
     expect(d).toMatch(/pid .* tty .* pane|pid → tty → pane/i)
     expect(d).toMatch(/detect_tmux_pane/)

@@ -20,9 +20,9 @@ Authorization = "Bearer YOUR_TOKEN"
 
 ## 方案 1, 使用 tmux 作为兜底 delivery
 
-`register_agent` 现在不再在注册时内部探测 tmux pane.  调用方也不再向 `register_agent` 传 `tmux_pane_id`.
+`register_agent` 现在会在 identity 注册成功后, 对已识别的本地客户端 best-effort 自动尝试 runtime 绑定, 这样 tmux poke 通常不需要再多调一次工具。  调用方也不再向 `register_agent` 传 `tmux_pane_id`.
 
-如果注册成功但响应里带了 `hint`, 说明当前还没有绑定可用的 `tmux_pane_id`.  这时调用 `bind_runtime_identity(...)` 完成 runtime 绑定.  `detect_tmux_pane(...)` 只作为调试工具, 不再负责写 registry.
+如果注册成功但响应里仍然带了 `hint`, 说明这次自动 runtime 绑定没有收敛, 当前还没有可用的 `tmux_pane_id`.  这时调用 `bind_runtime_identity(...)` 完成显式绑定.  `detect_tmux_pane(...)` 只作为调试工具, 不再负责写 registry.
 
 ## 方案 2, 使用 Codex app-server websocket delivery
 

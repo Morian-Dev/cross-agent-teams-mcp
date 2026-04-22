@@ -35,6 +35,6 @@ With `--token`:
 
 ## Tmux delivery notes
 
-`register_agent` no longer performs tmux pane detection during registration.  Callers SHOULD NOT pass `tmux_pane_id` to `register_agent`.
+`register_agent` now best-effort attempts runtime binding after the identity row is created, so tmux-based poke delivery can often come up without a second tool call.  Callers SHOULD NOT pass `tmux_pane_id` to `register_agent`.
 
-If registration succeeds but returns a `hint`, that means no usable `tmux_pane_id` is bound yet for tmux-based poke delivery.  Call `bind_runtime_identity(...)` after registration.  Use `detect_tmux_pane(...)` only for debugging.  Claude Code users with the channel plugin can also rely on `bind_channel(...)`, which does not depend on tmux.
+If registration still returns a `hint`, that means automatic runtime binding did not converge and there is still no usable `tmux_pane_id` for tmux-based poke delivery.  Call `bind_runtime_identity(...)` to bind explicitly.  Use `detect_tmux_pane(...)` only for debugging.  Claude Code users with the channel plugin can also rely on `bind_channel(...)`, which does not depend on tmux.
