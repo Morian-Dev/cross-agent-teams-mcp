@@ -20,7 +20,7 @@ export async function sendOpencodePrompt(
   deps: OpencodeTransportDeps = {}
 ): Promise<OpencodeTransportResult> {
   const fetchImpl = deps.fetch ?? fetch
-  const url = `${input.base_url.replace(/\/$/, '')}/v1/sessions/${encodeURIComponent(input.session_id)}/prompt`
+  const url = `${input.base_url.replace(/\/$/, '')}/session/${encodeURIComponent(input.session_id)}/prompt_async`
 
   let response: Response
   try {
@@ -28,8 +28,7 @@ export async function sendOpencodePrompt(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        message: input.prompt,
-        async: true,
+        parts: [{ type: 'text', text: input.prompt }],
       }),
     })
   } catch (cause) {
@@ -39,24 +38,9 @@ export async function sendOpencodePrompt(
     }
   }
 
+  if (response.status === 204) return { ok: true }
+
   const contentType = (response.headers.get('content-type') ?? '').toLowerCase()
-
-  if (response.ok) {
-    if (contentType.includes('application/json')) {
-      return { ok: true }
-    }
-    const preview = await response.text().catch(() => '')
-    return {
-      error: 'opencode_request_failed',
-      detail: {
-        reason: 'non_json_success_response',
-        http_status: response.status,
-        content_type: contentType || 'unknown',
-        body_preview: preview.slice(0, 120),
-      },
-    }
-  }
-
   let body: unknown
   if (contentType.includes('application/json')) {
     try {
@@ -67,15 +51,21 @@ export async function sendOpencodePrompt(
   } else {
     body = await response.text().catch(() => null)
   }
-
   const detail = body ?? `HTTP ${response.status}`
 
-  if (response.status === 404) {
-    return { error: 'opencode_session_not_found', detail }
-  }
+  if (response.status === 404) return { error: 'opencode_session_not_found', detail }
+  if (response.status === 409) return { error: 'opencode_session_busy', detail }
 
-  if (response.status === 409) {
-    return { error: 'opencode_session_busy', detail }
+  if (response.ok) {
+    return {
+      error: 'opencode_request_failed',
+      detail: {
+        reason: 'unexpected_success_status',
+        http_status: response.status,
+        content_type: contentType || 'unknown',
+        body_preview: typeof body === 'string' ? body.slice(0, 120) : body,
+      },
+    }
   }
 
   return { error: 'opencode_request_failed', detail }
