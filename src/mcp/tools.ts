@@ -305,7 +305,9 @@ export function registerBusinessTools(
     project_dir: z.string().min(1).optional(),
     client: clientSchema,
     client_name: z.string().min(1).optional(),
-    ui_pid: z.number().int().positive().optional(),
+    ui_pid: z.number().int().positive().optional().describe(
+      'STRONGLY RECOMMENDED. Visible agent UI process pid (e.g. Claude Code CLI pid — `$PPID` from a Bash tool call inside Claude Code). Enables one-shot pid → tty → pane binding at registration; without it, tmux-based cross-agent poke delivery typically stays off.'
+    ),
     channel_session_id: z.string().min(1).optional(),
     base_url: z.string().min(1).optional(),
     session_id: z.string().min(1).optional(),
@@ -365,7 +367,9 @@ export function registerBusinessTools(
     role: z.string().optional(),
     team: z.string().optional(),
     project_dir: z.string().min(1).optional(),
-    ui_pid: z.number().int().positive().optional(),
+    ui_pid: z.number().int().positive().optional().describe(
+      'STRONGLY RECOMMENDED. The Claude Code CLI pid (obtainable as `$PPID` from a Bash tool call inside Claude Code). Enables one-shot pid → tty → pane binding at registration; without it, tmux-based cross-agent poke delivery typically stays off until a separate `bind_runtime_identity(...)` call.'
+    ),
     channel_session_id: z.string().min(1).optional(),
   }).strict()
 
@@ -536,7 +540,7 @@ export function registerBusinessTools(
         'Opencode sessions can pass `client="opencode"` together with `base_url` and `session_id` to bind server delivery through this same tool.',
         'Codex sessions can pass `client="codex"` together with `thread_id` to register Codex app-server delivery through this same tool.',
         'When the end user has not explicitly specified `team`, callers should pass `project_dir` as the current working directory so the daemon derives a project-scoped default team from its basename; if omitted, it falls back to `default`.',
-        'When available, callers may pass `ui_pid` so automatic runtime binding can use verified pid → tty → pane evidence instead of heuristic pane detection.',
+        'STRONGLY RECOMMENDED: pass `ui_pid` unless it is truly unobtainable. Without it, automatic runtime binding usually fails to converge and tmux-based cross-agent poke delivery stays off until a separate `bind_runtime_identity(...)` call. From Claude Code, `$PPID` inside a Bash tool call is the `claude` CLI pid; for Codex/opencode/other harnesses, discover the UI pid from the host harness. With `ui_pid` the daemon binds via verified pid → tty → pane evidence in one shot.',
         'After registration, the daemon best-effort attempts runtime binding for recognized local clients so tmux-based poke delivery can come up without a second tool call.',
         'If automatic runtime binding does not converge, call `bind_runtime_identity(...)` explicitly so the daemon can verify and persist your pane binding.',
         '`detect_tmux_pane(...)` remains available as a debugging aid for ambiguous or missing matches, but it does not write registry state by itself.',
@@ -572,6 +576,7 @@ export function registerBusinessTools(
         'This tool always writes on the caller\'s current MCP session, so follow-up tools like get_inbox use the same identity immediately.',
         'If channel_session_id is provided, it binds claude-channel delivery through the same path used by register_agent({ client: "claude-code", ... }).',
         'When the end user has not explicitly specified `team`, callers should pass `project_dir` as the current working directory so the daemon derives a project-scoped default team from its basename; if omitted, it falls back to `default`.',
+        'STRONGLY RECOMMENDED: pass `ui_pid` (the Claude Code CLI pid — obtainable as `$PPID` from a Bash tool call). Without it, automatic runtime binding usually fails to converge and tmux-based cross-agent poke delivery stays off until a separate `bind_runtime_identity(...)` call. With `ui_pid` the daemon binds via verified pid → tty → pane evidence in one shot.',
         'model is optional here; when omitted it falls back to a Claude-specific default.'
       ].join(' '),
       inputSchema: registerClaudeSelfInputSchema
