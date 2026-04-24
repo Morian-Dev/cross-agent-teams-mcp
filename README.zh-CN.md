@@ -63,6 +63,8 @@ curl http://127.0.0.1:9100/health
 
 `register_agent(...)` 现在要求显式传 `client`.  一等运行时使用 `codex` / `claude-code` / `opencode`.  其它 agent harness 请传 `client: "custom"`, 并且可以选填 `client_name` 方便排查。
 
+如果同时传了 `ui_pid`, `client` 必须描述这个 `ui_pid` 背后的真实 runtime, 不是当前发起 MCP 调用的宿主。  例如, 在 Claude Code 里替 opencode pane 做注册时, 也要传 `client: "opencode"`。
+
 当用户没有显式指定 `team` 时, 调用方推荐传 `project_dir` 为当前工作目录.  daemon 会用该目录 basename 派生默认 team, 两者都不传时仍回落到 `"default"`.
 
 ## Codex App-Server Delivery

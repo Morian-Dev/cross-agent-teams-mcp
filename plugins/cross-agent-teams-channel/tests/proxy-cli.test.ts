@@ -177,6 +177,14 @@ describe('proxy CLI entrypoint (self-binding)', () => {
     expect(typeof subCall.args.channel_session_id).toBe('string')
     expect((subCall.args.channel_session_id as string).length).toBeGreaterThan(0)
 
+    // register_agent must carry claude_ui_pid and delivery={claude-channel,<csid>}
+    const regCall = daemon.calls.find(c => c.name === 'register_agent')!
+    expect(typeof regCall.args.claude_ui_pid).toBe('number')
+    expect(regCall.args.claude_ui_pid).toBeGreaterThan(0)
+    const delivery = regCall.args.delivery as { kind: string; channel_session_id: string } | undefined
+    expect(delivery?.kind).toBe('claude-channel')
+    expect(delivery?.channel_session_id).toBe(subCall.args.channel_session_id)
+
     // Close stdio — proxy must exit cleanly.
     proc.stdin.end()
     const exitCode: number | null = await new Promise((resolvePromise) => {

@@ -708,14 +708,14 @@ The tool SHALL require one of:
 If `ui_pid` is supplied, the daemon SHALL:
 
 1. Read the process tty and command from the local host.
-2. Verify the command matches the declared agent kind.
+2. Verify the command matches the declared agent kind and is not a known helper process for that agent.
 3. Resolve the tty to a tmux pane.
 4. Persist the verified `tmux_pane_id`, `runtime_ui_pid`, `runtime_tty`, `runtime_verification_mode`, and `runtime_bound_at`.
 
 If `ui_tty + tmux_pane_id` are supplied, the daemon SHALL:
 
 1. Verify the pane exists and its tty equals `ui_tty`
-2. Verify that tty hosts a process matching the declared agent kind
+2. Verify that tty hosts a process matching the declared agent kind and not only helper processes for that agent
 3. Persist the same runtime metadata, with `runtime_ui_pid = NULL`
 
 #### Scenario: bind_runtime_identity succeeds via ui_pid
@@ -725,6 +725,14 @@ If `ui_tty + tmux_pane_id` are supplied, the daemon SHALL:
 - **WHEN** `alice` invokes `bind_runtime_identity({ agent: 'codex', ui_pid: 81979 })`
 - **THEN** the response is `{ ok: true, tmux_pane_id: '%1902', verification_mode: 'verified_pid_tty_pane', tty: 'ttys026', ui_pid: 81979 }`
 - **AND** the caller row persists `tmux_pane_id='%1902'`
+
+#### Scenario: bind_runtime_identity rejects Codex helper process ids
+
+- **GIVEN** caller `alice` is already registered
+- **AND** `ui_pid` belongs to `codex app-server` whose tty maps to pane `%1993`
+- **WHEN** `alice` invokes `bind_runtime_identity({ agent: 'codex', ui_pid: 23201 })`
+- **THEN** the response is `{ error: 'agent_process_mismatch' }`
+- **AND** the caller row does not persist pane `%1993`
 
 #### Scenario: bind_runtime_identity succeeds via ui_tty plus pane id
 

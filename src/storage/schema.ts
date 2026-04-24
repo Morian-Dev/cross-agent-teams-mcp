@@ -24,6 +24,7 @@ const DDL = [
     last_seen_at TEXT NOT NULL,
     last_processed_event_id INTEGER NOT NULL DEFAULT 0,
     tmux_pane_id TEXT,
+    claude_ui_pid INTEGER,
     runtime_ui_pid INTEGER,
     runtime_tty TEXT,
     runtime_verification_mode TEXT,
@@ -110,6 +111,7 @@ function migrateAgentsDeliveryColumns(db: Database.Database): void {
   const needRuntimeBoundAt = !existing.has('runtime_bound_at')
   const needOpencodeBaseUrl = !existing.has('opencode_base_url')
   const needOpencodeSessionId = !existing.has('opencode_session_id')
+  const needClaudeUiPid = !existing.has('claude_ui_pid')
   if (
     !needClient &&
     !needClientName &&
@@ -120,7 +122,8 @@ function migrateAgentsDeliveryColumns(db: Database.Database): void {
     !needRuntimeVerificationMode &&
     !needRuntimeBoundAt &&
     !needOpencodeBaseUrl &&
-    !needOpencodeSessionId
+    !needOpencodeSessionId &&
+    !needClaudeUiPid
   ) return
   const tx = db.transaction(() => {
     if (needClient) {
@@ -152,6 +155,9 @@ function migrateAgentsDeliveryColumns(db: Database.Database): void {
     }
     if (needOpencodeSessionId) {
       db.exec(`ALTER TABLE agents ADD COLUMN opencode_session_id TEXT`)
+    }
+    if (needClaudeUiPid) {
+      db.exec(`ALTER TABLE agents ADD COLUMN claude_ui_pid INTEGER`)
     }
     if (needKind || needPayload) {
       db.exec(`UPDATE agents

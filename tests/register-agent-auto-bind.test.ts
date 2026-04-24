@@ -191,4 +191,47 @@ describe('register_agent auto runtime binding', () => {
     await c.close()
     await app.close()
   })
+
+  it('rejects registration when ui_pid does not match the declared client', async () => {
+    bindRuntimeIdentityMock.mockResolvedValue({ error: 'agent_process_mismatch' })
+
+    const { startServer } = await import('../src/daemon/server.js')
+    const dir = tmp()
+    cleanups.push(dir)
+    const dbPath = join(dir, 'data.db')
+    const { app, port, host } = await startServer({ dbPath, port: 0 })
+    const url = new URL(`http://${host}:${port}/mcp`)
+    const t = new StreamableHTTPClientTransport(url)
+    const c = new Client({ name: 'claude-code', version: '0.0.0' })
+    await c.connect(t)
+
+    const resp = await c.callTool({
+      name: 'register_agent',
+      arguments: {
+        client: 'claude-code',
+        model: 'opus-4-7',
+        role: 'worker',
+        name: 'alice',
+        ui_pid: 25079,
+      },
+    })
+    const obj = await parseTool(resp)
+
+    expect(obj).toEqual({
+      error: 'ui_pid_client_mismatch',
+      detail:
+        'ui_pid 25079 does not belong to client="claude-code". ' +
+        'Pass the runtime kind for the process behind ui_pid; for example, use client="opencode" when ui_pid points at an opencode process.',
+    })
+
+    const db = openDb(dbPath)
+    applySchema(db)
+    const row = db.prepare('SELECT COUNT(*) AS c FROM agents').get() as { c: number }
+    expect(row.c).toBe(0)
+    db.close()
+
+    await t.close()
+    await c.close()
+    await app.close()
+  })
 })

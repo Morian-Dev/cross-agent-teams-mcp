@@ -20,12 +20,15 @@ export interface RegisterInput {
   project_dir?: string
   tmux_pane_id?: string
   delivery?: unknown
+  claude_ui_pid?: number
+  runtime_ui_pid?: number
 }
 
 export type RegisterResult =
-  | { agent_id: string; team: string }
+  | { agent_id: string; team: string; rebound_host_agent_ids: string[] }
   | { error: 'agent_id_collision' }
   | { error: 'invalid_delivery'; reason: DeliveryValidationReason }
+  | { error: 'claude_ui_pid_requires_channel_proxy' }
 
 function identityKey(team: string, name: string): string {
   return `${team}\u0000${name}`
@@ -44,11 +47,15 @@ export class RegisterAgentService {
         : validateDeliveryForWrite(input.delivery)
     if (validated && 'error' in validated) return validated
 
+    const role = input.role ?? 'default'
+    if (input.claude_ui_pid !== undefined && role !== '__channel_proxy__') {
+      return { error: 'claude_ui_pid_requires_channel_proxy' }
+    }
+
     const team = deriveDefaultTeam({
       team: input.team,
       project_dir: input.project_dir,
     })
-    const role = input.role ?? 'default'
     const key = identityKey(team, input.name)
     const bound = this.connections.get(key)
     if (bound && bound !== input.connection_id) return { error: 'agent_id_collision' }
@@ -62,6 +69,8 @@ export class RegisterAgentService {
       team,
       tmux_pane_id: input.tmux_pane_id,
       delivery: validated?.ok,
+      claude_ui_pid: input.claude_ui_pid,
+      runtime_ui_pid: input.runtime_ui_pid,
     })
   }
 

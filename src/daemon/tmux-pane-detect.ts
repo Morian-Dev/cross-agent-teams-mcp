@@ -96,6 +96,13 @@ function commandHintScore(agent: DetectAgentKind, command: string): number {
   return 0
 }
 
+function isHelperProcess(agent: DetectAgentKind, command: string): boolean {
+  if (agent !== 'codex') return false
+  return /codex\s+app-server/i.test(command) ||
+    /Codex Computer Use\.app/i.test(command) ||
+    /SkyComputerUseClient/i.test(command)
+}
+
 function parsePaneRows(stdout: string): PaneRow[] {
   return stdout
     .split('\n')
@@ -175,7 +182,7 @@ function collectCandidates(
     if (titleFilter && !pane.title.toLowerCase().includes(titleFilter)) continue
 
     const matched_processes = (ttyMap.get(pane.tty) ?? []).filter((line) => {
-      if (/codex app-server/i.test(line)) return false
+      if (isHelperProcess(input.agent, line)) return false
       return pattern.test(line)
     })
     if (matched_processes.length === 0) continue

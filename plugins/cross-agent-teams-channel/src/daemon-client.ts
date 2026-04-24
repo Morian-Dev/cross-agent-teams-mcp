@@ -63,7 +63,12 @@ export async function runRegistrationSequence(
       model: 'proxy',
       role: '__channel_proxy__',
       name: `channel-proxy-${process.pid}`,
-      team: 'default'
+      team: 'default',
+      claude_ui_pid: process.ppid,
+      delivery: {
+        kind: 'claude-channel',
+        channel_session_id: config.channel_session_id,
+      },
     }
   })
   order.push('register_agent')

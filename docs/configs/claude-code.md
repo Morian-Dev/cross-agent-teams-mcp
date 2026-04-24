@@ -43,6 +43,8 @@ Claude Code 推荐优先在当前会话里调用 `register_claude_self(...)`.  �
 
 当用户没有显式指定 `team` 时, 推荐传 `project_dir` 为当前工作目录.  daemon 会用该目录 basename 派生默认 team, 两者都不传时仍回落到 `"default"`.
 
+如果你是在 Claude Code 里替别的 runtime 注册, 不要复用 `register_claude_self(...)`.  这时应该调用 `register_agent(...)`, 并让 `client` 匹配 `ui_pid` 背后的真实进程类型。  例如, `ui_pid` 指向 opencode 进程时, 传 `client: "opencode"`, 不是 `"claude-code"`。
+
 ```text
 register_claude_self({
   name: "lead",

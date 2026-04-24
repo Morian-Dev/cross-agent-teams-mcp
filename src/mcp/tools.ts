@@ -24,12 +24,14 @@ import type { SseFanout } from '../daemon/sse-fanout.js'
 import type { ChannelWakeFanout } from '../daemon/channel-wake-fanout.js'
 import { SubscribeChannelWakeService } from './subscribe-channel-wake.js'
 import { BindChannelService } from './bind-channel.js'
+import { AutoBindChannelService } from './auto-bind-channel.js'
 import { BindOpencodeSessionService } from './bind-opencode-session.js'
 import { BindRuntimeIdentityService } from './bind-runtime-identity.js'
 import { RegisterCodexSelfService } from './register-codex-self.js'
 import { UnregisterSelfService } from './unregister-self.js'
 import { toPublicAgentRow } from './agent-public-row.js'
 import { detectTmuxPane } from '../daemon/tmux-pane-detect.js'
+import { bindRuntimeIdentity } from '../daemon/runtime-identity.js'
 import type { DetectAgentKind } from '../daemon/tmux-pane-detect.js'
 import type { ClientKind } from '../lib/client-kind.js'
 
@@ -297,6 +299,40 @@ export function registerBusinessTools(
     return 'ok' in bound && bound.ok
   }
 
+  async function preflightUiPidClient(
+    args: {
+      client?: ClientKind
+      model: string
+      delivery?: { kind?: string }
+      ui_pid?: number
+    }
+  ): Promise<
+    | undefined
+    | {
+        error: 'ui_pid_client_mismatch'
+        detail: string
+      }
+  > {
+    if (args.ui_pid === undefined) return undefined
+    const inferredAgent = inferRuntimeAgentKind(args, getSessionClientInfo?.())
+    if (!inferredAgent) return undefined
+
+    const validated = await bindRuntimeIdentity({
+      agent: inferredAgent,
+      ui_pid: args.ui_pid,
+    })
+    if (!('error' in validated) || validated.error !== 'agent_process_mismatch') {
+      return undefined
+    }
+
+    return {
+      error: 'ui_pid_client_mismatch',
+      detail:
+        `ui_pid ${args.ui_pid} does not belong to client=\"${inferredAgent}\". ` +
+        'Pass the runtime kind for the process behind ui_pid; for example, use client="opencode" when ui_pid points at an opencode process.',
+    }
+  }
+
   const registerAgentInputSchema = z.object({
     model: z.string(),
     name: z.string().min(1).refine(v => v.trim().length > 0, { message: 'name must not be empty' }),
@@ -314,6 +350,9 @@ export function registerBusinessTools(
     thread_id: z.string().min(1).refine(v => v.trim().length > 0, { message: 'thread_id must not be empty' }).optional(),
     ws_url: z.string().optional(),
     auth_token_ref: z.string().min(1).optional(),
+    claude_ui_pid: z.number().int().positive().optional().describe(
+      "Internal field for the cross-agent-teams-mcp channel proxy.  Stores the proxy's parent Claude Code UI pid (`process.ppid`) so that Claude Code hosts registering in the same lineage can auto-bind their claude-channel delivery.  Only valid when role='__channel_proxy__'; rejected otherwise."
+    ),
     delivery: deliverySchema.optional(),
   }).strict()
 
@@ -359,6 +398,13 @@ export function registerBusinessTools(
         message: 'client_name is only allowed when client=custom',
       })
     }
+    if (value.claude_ui_pid !== undefined && value.role !== '__channel_proxy__') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['claude_ui_pid'],
+        message: "claude_ui_pid is only allowed when role='__channel_proxy__'",
+      })
+    }
   })
 
   const registerClaudeSelfInputSchema = z.object({
@@ -389,16 +435,23 @@ export function registerBusinessTools(
       thread_id?: string
       ws_url?: string
       auth_token_ref?: string
+      claude_ui_pid?: number
       delivery?: { kind: string; [key: string]: unknown }
     }
   ): Promise<unknown> {
     let nativeDeliveryBound = suppressTmuxHint(args)
+    let autoBoundChannelCsid: string | undefined
     const bindChannelSvc = channelWakeFanout
       ? new BindChannelService(db, channelWakeFanout)
+      : undefined
+    const autoBindChannelSvc = channelWakeFanout
+      ? new AutoBindChannelService(db, channelWakeFanout)
       : undefined
     const bindOpencodeSvc = new BindOpencodeSessionService(db)
     const connectionId = getSessionId?.() ?? caller()
     if (!connectionId) return { error: 'unknown_agent' }
+    const uiPidClientError = await preflightUiPidClient(args)
+    if (uiPidClientError) return uiPidClientError
     const hasCodexTransportFields =
       args.thread_id !== undefined ||
       args.ws_url !== undefined ||
@@ -428,6 +481,9 @@ export function registerBusinessTools(
             team: args.team,
             project_dir: args.project_dir,
             delivery: args.delivery,
+            claude_ui_pid: args.claude_ui_pid,
+            runtime_ui_pid:
+              args.client === 'claude-code' ? args.ui_pid : undefined,
           })
     if ('thread_id' in res && 'agent_id' in res) {
       nativeDeliveryBound = true
@@ -463,14 +519,34 @@ export function registerBusinessTools(
           return opencodeBind
         }
       }
+      if (
+        args.client === 'claude-code' &&
+        args.channel_session_id === undefined &&
+        args.ui_pid !== undefined &&
+        autoBindChannelSvc
+      ) {
+        const autoBind = autoBindChannelSvc.run({
+          callerAgentId: res.agent_id,
+          team: res.team,
+          ui_pid: args.ui_pid,
+        })
+        if (autoBind.ok) {
+          autoBoundChannelCsid = autoBind.channel_session_id
+          nativeDeliveryBound = true
+        }
+      }
       const autoBound = await autoBindRuntimeIdentity(args, res.agent_id)
-      if (autoBound) return res
+      const envelope = autoBoundChannelCsid !== undefined
+        ? { ...res, channel_session_id: autoBoundChannelCsid }
+        : res
+      if (autoBound) return envelope
       if (!nativeDeliveryBound) {
         return {
-          ...res,
+          ...envelope,
           hint: "No usable tmux_pane_id is bound yet — automatic runtime binding did not converge for this session, so cross-agent poke delivery via tmux is still off. Call `bind_runtime_identity(...)` to bind explicitly, or use `detect_tmux_pane(...)` for debugging. Claude Code users who loaded the cross-agent-teams-mcp channel plugin can also route pokes via channel_session_id — that path does not require tmux binding."
         }
       }
+      return envelope
     }
     return res
   }
@@ -542,6 +618,7 @@ export function registerBusinessTools(
         'Requests such as "register to xats" or "register to cross-agent-teams" refer to this MCP service, not to the `team` field; do not set `team` to `xats` or `cross-agent-teams` from those phrases.',
         'Do not treat the bare word "register" as a request for this tool unless the current conversation is already about cross-agent-teams registration.',
         'When the end user has not explicitly specified `team`, callers should pass `project_dir` as the current working directory so the daemon derives a project-scoped default team from its basename; if omitted, it falls back to `default`.',
+        '`client` must describe the runtime behind `ui_pid`, not merely the current MCP caller. For example, if `ui_pid` points at an opencode process, pass `client="opencode"` even when the registration request is issued from Claude Code.',
         'STRONGLY RECOMMENDED: pass `ui_pid` unless it is truly unobtainable. Without it, automatic runtime binding usually fails to converge and tmux-based cross-agent poke delivery stays off until a separate `bind_runtime_identity(...)` call. From Claude Code, `$PPID` inside a Bash tool call is the `claude` CLI pid; for Codex/opencode/other harnesses, discover the UI pid from the host harness. With `ui_pid` the daemon binds via verified pid → tty → pane evidence in one shot.',
         'After registration, the daemon best-effort attempts runtime binding for recognized local clients so tmux-based poke delivery can come up without a second tool call.',
         'If automatic runtime binding does not converge, call `bind_runtime_identity(...)` explicitly so the daemon can verify and persist your pane binding.',
@@ -562,6 +639,7 @@ export function registerBusinessTools(
       thread_id?: string
       ws_url?: string
       auth_token_ref?: string
+      claude_ui_pid?: number
       delivery?: { kind: string; [key: string]: unknown }
     }) => {
       return run(async () => executeRegister(registerAgentArgsSchema.parse(args)))

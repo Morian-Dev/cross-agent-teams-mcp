@@ -131,13 +131,21 @@ async function ttyProcesses(
 }
 
 function matchAgentProcess(
+  agent: DetectAgentKind,
   lines: string[],
   pattern: RegExp
 ): boolean {
   return lines.some((line) => {
-    if (/codex app-server/i.test(line)) return false
+    if (isHelperProcess(agent, line)) return false
     return pattern.test(line)
   })
+}
+
+function isHelperProcess(agent: DetectAgentKind, command: string): boolean {
+  if (agent !== 'codex') return false
+  return /codex\s+app-server/i.test(command) ||
+    /Codex Computer Use\.app/i.test(command) ||
+    /SkyComputerUseClient/i.test(command)
 }
 
 export async function bindRuntimeIdentity(
@@ -164,7 +172,11 @@ export async function bindRuntimeIdentity(
     }
     const pidInfo = await readPidInfo(execLike, input.ui_pid)
     if (!pidInfo.found) return { error: 'pid_not_found' }
-    if (!pidInfo.command || !pattern.test(pidInfo.command)) {
+    if (
+      !pidInfo.command ||
+      isHelperProcess(input.agent, pidInfo.command) ||
+      !pattern.test(pidInfo.command)
+    ) {
       return { error: 'agent_process_mismatch' }
     }
     if (!pidInfo.tty) return { error: 'pid_has_no_tty' }
@@ -214,7 +226,7 @@ export async function bindRuntimeIdentity(
     }
   }
   const processes = await ttyProcesses(execLike, tty)
-  if (!matchAgentProcess(processes, pattern)) {
+  if (!matchAgentProcess(input.agent, processes, pattern)) {
     return { error: 'tty_maps_to_no_agent_process' }
   }
   return {

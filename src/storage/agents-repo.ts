@@ -17,6 +17,8 @@ export interface RegisterInput {
   team?: string
   tmux_pane_id?: string
   delivery?: DeliverySpec
+  claude_ui_pid?: number
+  runtime_ui_pid?: number
 }
 
 export interface AgentRow {
@@ -84,7 +86,11 @@ export class AgentsRepo {
     ).get(args.team, args.name) as { agent_id: string } | undefined
   }
 
-  register(input: RegisterInput): { agent_id: string; team: string } {
+  register(input: RegisterInput): {
+    agent_id: string
+    team: string
+    rebound_host_agent_ids: string[]
+  } {
     const team = input.team ?? 'default'
     const role = input.role ?? 'default'
     const name = input.name
@@ -93,12 +99,54 @@ export class AgentsRepo {
     const delivery = input.delivery ?? { kind: 'none' }
     const serialized = serializeDelivery(delivery)
     const preserveExistingDelivery = input.delivery === undefined ? 1 : 0
+    let reboundIds: string[] = []
+    const tx = this.db.transaction(() => {
+      this.writeAgentRow({
+        newId,
+        input,
+        team,
+        role,
+        name,
+        now,
+        serialized,
+        preserveExistingDelivery,
+      })
+      const rebindCsid =
+        role === '__channel_proxy__' &&
+        input.claude_ui_pid !== undefined &&
+        delivery.kind === 'claude-channel'
+          ? delivery.channel_session_id
+          : undefined
+      if (rebindCsid !== undefined) {
+        reboundIds = this.reactiveRebindHosts({
+          team,
+          claude_ui_pid: input.claude_ui_pid!,
+          new_csid: rebindCsid,
+        })
+      }
+    })
+    tx()
+    const row = this.db.prepare(`SELECT agent_id FROM agents WHERE team=? AND name=?`).get(team, name) as { agent_id: string }
+    return { agent_id: row.agent_id, team, rebound_host_agent_ids: reboundIds }
+  }
+
+  private writeAgentRow(args: {
+    newId: string
+    input: RegisterInput
+    team: string
+    role: string
+    name: string
+    now: string
+    serialized: ReturnType<typeof serializeDelivery>
+    preserveExistingDelivery: number
+  }): void {
+    const { newId, input, team, role, name, now, serialized, preserveExistingDelivery } = args
     this.db.prepare(
       `INSERT INTO agents (
          agent_id, client, client_name, team, role, name, model, registered_at, last_seen_at,
-         tmux_pane_id, delivery_kind, delivery_payload
+         tmux_pane_id, claude_ui_pid, runtime_ui_pid, delivery_kind, delivery_payload
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (team, name) DO UPDATE SET
          client = excluded.client,
          client_name = excluded.client_name,
@@ -106,6 +154,8 @@ export class AgentsRepo {
          model = excluded.model,
          last_seen_at = excluded.last_seen_at,
          tmux_pane_id = COALESCE(excluded.tmux_pane_id, tmux_pane_id),
+         claude_ui_pid = COALESCE(excluded.claude_ui_pid, claude_ui_pid),
+         runtime_ui_pid = COALESCE(excluded.runtime_ui_pid, runtime_ui_pid),
          delivery_kind = CASE
            WHEN ? THEN delivery_kind
            ELSE excluded.delivery_kind
@@ -125,13 +175,48 @@ export class AgentsRepo {
       now,
       now,
       input.tmux_pane_id ?? null,
+      input.claude_ui_pid ?? null,
+      input.runtime_ui_pid ?? null,
       serialized.delivery_kind,
       serialized.delivery_payload,
       preserveExistingDelivery,
       preserveExistingDelivery,
     )
-    const row = this.db.prepare(`SELECT agent_id FROM agents WHERE team=? AND name=?`).get(team, name) as { agent_id: string }
-    return { agent_id: row.agent_id, team }
+  }
+
+  private reactiveRebindHosts(args: {
+    team: string
+    claude_ui_pid: number
+    new_csid: string
+  }): string[] {
+    const rows = this.db.prepare(
+      `SELECT agent_id FROM agents
+       WHERE role != '__channel_proxy__'
+         AND runtime_ui_pid IS NOT NULL
+         AND runtime_ui_pid = ?
+         AND team = ?
+         AND (
+           delivery_kind = 'none'
+           OR (delivery_kind = 'claude-channel'
+               AND json_extract(delivery_payload,'$.channel_session_id') != ?)
+         )`
+    ).all(args.claude_ui_pid, args.team, args.new_csid) as Array<{ agent_id: string }>
+    if (rows.length === 0) return []
+    this.db.prepare(
+      `UPDATE agents
+       SET delivery_kind = 'claude-channel',
+           delivery_payload = json_object('channel_session_id', ?)
+       WHERE role != '__channel_proxy__'
+         AND runtime_ui_pid IS NOT NULL
+         AND runtime_ui_pid = ?
+         AND team = ?
+         AND (
+           delivery_kind = 'none'
+           OR (delivery_kind = 'claude-channel'
+               AND json_extract(delivery_payload,'$.channel_session_id') != ?)
+         )`
+    ).run(args.new_csid, args.claude_ui_pid, args.team, args.new_csid)
+    return rows.map((row) => row.agent_id)
   }
 
   setDelivery(agent_id: string, spec: DeliverySpec): void {

@@ -59,6 +59,42 @@ describe('detectTmuxPane', () => {
     })
   })
 
+  it('ignores Codex helper panes when detecting the visible Codex pane', async () => {
+    mockExecFile({
+      "tmux list-panes -a -F #{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_active}\t#{pane_tty}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_title}":
+        [
+          '%1972\ts1\t0\t1\t1\t/dev/ttys026\t/Users/me/project\tcodex-aarch64-a\tproject',
+          '%1993\ts1\t0\t2\t0\t/dev/ttys065\t/Users/me/project\tzsh\tproject',
+        ].join('\n'),
+      'ps -t ttys026 -o pid=,ppid=,stat=,command=':
+        '26395 23186 S+   codex --dangerously-bypass-approvals-and-sandbox --remote ws://127.0.0.1:8799\n',
+      'ps -t ttys065 -o pid=,ppid=,stat=,command=':
+        [
+          '23201     1 S    codex app-server --listen ws://127.0.0.1:8799',
+          '26423 23201 S    ./Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient mcp',
+        ].join('\n'),
+    })
+    const { detectTmuxPane } = await import('../src/daemon/tmux-pane-detect.js')
+
+    const result = await detectTmuxPane({
+      agent: 'codex',
+      cwd: '/Users/me/project',
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      pane: {
+        pane_id: '%1972',
+        tty: 'ttys026',
+      },
+      candidates: [
+        {
+          pane_id: '%1972',
+        },
+      ],
+    })
+  })
+
   it('finds the claude code pane from tty processes even when pane_current_command is version-like', async () => {
     mockExecFile({
       "tmux list-panes -a -F #{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_active}\t#{pane_tty}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_title}":

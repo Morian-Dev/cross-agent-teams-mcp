@@ -34,6 +34,7 @@ export type RegisterCodexSelfResult =
     }
   | { error: 'agent_id_collision' }
   | { error: 'invalid_delivery'; reason: string }
+  | { error: 'claude_ui_pid_requires_channel_proxy' }
   | { error: 'missing_auth_token'; detail: { ref: string } }
   | { error: 'unsupported_client'; detail: { expected: 'codex'; reason: 'codex_appserver_unreachable' | 'codex_protocol_unavailable'; ws_url: string; cause?: unknown } }
   | { error: 'codex_connect_failed'; detail?: unknown }

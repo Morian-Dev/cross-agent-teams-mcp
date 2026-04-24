@@ -70,6 +70,23 @@ describe('bindRuntimeIdentity', () => {
     expect(result).toEqual({ error: 'agent_process_mismatch' })
   })
 
+  it('rejects Codex app-server pid as a visible UI pid', async () => {
+    mockExecFile({
+      "tmux list-panes -a -F #{pane_id}\t#{pane_tty}":
+        '%1993\t/dev/ttys065\n',
+      'ps -p 23201 -o tty=,command=':
+        'ttys065 codex app-server --listen ws://127.0.0.1:8799\n',
+    })
+    const { bindRuntimeIdentity } = await import('../src/daemon/runtime-identity.js')
+
+    const result = await bindRuntimeIdentity({
+      agent: 'codex',
+      ui_pid: 23201,
+    })
+
+    expect(result).toEqual({ error: 'agent_process_mismatch' })
+  })
+
   it('binds by ui_tty + tmux_pane_id when the tty hosts a matching process', async () => {
     mockExecFile({
       "tmux list-panes -a -F #{pane_id}\t#{pane_tty}":
@@ -91,5 +108,26 @@ describe('bindRuntimeIdentity', () => {
       verification_mode: 'verified_tty_pane',
       tty: 'ttys020',
     })
+  })
+
+  it('rejects a tty that only hosts Codex helper processes', async () => {
+    mockExecFile({
+      "tmux list-panes -a -F #{pane_id}\t#{pane_tty}":
+        '%1993\t/dev/ttys065\n',
+      'ps -t ttys065 -o pid=,ppid=,stat=,command=':
+        [
+          '23201     1 S    codex app-server --listen ws://127.0.0.1:8799',
+          '26423 23201 S    ./Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient mcp',
+        ].join('\n'),
+    })
+    const { bindRuntimeIdentity } = await import('../src/daemon/runtime-identity.js')
+
+    const result = await bindRuntimeIdentity({
+      agent: 'codex',
+      ui_tty: '/dev/ttys065',
+      tmux_pane_id: '%1993',
+    })
+
+    expect(result).toEqual({ error: 'tty_maps_to_no_agent_process' })
   })
 })
