@@ -3,15 +3,19 @@ import {
   serializeDelivery,
   type DeliverySpec,
 } from '../../src/lib/delivery-spec.js'
+import type { ClientKind } from '../../src/lib/client-kind.js'
 
 export interface InsertAgentArgs {
   agent_id: string
   model?: string
+  client?: ClientKind
   role?: string
   name?: string
   team?: string
   tmux_pane_id?: string | null
   delivery?: DeliverySpec
+  opencode_base_url?: string | null
+  opencode_session_id?: string | null
   registered_at?: string
   last_seen_at?: string
 }
@@ -30,16 +34,20 @@ export function insertAgent(db: Database.Database, args: InsertAgentArgs): strin
   const delivery = serializeDelivery(args.delivery ?? { kind: 'none' })
   db.prepare(
     `INSERT INTO agents (
-       agent_id, team, role, name, model, registered_at, last_seen_at,
-       tmux_pane_id, delivery_kind, delivery_payload
+       agent_id, client, team, role, name, model, registered_at, last_seen_at,
+       tmux_pane_id, delivery_kind, delivery_payload,
+       opencode_base_url, opencode_session_id
      )
-     VALUES (?,?,?,?,?,?,?,?,?,?)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(agent_id) DO UPDATE SET
-       team=excluded.team, role=excluded.role, name=excluded.name, model=excluded.model,
+       client=excluded.client, team=excluded.team, role=excluded.role, name=excluded.name, model=excluded.model,
        last_seen_at=excluded.last_seen_at, tmux_pane_id=excluded.tmux_pane_id,
-       delivery_kind=excluded.delivery_kind, delivery_payload=excluded.delivery_payload`
+       delivery_kind=excluded.delivery_kind, delivery_payload=excluded.delivery_payload,
+       opencode_base_url=excluded.opencode_base_url,
+       opencode_session_id=excluded.opencode_session_id`
   ).run(
     args.agent_id,
+    args.client ?? null,
     team,
     role,
     name,
@@ -48,7 +56,9 @@ export function insertAgent(db: Database.Database, args: InsertAgentArgs): strin
     last_seen_at,
     tmux_pane_id,
     delivery.delivery_kind,
-    delivery.delivery_payload
+    delivery.delivery_payload,
+    args.opencode_base_url ?? null,
+    args.opencode_session_id ?? null
   )
   return args.agent_id
 }

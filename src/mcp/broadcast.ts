@@ -32,6 +32,8 @@ interface RecipientPokeRow {
   agent_id: string
   tmux_pane_id: string | null
   delivery: DeliverySpec
+  opencode_base_url: string | null
+  opencode_session_id: string | null
 }
 
 export class BroadcastService {
@@ -47,16 +49,28 @@ export class BroadcastService {
     if (!fromRow) return { error: 'unknown_recipient' }
     const cutoffIso = new Date(Date.now() - ONLINE_MS).toISOString()
     const rawRows = this.db.prepare(
-      'SELECT agent_id, tmux_pane_id, delivery_kind, delivery_payload FROM agents WHERE team=? AND agent_id != ? AND last_seen_at > ?'
+      `SELECT
+         agent_id,
+         tmux_pane_id,
+         opencode_base_url,
+         opencode_session_id,
+         delivery_kind,
+         delivery_payload
+       FROM agents
+       WHERE team=? AND agent_id != ? AND last_seen_at > ?`
     ).all(fromRow.team, input.from, cutoffIso) as Array<{
       agent_id: string
       tmux_pane_id: string | null
+      opencode_base_url: string | null
+      opencode_session_id: string | null
       delivery_kind: string
       delivery_payload: string | null
     }>
     const rows = rawRows.map((row) => ({
       agent_id: row.agent_id,
       tmux_pane_id: row.tmux_pane_id,
+      opencode_base_url: row.opencode_base_url,
+      opencode_session_id: row.opencode_session_id,
       delivery: parseDeliveryRow(row),
     }))
     if (rows.length === 0) return { error: 'unknown_recipient' }

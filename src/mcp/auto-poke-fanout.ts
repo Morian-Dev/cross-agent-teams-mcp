@@ -19,6 +19,8 @@ export interface AutoPokeRecipient {
   agent_id: string
   tmux_pane_id: string | null
   delivery?: DeliverySpec
+  opencode_base_url?: string | null
+  opencode_session_id?: string | null
 }
 
 export interface FanoutDeps {
@@ -41,6 +43,13 @@ export interface FanoutResult {
   retryScheduledCount: number
 }
 
+function hasNonTmuxTransport(recipient: AutoPokeRecipient): boolean {
+  if (recipient.delivery !== undefined && recipient.delivery.kind !== 'none') {
+    return true
+  }
+  return recipient.opencode_base_url != null && recipient.opencode_session_id != null
+}
+
 // Recipients are supplied by the caller; no team filter is applied here, so cross-team fan-out works transparently.
 export async function fanoutAutoPoke(args: {
   team: string
@@ -55,21 +64,20 @@ export async function fanoutAutoPoke(args: {
 
   const results = await Promise.all(args.recipients.map(async (r) => {
     try {
-      const explicitNonTmuxDelivery =
-        r.delivery !== undefined && r.delivery.kind !== 'none'
+      const nonTmuxTransport = hasNonTmuxTransport(r)
       if (r.agent_id === args.fromAgentId) {
         return { agent_id: r.agent_id, poked: false, reason: 'self' as AutoPokeSkipReason, paneId: null as string | null }
       }
-      if (!explicitNonTmuxDelivery && !r.tmux_pane_id) {
+      if (!nonTmuxTransport && !r.tmux_pane_id) {
         return { agent_id: r.agent_id, poked: false, reason: 'no_pane' as AutoPokeSkipReason, paneId: null }
       }
-      if (!explicitNonTmuxDelivery && !(await tmuxAvail())) {
+      if (!nonTmuxTransport && !(await tmuxAvail())) {
         return { agent_id: r.agent_id, poked: false, reason: 'tmux_unavailable' as AutoPokeSkipReason, paneId: r.tmux_pane_id }
       }
       if (!pokeFn) {
         return { agent_id: r.agent_id, poked: false, reason: 'tmux_unavailable' as AutoPokeSkipReason, paneId: r.tmux_pane_id }
       }
-      if (!explicitNonTmuxDelivery) {
+      if (!nonTmuxTransport) {
         const guard = await runQuietGuard(r.tmux_pane_id!)
         if (guard === 'fail') {
           return { agent_id: r.agent_id, poked: false, reason: 'guard_failed' as AutoPokeSkipReason, paneId: r.tmux_pane_id }

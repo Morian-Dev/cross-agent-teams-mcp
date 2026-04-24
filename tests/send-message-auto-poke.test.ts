@@ -95,6 +95,51 @@ describe('send_message auto_poke integration', () => {
     expect(r.retry_delays_s).toBeUndefined()
   })
 
+  it('recipient with claude-channel delivery and no tmux_pane_id still invokes poke', async () => {
+    const { svc, db, pokeCalls, cleanup } = setupService()
+    cleanups.push(cleanup)
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1', name: 'A' })
+    insertAgent(db, {
+      agent_id: 'B',
+      client: 'claude-code',
+      model: 'opus',
+      role: 'worker',
+      name: 'B',
+      delivery: { kind: 'claude-channel', channel_session_id: 'csid-b' },
+    })
+
+    const r = await svc.send({ from: 'A', to_agent_id: 'B', body: 'hi' })
+    if ('error' in r) throw new Error('expected success')
+
+    expect(r.poked).toBe(true)
+    expect(r.poke_skip_reasons ?? []).toEqual([])
+    expect(pokeCalls).toEqual([{ target: 'B', pane: null }])
+    expect(r.retry_scheduled).toBe(false)
+  })
+
+  it('recipient with opencode binding and no tmux_pane_id still invokes poke', async () => {
+    const { svc, db, pokeCalls, cleanup } = setupService()
+    cleanups.push(cleanup)
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1', name: 'A' })
+    insertAgent(db, {
+      agent_id: 'B',
+      client: 'opencode',
+      model: 'opencode',
+      role: 'worker',
+      name: 'B',
+      opencode_base_url: 'http://127.0.0.1:4096',
+      opencode_session_id: 'sess-b',
+    })
+
+    const r = await svc.send({ from: 'A', to_agent_id: 'B', body: 'hi' })
+    if ('error' in r) throw new Error('expected success')
+
+    expect(r.poked).toBe(true)
+    expect(r.poke_skip_reasons ?? []).toEqual([])
+    expect(pokeCalls).toEqual([{ target: 'B', pane: null }])
+    expect(r.retry_scheduled).toBe(false)
+  })
+
   it('auto_poke:false disables the behavior, no skip_reasons', async () => {
     const { svc, db, pokeCalls, cleanup } = setupService({ paneState: { '%2': 'idle' } })
     cleanups.push(cleanup)
