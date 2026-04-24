@@ -539,6 +539,8 @@ export function registerBusinessTools(
         'Claude Code sessions can pass `client="claude-code"` together with `channel_session_id` to bind channel delivery through this same tool.',
         'Opencode sessions can pass `client="opencode"` together with `base_url` and `session_id` to bind server delivery through this same tool.',
         'Codex sessions can pass `client="codex"` together with `thread_id` to register Codex app-server delivery through this same tool.',
+        'Requests such as "register to xats" or "register to cross-agent-teams" refer to this MCP service, not to the `team` field; do not set `team` to `xats` or `cross-agent-teams` from those phrases.',
+        'Do not treat the bare word "register" as a request for this tool unless the current conversation is already about cross-agent-teams registration.',
         'When the end user has not explicitly specified `team`, callers should pass `project_dir` as the current working directory so the daemon derives a project-scoped default team from its basename; if omitted, it falls back to `default`.',
         'STRONGLY RECOMMENDED: pass `ui_pid` unless it is truly unobtainable. Without it, automatic runtime binding usually fails to converge and tmux-based cross-agent poke delivery stays off until a separate `bind_runtime_identity(...)` call. From Claude Code, `$PPID` inside a Bash tool call is the `claude` CLI pid; for Codex/opencode/other harnesses, discover the UI pid from the host harness. With `ui_pid` the daemon binds via verified pid → tty → pane evidence in one shot.',
         'After registration, the daemon best-effort attempts runtime binding for recognized local clients so tmux-based poke delivery can come up without a second tool call.',
@@ -575,6 +577,8 @@ export function registerBusinessTools(
         'Prefer this helper inside Claude Code when you want to avoid session-mismatch issues caused by external HTTP or curl registration.',
         'This tool always writes on the caller\'s current MCP session, so follow-up tools like get_inbox use the same identity immediately.',
         'If channel_session_id is provided, it binds claude-channel delivery through the same path used by register_agent({ client: "claude-code", ... }).',
+        'Requests such as "register to xats" or "register to cross-agent-teams" refer to this MCP service, not to the `team` field; do not set `team` to `xats` or `cross-agent-teams` from those phrases.',
+        'Do not treat the bare word "register" as a request for this tool unless the current conversation is already about cross-agent-teams registration.',
         'When the end user has not explicitly specified `team`, callers should pass `project_dir` as the current working directory so the daemon derives a project-scoped default team from its basename; if omitted, it falls back to `default`.',
         'STRONGLY RECOMMENDED: pass `ui_pid` (the Claude Code CLI pid — obtainable as `$PPID` from a Bash tool call). Without it, automatic runtime binding usually fails to converge and tmux-based cross-agent poke delivery stays off until a separate `bind_runtime_identity(...)` call. With `ui_pid` the daemon binds via verified pid → tty → pane evidence in one shot.',
         'model is optional here; when omitted it falls back to a Claude-specific default.'

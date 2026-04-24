@@ -35,7 +35,7 @@ export function mountMcp(
       { name: 'cross-agent-teams-mcp', version: '0.1.0' },
       {
         instructions:
-          'xats 是 cross-agent-teams 的缩写. 当用户或其他 agent 提到 xats 时, 指的是本 MCP server (cross-agent-teams-mcp) 及其跨 agent 协作工具 (register_agent, send_message, poke, task_* 等). 注册时 (register_agent / register_claude_self) 如果用户未显式指定 team, 默认传 project_dir=当前工作目录 (cwd), daemon 会用它的 basename 作为 team 默认值; 都不传时回落 default.'
+          'xats 是 cross-agent-teams 的缩写. 当用户或其他 agent 提到 xats 时, 指的是本 MCP server (cross-agent-teams-mcp) 及其跨 agent 协作工具 (register_agent, send_message, task_* 等). 用户说"注册到 xats"或"注册到 cross-agent-teams"时, 表示注册到本 MCP 服务, xats 和 cross-agent-teams 不是 team 名, 不要把它们传给 team. 不要把单独的常用词"注册"默认劫持为本工具; 只有当前上下文已经在讨论 cross-agent-teams 注册时才可续接. 注册时 (register_agent / register_claude_self) 如果用户未显式指定 team, 默认传 project_dir=当前工作目录 (cwd), daemon 会用它的 basename 作为 team 默认值; 都不传时回落 default.'
       }
     )
     const agentIdHolder: AgentIdHolder = { current: undefined }

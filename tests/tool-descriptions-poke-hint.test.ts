@@ -186,6 +186,20 @@ describe('tool descriptions: auto-poke and delivery status', () => {
     }
   })
 
+  it('register tools say xats is the service context, not a team name', async () => {
+    const tools = await listTools()
+    const registerAgent = tools.find(t => t.name === 'register_agent')!.description!
+    const registerClaudeSelf = tools.find(t => t.name === 'register_claude_self')!.description!
+    for (const description of [registerAgent, registerClaudeSelf]) {
+      expect(description).toMatch(/register to xats/i)
+      expect(description).toMatch(/register to cross-agent-teams/i)
+      expect(description).toMatch(/not to the `team` field/i)
+      expect(description).toMatch(/do not set `team` to `xats`/i)
+      expect(description).toMatch(/bare word "register"/i)
+      expect(description).toMatch(/already about cross-agent-teams registration/i)
+    }
+  })
+
   it('bind_runtime_identity description documents pid-first verification', async () => {
     const tools = await listTools()
     const tool = tools.find(t => t.name === 'bind_runtime_identity')

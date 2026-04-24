@@ -11,6 +11,7 @@
     "custom/jt-orch-os-c2c-propose",
     "custom/jt-os-c2c-propose",
     "custom/jt-os-create-test",
+    "custom/jt-os-implement",
     "custom/jt-os-propose",
     "custom/jt-os-simple-feature",
     "custom/jt-os-simple-sync",
@@ -37,5 +38,5 @@
     "custom/tdd-spec/ts-tdd-verify",
     "custom/tdd-spec/ts-writing-skills-sp"
   ],
-  "deployedAt": "2026-04-20T07:25:35.920Z"
+  "deployedAt": "2026-04-24T04:53:08.410Z"
 }
