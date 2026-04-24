@@ -17,6 +17,7 @@ import { SubscribeContractService } from './subscribe-contract.js'
 import { GetContractService } from './get-contract.js'
 import { DiffContractsService } from './diff-contracts.js'
 import { PendingContractEventsService } from './pending-contract-events.js'
+import { GetDeliveryStatusService } from './delivery-status.js'
 import { poke } from './poke.js'
 import { wrapStorage } from '../daemon/errors.js'
 import type { SseFanout } from '../daemon/sse-fanout.js'
@@ -228,6 +229,7 @@ export function registerBusinessTools(
   const broadcastSvc = new BroadcastService(db, agents, sendSvc, { poke: autoPokeImpl })
   const broadcastToRoleSvc = new BroadcastToRoleService(db, agents, events, { poke: autoPokeImpl })
   const inboxSvc = new GetInboxService(db, agents)
+  const deliveryStatusSvc = new GetDeliveryStatusService(db)
   const taskAddSvc = new TaskAddService(db, agents, events)
   const taskClaimSvc = new TaskClaimService(db, agents, events)
   const taskCompleteSvc = new TaskCompleteService(db, agents, events)
@@ -732,6 +734,27 @@ export function registerBusinessTools(
     }
   )
 
+  // get_delivery_status
+  server.registerTool(
+    'get_delivery_status',
+    {
+      title: 'Get delivery status',
+      description: [
+        'Return wake-hint delivery status for a message sent by caller.',
+        'Status describes auto-poke delivery only; mailbox persistence is already complete.',
+        'Only the original sender can read a message delivery status.'
+      ].join(' '),
+      inputSchema: {
+        message_id: z.string()
+      }
+    },
+    async (args: { message_id: string }) => {
+      const who = requireAgent()
+      if (typeof who !== 'string') return toText(who)
+      return run(() => deliveryStatusSvc.get({ caller: who, ...args }))
+    }
+  )
+
   // task_add
   server.registerTool(
     'task_add',
@@ -739,10 +762,9 @@ export function registerBusinessTools(
       title: 'Add task',
       description: [
         "Add a new task to the team's task list.  Any team member can claim it via `task_claim`",
-        'on their next turn.  If you want a specific agent to pick it up soon, follow up with',
-        '`poke({ target_agent_id, prompt: "new task <id> — please task_claim" })`; otherwise the',
-        'task will sit in the pending queue until someone pulls `task_list`.  `task_add` itself',
-        'does NOT poke anyone, since broadcast-poking every agent on every new task would be noisy.'
+        'on their next turn.  The task will sit in the pending queue until someone pulls `task_list`.',
+        '`task_add` itself does not wake or target any specific agent; use normal mailbox messaging',
+        'when coordination is needed, then inspect that message with `get_delivery_status`.'
       ].join(' '),
       inputSchema: {
         title: z.string(),
@@ -894,35 +916,6 @@ export function registerBusinessTools(
       const who = requireAgent()
       if (typeof who !== 'string') return toText(who)
       return run(() => diffContractsSvc.diff({ caller: who, ...args }))
-    }
-  )
-
-  // poke
-  server.registerTool(
-    'poke',
-    {
-      title: 'Poke agent',
-      description: [
-        'Wake another agent in the same team by injecting a SHORT wake-up hint into its tmux pane.',
-        'The `prompt` is NOT a content channel — do NOT paste full messages, answers, or task payloads here.',
-        'Content belongs in `send_message` (which persists to mailbox and auto-pokes by default).',
-        'Use `poke` only when the recipient already has the content (via mailbox / task / contract event)',
-        'and you want to nudge them to act on it sooner than their next natural turn.',
-        'Good prompts are imperative one-liners, ideally < 200 characters, e.g.',
-        '"you have a new urgent message, check get_inbox" or "R2 judging ready, read mailbox and reply".',
-        'Returns pre/post pane capture tails. Soft recommendation: retry at most 3 times per target per short window.'
-      ].join(' '),
-      inputSchema: {
-        target_agent_id: z.string(),
-        prompt: z.string()
-      }
-    },
-    async (args: { target_agent_id: string; prompt: string }) => {
-      const who = requireAgent()
-      const callerAgentId = typeof who === 'string' ? who : null
-      const result = await poke({ db, callerAgentId, channelWakeFanout }, args)
-      touchIfRegistered()
-      return toText(result)
     }
   )
 

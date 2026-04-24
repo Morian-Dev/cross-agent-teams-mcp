@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3'
 import { fanoutAutoPoke, type AutoPokeRecipient, type AutoPokeSkipReason, type FanoutDeps } from './auto-poke-fanout.js'
 import { RETRY_DELAYS_S } from './poke-retry.js'
+import { recordInitialDeliveryStatuses, updateDeliveryStatus } from './delivery-status.js'
 
 export interface FanoutResultEnvelope {
   poked: boolean
@@ -33,8 +34,17 @@ export async function runFanoutWithRetry(args: {
       sentAt: args.sentAt,
       lookupAgentFn: (agentId: string) => db.prepare(
         'SELECT agent_id, tmux_pane_id, last_seen_at FROM agents WHERE agent_id=?'
-      ).get(agentId) as { agent_id: string; tmux_pane_id: string | null; last_seen_at: string } | undefined
+      ).get(agentId) as { agent_id: string; tmux_pane_id: string | null; last_seen_at: string } | undefined,
+      updateStatusFn: (status) => {
+        updateDeliveryStatus(db, args.messageId, status.agentId, status)
+      }
     }
+  })
+  recordInitialDeliveryStatuses(db, {
+    messageId: args.messageId,
+    recipients: args.recipients.map(r => r.agent_id),
+    delivered: new Set(fanout.deliveredAgentIds),
+    skipped: fanout.skipReasons
   })
   const retry_scheduled = fanout.retryScheduledCount > 0
   return {

@@ -2,10 +2,10 @@ import type Database from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
 import type { AgentsRepo } from '../storage/agents-repo.js'
 import type { EventsOutbox } from '../storage/events-outbox.js'
-import { fanoutAutoPoke } from './auto-poke-fanout.js'
 import type { AutoPokeSkipReason, FanoutDeps } from './auto-poke-fanout.js'
-import { RETRY_DELAYS_S } from './poke-retry.js'
 import { parseDeliveryRow, type DeliverySpec } from '../lib/delivery-spec.js'
+import { runFanoutWithRetry } from './fanout-with-retry.js'
+import { recordInitialDeliveryStatuses } from './delivery-status.js'
 
 export type { AutoPokeFn, AutoPokeSkipReason } from './auto-poke-fanout.js'
 
@@ -94,34 +94,31 @@ export class SendMessageService {
 
     const autoPokeEnabled = input.auto_poke !== false
     if (!autoPokeEnabled) {
+      recordInitialDeliveryStatuses(this.db, {
+        messageId: baseResult.message_id,
+        recipients: [rcpt.agent_id],
+        delivered: new Set(),
+        skipped: [],
+        autoPokeDisabled: true,
+      })
       return { ...baseResult, poked: false, retry_scheduled: false }
     }
 
-    const db = this.db
-    const fanout = await fanoutAutoPoke({
+    const envelope = await runFanoutWithRetry({
+      db: this.db,
       team: toTeam,
       fromAgentId: input.from,
       recipients: [recipientRow],
       body: input.body,
       deps: this.deps,
-      retry: {
-        messageId: baseResult.message_id,
-        sentAt: baseResult.sent_at,
-        lookupAgentFn: (agentId: string) => {
-          return db.prepare('SELECT agent_id, tmux_pane_id, last_seen_at FROM agents WHERE agent_id=?')
-            .get(agentId) as { agent_id: string; tmux_pane_id: string | null; last_seen_at: string } | undefined
-        }
-      }
+      messageId: baseResult.message_id,
+      sentAt: baseResult.sent_at
     })
-    const retry_scheduled = fanout.retryScheduledCount > 0
     return {
       message_id: baseResult.message_id,
       event_id: baseResult.event_id,
       recipients: baseResult.recipients,
-      poked: fanout.poked,
-      poke_skip_reasons: fanout.skipReasons,
-      retry_scheduled,
-      ...(retry_scheduled ? { retry_delays_s: [...RETRY_DELAYS_S] } : {})
+      ...envelope
     }
   }
 

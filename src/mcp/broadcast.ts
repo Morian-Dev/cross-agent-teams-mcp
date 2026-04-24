@@ -5,6 +5,7 @@ import type { SendMessageService } from './send-message.js'
 import type { AutoPokeSkipReason, FanoutDeps } from './auto-poke-fanout.js'
 import { runFanoutWithRetry } from './fanout-with-retry.js'
 import { parseDeliveryRow, type DeliverySpec } from '../lib/delivery-spec.js'
+import { recordInitialDeliveryStatuses } from './delivery-status.js'
 
 export type BroadcastDeps = FanoutDeps
 
@@ -64,6 +65,13 @@ export class BroadcastService {
     const inserted = this.insertBroadcast(fromRow.team, input.from, recipients, input.body, input.subject, baseId)
 
     if (input.auto_poke === false) {
+      recordInitialDeliveryStatuses(this.db, {
+        messageId: inserted.message_id,
+        recipients,
+        delivered: new Set(),
+        skipped: [],
+        autoPokeDisabled: true,
+      })
       return { ...inserted, recipients, poked: false, retry_scheduled: false }
     }
 

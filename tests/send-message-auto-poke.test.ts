@@ -69,6 +69,12 @@ describe('send_message auto_poke integration', () => {
     expect(pokeCalls[0].target).toBe('B')
     expect(r.retry_scheduled).toBe(false)
     expect(r.retry_delays_s).toBeUndefined()
+    const status = db.prepare(
+      'SELECT wake_status, skip_reason, delivered_at FROM message_delivery_status WHERE message_id=? AND agent_id=?'
+    ).get(r.message_id, 'B') as { wake_status: string; skip_reason: string | null; delivered_at: string | null }
+    expect(status.wake_status).toBe('delivered')
+    expect(status.skip_reason).toBeNull()
+    expect(status.delivered_at).not.toBeNull()
   })
 
   it('recipient without tmux_pane_id: poked:false, reason no_pane, retry_scheduled:false', async () => {
@@ -102,6 +108,10 @@ describe('send_message auto_poke integration', () => {
     expect(r.poked).toBe(false)
     expect(r.poke_skip_reasons).toBeUndefined()
     expect(pokeCalls.length).toBe(0)
+    const status = db.prepare(
+      'SELECT wake_status, skip_reason FROM message_delivery_status WHERE message_id=? AND agent_id=?'
+    ).get(r.message_id, 'B') as { wake_status: string; skip_reason: string | null }
+    expect(status).toEqual({ wake_status: 'skipped', skip_reason: 'auto_poke_disabled' })
   })
 
   it('single recipient with active pane: poked:false, guard_failed, retry_scheduled:true, delays=[30,180,600]', async () => {
@@ -120,6 +130,10 @@ describe('send_message auto_poke integration', () => {
     expect(reasons).toContainEqual({ agent_id: 'B', reason: 'guard_failed' as AutoPokeSkipReason })
     expect(r.retry_scheduled).toBe(true)
     expect(r.retry_delays_s).toEqual([30, 180, 600])
+    const status = db.prepare(
+      'SELECT wake_status, skip_reason, retry_attempts FROM message_delivery_status WHERE message_id=? AND agent_id=?'
+    ).get(r.message_id, 'B') as { wake_status: string; skip_reason: string | null; retry_attempts: number }
+    expect(status).toEqual({ wake_status: 'retrying', skip_reason: 'guard_failed', retry_attempts: 0 })
     const { clearAllRetries } = await import('../src/mcp/poke-retry.js')
     clearAllRetries()
   })

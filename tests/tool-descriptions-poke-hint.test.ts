@@ -8,7 +8,7 @@ import { startServer } from '../src/daemon/server.js'
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'atm-toolhint-'))
 
-describe('tool descriptions: fire-and-forget tools hint at poke', () => {
+describe('tool descriptions: auto-poke and delivery status', () => {
   const cleanups: string[] = []
   afterEach(() => { cleanups.forEach(d => rmSync(d, { recursive: true, force: true })); cleanups.length = 0 })
 
@@ -95,11 +95,12 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     expect(bcSchema.required ?? []).not.toContain('auto_poke')
   })
 
-  it('task_add description mentions poke for nudging a specific agent', async () => {
+  it('task_add description does not expose direct notification or manual poke', async () => {
     const tools = await listTools()
     const tool = tools.find(t => t.name === 'task_add')
     expect(tool).toBeDefined()
-    expect(tool!.description).toMatch(/poke/i)
+    expect(tool!.description).not.toMatch(/poke/i)
+    expect(tool!.description).toMatch(/get_delivery_status/)
   })
 
   it('get_inbox description does NOT recommend poke (poke pushes, get_inbox pulls — no self-wake)', async () => {
@@ -109,23 +110,20 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     expect(tool!.description).not.toMatch(/poke/i)
   })
 
-  it('poke tool description remains (sanity: was not accidentally edited)', async () => {
+  it('poke tool is not exposed publicly', async () => {
     const tools = await listTools()
     const tool = tools.find(t => t.name === 'poke')
-    expect(tool).toBeDefined()
-    expect(tool!.description).toMatch(/wake/i)
-    expect(tool!.description).toMatch(/retry/i)
+    expect(tool).toBeUndefined()
   })
 
-  it('poke description forbids using prompt as a content channel (wake-up only)', async () => {
+  it('get_delivery_status exposes sender-side wake status lookup', async () => {
     const tools = await listTools()
-    const tool = tools.find(t => t.name === 'poke')
+    const tool = tools.find(t => t.name === 'get_delivery_status')
+    expect(tool).toBeDefined()
     const d = tool!.description!
-    expect(d).toMatch(/SHORT/)
-    expect(d).toMatch(/NOT a content channel|not a content channel/i)
-    expect(d).toMatch(/send_message/)
-    expect(d).toMatch(/mailbox/)
-    expect(d).toMatch(/< 200 characters|200 characters/)
+    expect(d).toMatch(/delivery status/i)
+    expect(d).toMatch(/auto-poke/i)
+    expect(tool!.inputSchema?.properties?.message_id?.type).toBe('string')
   })
 
   it('register_agent description documents best-effort runtime binding plus explicit fallback', async () => {

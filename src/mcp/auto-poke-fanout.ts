@@ -31,11 +31,13 @@ export interface RetryScheduleCtx {
   sentAt: string
   lookupAgentFn: (agentId: string) => RetryAgentLookup | undefined
   scheduleRetryFn?: (ctx: RetryContext) => void
+  updateStatusFn?: RetryContext['updateStatusFn']
 }
 
 export interface FanoutResult {
   poked: boolean
   skipReasons: Array<{ agent_id: string; reason: AutoPokeSkipReason }>
+  deliveredAgentIds: string[]
   retryScheduledCount: number
 }
 
@@ -107,7 +109,8 @@ export async function fanoutAutoPoke(args: {
           paneId: res.paneId,
           paneGuardFn: runQuietGuard,
           pokeFn: async (pokeArgs) => { await pokeFn(pokeArgs) },
-          lookupAgentFn: args.retry.lookupAgentFn
+          lookupAgentFn: args.retry.lookupAgentFn,
+          updateStatusFn: args.retry.updateStatusFn
         })
         retryScheduledCount += 1
       }
@@ -118,5 +121,6 @@ export async function fanoutAutoPoke(args: {
   const skipReasons = results
     .filter(x => !x.poked && x.reason !== undefined)
     .map(x => ({ agent_id: x.agent_id, reason: x.reason as AutoPokeSkipReason }))
-  return { poked, skipReasons, retryScheduledCount }
+  const deliveredAgentIds = results.filter(x => x.poked).map(x => x.agent_id)
+  return { poked, skipReasons, deliveredAgentIds, retryScheduledCount }
 }

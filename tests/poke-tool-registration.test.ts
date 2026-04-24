@@ -15,7 +15,7 @@ describe('poke tool registration', () => {
     cleanups.length = 0
   })
 
-  it('poke tool is registered with target_agent_id and prompt in inputSchema', async () => {
+  it('poke tool is not exposed in the public tool list', async () => {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
     const url = new URL(`http://${host}:${port}/mcp`)
@@ -25,14 +25,7 @@ describe('poke tool registration', () => {
 
     const tools = await c.listTools()
     const pokeTool = tools.tools.find(t => t.name === 'poke')
-    expect(pokeTool).toBeDefined()
-    expect(pokeTool!.inputSchema).toMatchObject({
-      type: 'object',
-      properties: expect.objectContaining({
-        target_agent_id: expect.anything(),
-        prompt: expect.anything()
-      })
-    })
+    expect(pokeTool).toBeUndefined()
 
     await t.terminateSession()
     await c.close()

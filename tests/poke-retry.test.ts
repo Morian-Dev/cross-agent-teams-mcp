@@ -8,6 +8,12 @@ import {
 } from '../src/mcp/poke-retry.js'
 
 interface PokeCall { paneId: string; body: string; targetAgentId: string }
+interface StatusCall {
+  agentId: string
+  wake_status: string
+  skip_reason?: string | null
+  retry_attempts?: number
+}
 
 function makeCtx(overrides: Partial<RetryContext>): RetryContext {
   const base: RetryContext = {
@@ -44,13 +50,20 @@ describe('poke-retry core', () => {
 
   it('advances 30s with guard pass → pokeFn called once; map empty', async () => {
     const pokeCalls: PokeCall[] = []
+    const statusCalls: StatusCall[] = []
     scheduleRetry(makeCtx({
       paneGuardFn: async () => 'pass',
-      pokeFn: async (a) => { pokeCalls.push({ paneId: a.paneId, body: a.body, targetAgentId: a.targetAgentId }) }
+      pokeFn: async (a) => { pokeCalls.push({ paneId: a.paneId, body: a.body, targetAgentId: a.targetAgentId }) },
+      updateStatusFn: (s) => { statusCalls.push(s) }
     }))
     await vi.advanceTimersByTimeAsync(30_000)
     expect(pokeCalls.length).toBe(1)
     expect(pokeCalls[0]).toEqual({ paneId: '%2', body: 'hi', targetAgentId: 'B' })
+    expect(statusCalls.at(-1)).toMatchObject({
+      agentId: 'B',
+      wake_status: 'delivered',
+      retry_attempts: 1,
+    })
     expect(__peekRetryMap().size).toBe(0)
   })
 
@@ -73,22 +86,32 @@ describe('poke-retry core', () => {
 
   it('all 3 guards fail → no poke fire, map empty after 610s', async () => {
     const pokeCalls: PokeCall[] = []
+    const statusCalls: StatusCall[] = []
     scheduleRetry(makeCtx({
       paneGuardFn: async () => 'fail',
-      pokeFn: async (a) => { pokeCalls.push({ paneId: a.paneId, body: a.body, targetAgentId: a.targetAgentId }) }
+      pokeFn: async (a) => { pokeCalls.push({ paneId: a.paneId, body: a.body, targetAgentId: a.targetAgentId }) },
+      updateStatusFn: (s) => { statusCalls.push(s) }
     }))
     await vi.advanceTimersByTimeAsync(30_000 + 180_000 + 600_000 + 10)
     expect(pokeCalls.length).toBe(0)
+    expect(statusCalls.at(-1)).toMatchObject({
+      agentId: 'B',
+      wake_status: 'failed',
+      skip_reason: 'retry_exhausted',
+      retry_attempts: 3,
+    })
     expect(__peekRetryMap().size).toBe(0)
   })
 
   it('lookupAgentFn reports last_seen_at > sentAt at retry tick → cancels remaining', async () => {
     const pokeCalls: PokeCall[] = []
+    const statusCalls: StatusCall[] = []
     let callNum = 0
     scheduleRetry(makeCtx({
       sentAt: '2020-01-01T00:00:00.000Z',
       paneGuardFn: async () => 'fail',
       pokeFn: async (a) => { pokeCalls.push({ paneId: a.paneId, body: a.body, targetAgentId: a.targetAgentId }) },
+      updateStatusFn: (s) => { statusCalls.push(s) },
       lookupAgentFn: () => {
         callNum++
         if (callNum === 1) {
@@ -99,6 +122,11 @@ describe('poke-retry core', () => {
     }))
     await vi.advanceTimersByTimeAsync(30_000)
     expect(pokeCalls.length).toBe(0)
+    expect(statusCalls.at(-1)).toMatchObject({
+      agentId: 'B',
+      wake_status: 'skipped',
+      skip_reason: 'recipient_active',
+    })
     expect(__peekRetryMap().size).toBe(0)
     await vi.advanceTimersByTimeAsync(600_000)
     expect(pokeCalls.length).toBe(0)

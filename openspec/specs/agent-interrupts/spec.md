@@ -6,31 +6,22 @@ Cross-session agent wake-up and interrupt semantics. Currently ships the `poke` 
 ## Requirements
 ### Requirement: poke tool registration and input schema
 
-The daemon SHALL register an MCP tool named `poke` that takes `{ target_agent_id: string, prompt: string }`.
+The daemon SHALL NOT register a public MCP tool named `poke` for ordinary agent sessions.  Public MCP clients MUST NOT be able to call `poke({ target_agent_id, prompt })` through the tool registry, and `poke` MUST NOT appear in the MCP server's `list_tools` response.
 
-On success, the tool SHALL return a transport-specific envelope:
+The daemon MAY keep internal functions and transport-specific envelopes for wake delivery, but those functions are not part of the public MCP tool schema.
 
-- tmux success: `{ ok: true, transport_used: 'tmux-poke', pane_id: string, pane_tail_before: string, pane_tail_after: string }`
-- Claude channel success: `{ ok: true, transport_used: 'claude-channel', channel_session_id: string }`
-- Codex app-server success: `{ ok: true, transport_used: 'codex-appserver', thread_id: string }`
-
-On failure, the tool SHALL return `{ error: string, detail?: string | object, transport_used?: string }`.
-
-The tool MUST be listed in the MCP server's `list_tools` response exactly once.
-
-#### Scenario: poke appears in list_tools
+#### Scenario: poke does not appear in list_tools
 
 - **GIVEN** a running daemon with an initialized MCP session
 - **WHEN** the client calls `tools/list`
-- **THEN** the response contains a tool entry with `name === 'poke'`
-- **AND** its `inputSchema` requires `target_agent_id` and `prompt`, both of type string
+- **THEN** the response contains no tool entry with `name === 'poke'`
 
-#### Scenario: Codex target returns codex-appserver success envelope
+#### Scenario: Direct poke call is unavailable
 
-- **GIVEN** caller `sess-A` and target `sess-B` are registered in the same team
-- **AND** `sess-B` has `delivery={kind: 'codex-appserver', thread_id: '11111111-1111-4111-8111-111111111111', ws_url: 'ws://127.0.0.1:8799'}`
-- **WHEN** `sess-A` calls `poke({ target_agent_id: 'sess-B', prompt: 'hello' })`
-- **THEN** the response is `{ ok: true, transport_used: 'codex-appserver', thread_id: '11111111-1111-4111-8111-111111111111' }`
+- **GIVEN** a running daemon with an initialized MCP session
+- **WHEN** the client attempts to call a tool named `poke`
+- **THEN** the server rejects the call because no such public tool is registered
+- **AND** no wake delivery transport is invoked
 
 ### Requirement: poke happy path delivers paste and returns before/after tails
 
@@ -54,29 +45,6 @@ When the caller and target are both registered agents in the same team, the targ
 - **THEN** it uses `child_process.execFile('tmux', [<args>])`, not `child_process.exec` with a shell string
 - **AND** the `prompt` bytes are delivered to `load-buffer` via stdin, not via a shell argument
 
-### Requirement: Caller must be a registered agent
-
-The `poke` tool MUST reject any invocation from an MCP session that has not called `register_agent`. The daemon MUST return `{ error: 'unknown_agent' }` without attempting any tmux action.
-
-#### Scenario: Unregistered session rejected with unknown_agent
-
-- **GIVEN** an MCP session `sess-X` that has not registered
-- **WHEN** it calls `poke({ target_agent_id: 'anything', prompt: 'p' })`
-- **THEN** the response is `{ error: 'unknown_agent' }`
-- **AND** no tmux command is executed
-
-### Requirement: Unknown target_agent_id returns unknown_target
-
-If the `target_agent_id` does not correspond to any row in the `agents` table, the daemon MUST return `{ error: 'unknown_target' }`.
-
-#### Scenario: Target not in agents table
-
-- **GIVEN** caller `sess-A` is registered
-- **AND** no row in `agents` table has `agent_id = 'ghost-xyz'`
-- **WHEN** caller calls `poke({ target_agent_id: 'ghost-xyz', prompt: 'p' })`
-- **THEN** the response is `{ error: 'unknown_target' }`
-- **AND** no tmux command is executed
-
 ### Requirement: Target without any available delivery transport returns no_transport_available
 
 If the target has no usable configured delivery transport and also has no `tmux_pane_id`, the daemon MUST return `{ error: 'no_transport_available', detail: { channel_subscribed: false, tmux_pane_set: false } }`.
@@ -97,47 +65,13 @@ This requirement covers the modern delivery abstraction surface where the target
 - **THEN** the daemon does NOT return `no_transport_available`
 - **AND** it routes through the Codex transport
 
-### Requirement: Self-poke is rejected
-
-If `target_agent_id` equals the caller's own `agent_id`, the daemon MUST return `{ error: 'self_poke_denied' }`. The judgment is keyed strictly on the canonical `agent_id` (the `agents` table primary key); no other attribute (team, role, name, tmux_pane_id, channel_session_id, MCP session id, or process pid) MAY trigger this error on its own.
-
-#### Scenario: Caller pokes self
-
-- **GIVEN** caller `sess-A` is registered
-- **WHEN** `sess-A` calls `poke({ target_agent_id: 'sess-A', prompt: 'p' })`
-- **THEN** the response is `{ error: 'self_poke_denied' }`
-- **AND** no tmux command is executed
-
-#### Scenario: Distinct agents are never treated as self-poke
-
-- **GIVEN** caller agent `A` (`agent_id='id-A'`, `team='default'`, `name='alice'`, `tmux_pane_id='%42'`)
-- **AND** target agent `B` (`agent_id='id-B'`, `team='default'`, `name='bob'`, `tmux_pane_id='%42'`)
-- **AND** `id-A !== id-B`
-- **WHEN** `A` calls `poke({ target_agent_id: 'id-B', prompt: 'p' })`
-- **THEN** the response is NOT `{ error: 'self_poke_denied' }`
-- **AND** the tmux delivery pipeline is allowed to proceed (subject to other guards such as `tmux_pane_not_set`, `tmux_unavailable`, `pane_dead`)
-- **AND** the equality of any non-`agent_id` attribute (here both share `tmux_pane_id='%42'` and `team='default'`) MUST NOT short-circuit to `self_poke_denied`
-
-### Requirement: Cross-team poke via the MCP tool is rejected
-
-When a caller invokes the `poke` MCP tool directly AND the target's `team` does not equal the caller's `team`, the daemon SHALL return `{ error: 'cross_team_denied' }` without executing any tmux command.
-
-This constraint applies only to **direct MCP tool calls**. Internal auto-poke dispatched by `send_message`, `broadcast`, or `broadcast_to_role` bypasses this check — see Requirement "Internal auto-poke bypasses the cross-team check".
-
-#### Scenario: Cross-team target via MCP tool
-
-- **GIVEN** caller `sess-A` is in team `alpha` and target `sess-B` is in team `beta`
-- **WHEN** `sess-A` invokes the `poke` MCP tool with `{ target_agent_id: 'sess-B', prompt: 'p' }`
-- **THEN** the response is `{ error: 'cross_team_denied' }`
-- **AND** no tmux command is executed
-
 ### Requirement: Internal auto-poke bypasses the cross-team check
 
-When the daemon's internal auto-poke implementation (`createAutoPokeImpl`, invoked by `send_message` / `broadcast` / `broadcast_to_role` fan-out paths) calls `poke()` to inject a wake-up hint, the caller-team-vs-target-team equality check MUST be bypassed, even when the caller and target belong to different teams.
+When the daemon's internal auto-poke implementation (`createAutoPokeImpl`, invoked by `send_message` / `broadcast` / `broadcast_to_role` fan-out paths) calls the internal wake delivery primitive to inject a wake-up hint, the caller-team-vs-target-team equality check MUST be bypassed, even when the caller and target belong to different teams.
 
-The prompt injected via this path is fixed to the format `新邮件 from {sender_identifier}, 请调 get_inbox 查看` (built by `buildAutoPokeHint`). The bypass is permitted ONLY because the prompt format is constant and contains no message-body substring; any future path that wishes to bypass the cross-team check MUST also restrict its prompt to a constrained, non-leaky format.
+The prompt injected via this path is fixed to the format `新邮件 from {sender_identifier}, 请调 get_inbox 查看` (built by `buildAutoPokeHint`).  The bypass is permitted ONLY because the prompt format is constant and contains no message-body substring; any future internal path that wishes to bypass the cross-team check MUST also restrict its prompt to a constrained, non-leaky format.
 
-The MCP `poke` tool input schema MUST NOT expose any parameter that controls this bypass; the bypass is strictly internal to the daemon's process.
+No public MCP tool input schema may expose any parameter that controls this bypass; the bypass is strictly internal to the daemon's process.
 
 #### Scenario: Cross-team send_message triggers a successful auto-poke
 
@@ -149,13 +83,12 @@ The MCP `poke` tool input schema MUST NOT expose any parameter that controls thi
 - **AND** `poke_skip_reasons` does NOT contain `{agent_id:'sess-B', reason:'guard_failed'}`
 - **AND** `%pB` has received a `paste-buffer` + `send-keys Enter` sequence carrying the hint `新邮件 from <A's display name or agent_id[:8]>, 请调 get_inbox 查看`
 
-#### Scenario: Direct MCP poke call with the same cross-team pair still denied
+#### Scenario: Direct MCP poke is not the bypass path
 
 - **GIVEN** agent `sess-A` in team `alpha`, agent `sess-B` in team `beta`, both with valid panes
-- **WHEN** `sess-A` invokes the `poke` MCP tool with `{ target_agent_id: 'sess-B', prompt: 'p' }`
-- **THEN** the response is `{ error: 'cross_team_denied' }`
-- **AND** no tmux command is executed
-- **AND** the fact that internal auto-poke is permitted for the same pair has no bearing on this direct call
+- **WHEN** `sess-A` attempts to invoke a public MCP tool named `poke`
+- **THEN** the call is rejected because no such public tool is registered
+- **AND** the internal cross-team auto-poke bypass has no bearing on that direct call
 
 ### Requirement: Prompt exceeding 8 KB is rejected
 
@@ -200,3 +133,17 @@ For any other tmux CLI error not classified as `tmux_unavailable` or `pane_dead`
 - **AND** tmux returns a non-zero exit with stderr `<unexpected error>`
 - **WHEN** the daemon processes this failure
 - **THEN** the response is `{ error: 'tmux_cmd_failed', detail: { stage: 'load_buffer', stderr: '<unexpected error>' } }`
+
+### Requirement: Internal wake delivery primitive remains daemon-only
+The daemon SHALL keep an internal wake delivery primitive that can deliver the fixed auto-poke hint through the configured transport stack, but it MUST NOT expose that primitive as a public MCP tool for ordinary agents.  Internal callers include `send_message`, `broadcast`, `broadcast_to_role`, and retry ticks.
+
+#### Scenario: Auto-poke can still call the internal primitive
+- **GIVEN** agent A sends a message to agent B and B has an idle delivery transport
+- **WHEN** the auto-poke path runs inside the daemon
+- **THEN** the daemon delivers the fixed wake hint to B
+- **AND** no public `poke` tool is required for that delivery
+
+#### Scenario: Public tools do not include poke
+- **GIVEN** a registered agent MCP session
+- **WHEN** the client calls `tools/list`
+- **THEN** the response MUST NOT contain a tool named `poke`

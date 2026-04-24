@@ -5,6 +5,7 @@ import type { EventsOutbox } from '../storage/events-outbox.js'
 import type { FanoutDeps, AutoPokeSkipReason } from './auto-poke-fanout.js'
 import { runFanoutWithRetry } from './fanout-with-retry.js'
 import { parseDeliveryRow, type DeliverySpec } from '../lib/delivery-spec.js'
+import { recordInitialDeliveryStatuses } from './delivery-status.js'
 
 export type BroadcastToRoleDeps = FanoutDeps
 
@@ -67,6 +68,13 @@ export class BroadcastToRoleService {
     const inserted = this.insert(fromRow.team, input, recipients, baseId)
 
     if (input.auto_poke === false) {
+      recordInitialDeliveryStatuses(this.db, {
+        messageId: inserted.message_id,
+        recipients,
+        delivered: new Set(),
+        skipped: [],
+        autoPokeDisabled: true,
+      })
       return {
         message_id: inserted.message_id,
         event_id: inserted.event_id,

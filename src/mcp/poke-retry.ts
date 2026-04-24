@@ -26,6 +26,13 @@ export interface RetryContext {
   paneGuardFn: (paneId: string) => Promise<'pass' | 'fail'>
   pokeFn: (args: RetryPokeArgs) => Promise<void>
   lookupAgentFn: (agentId: string) => RetryAgentLookup | undefined
+  updateStatusFn?: (args: {
+    agentId: string
+    wake_status: 'delivered' | 'retrying' | 'skipped' | 'failed'
+    skip_reason?: 'guard_failed' | 'no_pane' | 'recipient_active' | 'retry_exhausted' | null
+    retry_attempts?: number
+    delivered_at?: string | null
+  }) => void
 }
 
 interface RetryEntry {
@@ -66,10 +73,22 @@ async function tick(key: string): Promise<void> {
   try {
     const agent = ctx.lookupAgentFn(ctx.agentId)
     if (!agent || !agent.tmux_pane_id) {
+      ctx.updateStatusFn?.({
+        agentId: ctx.agentId,
+        wake_status: 'failed',
+        skip_reason: 'no_pane',
+        retry_attempts: entry.attempt,
+      })
       retryMap.delete(key)
       return
     }
     if (new Date(agent.last_seen_at).getTime() > new Date(ctx.sentAt).getTime()) {
+      ctx.updateStatusFn?.({
+        agentId: ctx.agentId,
+        wake_status: 'skipped',
+        skip_reason: 'recipient_active',
+        retry_attempts: entry.attempt,
+      })
       retryMap.delete(key)
       return
     }
@@ -82,16 +101,41 @@ async function tick(key: string): Promise<void> {
         paneId: agent.tmux_pane_id,
         body: ctx.body
       })
+      ctx.updateStatusFn?.({
+        agentId: ctx.agentId,
+        wake_status: 'delivered',
+        skip_reason: null,
+        retry_attempts: entry.attempt + 1,
+        delivered_at: new Date().toISOString(),
+      })
       retryMap.delete(key)
       return
     }
     entry.attempt += 1
     if (entry.attempt >= RETRY_DELAYS_MS.length) {
+      ctx.updateStatusFn?.({
+        agentId: ctx.agentId,
+        wake_status: 'failed',
+        skip_reason: 'retry_exhausted',
+        retry_attempts: entry.attempt,
+      })
       retryMap.delete(key)
       return
     }
+    ctx.updateStatusFn?.({
+      agentId: ctx.agentId,
+      wake_status: 'retrying',
+      skip_reason: 'guard_failed',
+      retry_attempts: entry.attempt,
+    })
     enqueueNext(key)
   } catch {
+    ctx.updateStatusFn?.({
+      agentId: ctx.agentId,
+      wake_status: 'failed',
+      skip_reason: 'retry_exhausted',
+      retry_attempts: entry.attempt,
+    })
     retryMap.delete(key)
   }
 }

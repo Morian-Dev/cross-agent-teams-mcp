@@ -75,7 +75,7 @@ describe('e2e channel poke (self-binding)', () => {
     await app.close()
   }, 20000)
 
-  it('Claude-side bind_channel({csid}) + poke triggers notifications/claude/channel on proxy host with no tmux', async () => {
+  it('Claude-side bind_channel({csid}) + send_message auto-poke triggers channel notification with no tmux', async () => {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
     const url = `http://${host}:${port}/mcp`
@@ -125,24 +125,21 @@ describe('e2e channel poke (self-binding)', () => {
     const bindObj = await parseTool(bindResp)
     expect(bindObj).toEqual({ ok: true })
 
-    // Alice (peer) registers and pokes Bob.
+    // Alice (peer) registers and messages Bob; auto-poke uses the channel.
     const aliceT = new StreamableHTTPClientTransport(new URL(url))
     const aliceC = new Client({ name: 'alice', version: '0.0.0' })
     await aliceC.connect(aliceT)
-    await aliceC.callTool({
+    const aliceResp = await aliceC.callTool({
       name: 'register_agent',
       arguments: { client: 'custom', model: 'opus', role: 'backend', name: 'alice' }
     })
-    const pokeResp = await aliceC.callTool({
-      name: 'poke',
-      arguments: { target_agent_id: bob.agent_id as string, prompt: 'check inbox' }
+    const alice = await parseTool(aliceResp)
+    const sendResp = await aliceC.callTool({
+      name: 'send_message',
+      arguments: { to_agent_id: bob.agent_id as string, body: 'check inbox' }
     })
-    const pokeObj = await parseTool(pokeResp)
-    expect(pokeObj).toMatchObject({
-      ok: true,
-      transport_used: 'claude-channel',
-      channel_session_id: csid
-    })
+    const sendObj = await parseTool(sendResp)
+    expect(sendObj).toMatchObject({ poked: true, retry_scheduled: false })
 
     // Allow notification to propagate.
     const deadline = Date.now() + 2000
@@ -151,12 +148,13 @@ describe('e2e channel poke (self-binding)', () => {
     }
     expect(hostNotifs.length).toBeGreaterThanOrEqual(1)
     expect(hostNotifs[0].method).toBe('notifications/claude/channel')
-    expect(hostNotifs[0].params).toMatchObject({ content: 'check inbox' })
+    expect(hostNotifs[0].params).toMatchObject({
+      content: `新邮件 from alice (${alice.agent_id as string}), 请调 get_inbox 查看`,
+    })
 
-    // No tmux envelope fields on the poke response.
-    expect(pokeObj.pane_id).toBeUndefined()
-    expect(pokeObj.pane_tail_before).toBeUndefined()
-    expect(pokeObj.pane_tail_after).toBeUndefined()
+    const content = (hostNotifs[0].params as { content: string }).content
+    expect(content).toContain('get_inbox')
+    expect(content).not.toContain('check inbox')
 
     await seq.close()
     await aliceC.close()

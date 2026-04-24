@@ -48,6 +48,17 @@ const DDL = [
     need_reply INTEGER NOT NULL DEFAULT 1,
     sent_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS message_delivery_status (
+    message_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    wake_status TEXT NOT NULL CHECK(wake_status IN ('delivered','retrying','skipped','failed')),
+    skip_reason TEXT,
+    retry_attempts INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    delivered_at TEXT,
+    PRIMARY KEY (message_id, agent_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_message_delivery_status_message ON message_delivery_status(message_id)`,
   `CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
     team TEXT NOT NULL,
