@@ -22,7 +22,7 @@ function setup() {
   const events = new EventsOutbox(db)
   const fakePoke: AutoPokeFn = async () => ({ ok: true })
   const send = new SendMessageService(db, agents, events, { poke: fakePoke })
-  const broadcast = new BroadcastService(db, agents, send, { poke: fakePoke })
+  const broadcast = new BroadcastService(db, agents, { poke: fakePoke })
   const status = new GetDeliveryStatusService(db)
   return { db, send, broadcast, status, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
 }

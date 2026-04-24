@@ -27,24 +27,39 @@ If you started the daemon with `--token`, add the bearer header:
 }
 ```
 
-## Tmux delivery notes
+## Running opencode inside tmux
 
-`register_agent` now best-effort attempts runtime binding after the identity row is created, so tmux-based poke delivery can often come up without a second tool call.  Callers SHOULD NOT pass `tmux_pane_id` to `register_agent`.
+opencode integrates with xats as a plain tmux-hosted TUI.  There is no dedicated launcher and no HTTP-based opencode transport — `poke()` is delivered by pasting text into the opencode pane via tmux, the same path `client: "custom"` uses.
 
-If your opencode host already knows its local server coordinates, you can bind opencode delivery directly through the unified entry point:
+Start opencode in a tmux window, then register from inside the opencode MCP session:
+
+```bash
+tmux new-window opencode
+```
 
 ```text
 register_agent({
   client: "opencode",
-  model: "anthropic/claude-3-5-sonnet-20241022",
-  name: "worker-opencode",
+  model: "opencode-default",
+  name: "my-opencode-agent",
   project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
   role: "worker",
-  base_url: "http://127.0.0.1:4096",
-  session_id: "ses_xxxxx"
+  ui_pid: <opencode pid>
 })
 ```
 
-当用户没有显式指定 `team` 时, 推荐传 `project_dir` 为当前工作目录.  daemon 会用该目录 basename 派生默认 team, 两者都不传时仍回落到 `"default"`.
+Pass the opencode process pid as `ui_pid`.  The daemon performs `pid → tty → tmux pane` verification in the same registration call and writes `tmux_pane_id`.  After that, cross-agent `poke()` delivers with `transport_used: "tmux-poke"`.
 
-If registration still returns a `hint`, that means automatic runtime binding did not converge and there is still no usable `tmux_pane_id` for tmux-based poke delivery.  Call `bind_runtime_identity(...)` to bind explicitly.  Use `detect_tmux_pane(...)` only for debugging.  `bind_opencode_session(...)` remains available as a low-level rebind tool when an already-registered opencode host needs to swap to a new local session.
+When no explicit `team` is specified, pass `project_dir` as your current working directory.  The daemon derives the default team from that directory's basename, and falls back to `"default"` when both are omitted.
+
+If the registration response still contains `hint`, automatic runtime binding did not converge and there is still no usable `tmux_pane_id`.  In that case, call `bind_runtime_identity(...)` with `ui_pid` (or `ui_tty` + `tmux_pane_id`) to bind explicitly.  `detect_tmux_pane(...)` remains useful for debugging ambiguous matches.
+
+## Operator cutover from the HTTP transport
+
+If you are upgrading from a version that shipped the `opencode-server` HTTP transport:
+
+1. Stop the daemon: `./stop-server.sh` — this wipes `data.db` on purpose.  The dropped `opencode_base_url` / `opencode_session_id` columns and the `opencode_pane_pre_registrations` table are not migrated.
+2. Rebuild the project: `pnpm build`.
+3. Restart: `./start-server.sh`.
+4. Remove any shell alias pointing at `launch-opencode.sh` — the script no longer exists, and its CLI helper `pre-register-opencode-pane` has been removed.
+5. Re-register your opencode agents via the `register_agent({ client: "opencode", ui_pid, ... })` flow shown above.  The removed MCP tools `register_opencode_self`, `pre_register_opencode_pane`, and `bind_opencode_session` will return `tool_not_found`.

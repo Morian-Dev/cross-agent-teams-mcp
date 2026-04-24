@@ -5,8 +5,7 @@ import { join } from 'node:path'
 import { openDb } from '../src/storage/db.js'
 import { applySchema } from '../src/storage/schema.js'
 import { AgentsRepo } from '../src/storage/agents-repo.js'
-import { EventsOutbox } from '../src/storage/events-outbox.js'
-import { SendMessageService, type AutoPokeFn, type AutoPokeSkipReason } from '../src/mcp/send-message.js'
+import { type AutoPokeFn, type AutoPokeSkipReason } from '../src/mcp/send-message.js'
 import { BroadcastService } from '../src/mcp/broadcast.js'
 import { __setCapturePaneTail, __resetCapturePaneTail } from '../src/mcp/poke-guard.js'
 import { clearAllRetries } from '../src/mcp/poke-retry.js'
@@ -26,7 +25,6 @@ function setupService(opts?: { paneState?: Record<string, 'idle' | 'active'> }):
   const db = openDb(join(dir, 'data.db'))
   applySchema(db)
   const agents = new AgentsRepo(db)
-  const events = new EventsOutbox(db)
 
   const panes = opts?.paneState ?? {}
   __setCapturePaneTail(async (paneId: string) => {
@@ -41,8 +39,7 @@ function setupService(opts?: { paneState?: Record<string, 'idle' | 'active'> }):
     return { ok: true }
   }
 
-  const send = new SendMessageService(db, agents, events, { poke: fakePoke })
-  const svc = new BroadcastService(db, agents, send, { poke: fakePoke })
+  const svc = new BroadcastService(db, agents, { poke: fakePoke })
   return { svc, db, pokeCalls, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
 }
 
@@ -59,7 +56,6 @@ describe('broadcast auto_poke default-on integration', () => {
   it('default broadcast (auto_poke omitted) pokes every idle pane in parallel', async () => {
     const { svc, db, pokeCalls, cleanup } = setupService()
     cleanups.push(cleanup)
-    const agents = new AgentsRepo(db)
     insertAgent(db, { agent_id: 'A', model: 'm', role: 'lead', tmux_pane_id: '%1' , name: 'A' })
     insertAgent(db, { agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' , name: 'B' })
     insertAgent(db, { agent_id: 'C', model: 'm', role: 'worker', tmux_pane_id: '%3' , name: 'C' })
@@ -81,7 +77,6 @@ describe('broadcast auto_poke default-on integration', () => {
   it('explicit auto_poke:false reverts to pure mailbox delivery', async () => {
     const { svc, db, pokeCalls, cleanup } = setupService()
     cleanups.push(cleanup)
-    const agents = new AgentsRepo(db)
     insertAgent(db, { agent_id: 'A', model: 'm', role: 'lead', tmux_pane_id: '%1' , name: 'A' })
     insertAgent(db, { agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' , name: 'B' })
     insertAgent(db, { agent_id: 'C', model: 'm', role: 'worker', tmux_pane_id: '%3' , name: 'C' })
@@ -102,7 +97,6 @@ describe('broadcast auto_poke default-on integration', () => {
       paneState: { '%2': 'idle', '%3': 'active' }
     })
     cleanups.push(cleanup)
-    const agents = new AgentsRepo(db)
     insertAgent(db, { agent_id: 'A', model: 'm', role: 'lead', tmux_pane_id: '%1' , name: 'A' })
     insertAgent(db, { agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' , name: 'B' })
     insertAgent(db, { agent_id: 'C', model: 'm', role: 'worker', tmux_pane_id: '%3' , name: 'C' })
@@ -162,7 +156,6 @@ describe('broadcast auto_poke default-on integration', () => {
       paneState: { '%2': 'active' }
     })
     cleanups.push(cleanup)
-    const agents = new AgentsRepo(db)
     insertAgent(db, { agent_id: 'A', model: 'm', role: 'lead', tmux_pane_id: '%1' , name: 'A' })
     insertAgent(db, { agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' , name: 'B' })
 

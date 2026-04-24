@@ -42,8 +42,6 @@ describe('register_agent tool schema', () => {
         client_name: expect.anything(),
         ui_pid: expect.anything(),
         channel_session_id: expect.anything(),
-        base_url: expect.anything(),
-        session_id: expect.anything(),
         thread_id: expect.anything(),
         ws_url: expect.anything(),
         auth_token_ref: expect.anything(),

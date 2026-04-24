@@ -50,7 +50,7 @@ function setup(opts?: { paneState?: Record<string, 'idle' | 'active'> }): Setup 
 
   const autoPokeImpl = createAutoPokeImpl(db, agents)
   const sendSvc = new SendMessageService(db, agents, events, { poke: autoPokeImpl })
-  const broadcastSvc = new BroadcastService(db, agents, sendSvc, { poke: autoPokeImpl })
+  const broadcastSvc = new BroadcastService(db, agents, { poke: autoPokeImpl })
   return {
     db,
     agents,

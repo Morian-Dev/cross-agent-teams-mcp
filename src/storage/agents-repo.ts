@@ -32,8 +32,6 @@ export interface AgentRow {
   tmux_pane_id: string | null
   delivery: DeliverySpec
   channel_session_id: string | null
-  opencode_base_url: string | null
-  opencode_session_id: string | null
   last_seen_at: string
 }
 
@@ -52,8 +50,6 @@ type DbAgentRow = {
   name: string
   model: string | null
   tmux_pane_id: string | null
-  opencode_base_url: string | null
-  opencode_session_id: string | null
   last_seen_at: string
 } & DeliveryRow
 
@@ -71,8 +67,6 @@ function toAgentRow(row: DbAgentRow): AgentRow {
     delivery,
     channel_session_id:
       delivery.kind === 'claude-channel' ? delivery.channel_session_id : null,
-    opencode_base_url: row.opencode_base_url,
-    opencode_session_id: row.opencode_session_id,
     last_seen_at: row.last_seen_at,
   }
 }
@@ -221,22 +215,6 @@ export class AgentsRepo {
     ).run(client, client_name ?? null, agent_id)
   }
 
-  setOpencodeSession(agent_id: string, base_url: string, session_id: string): void {
-    this.db.prepare(
-      `UPDATE agents
-       SET opencode_base_url=?, opencode_session_id=?
-       WHERE agent_id=?`
-    ).run(base_url, session_id, agent_id)
-  }
-
-  clearOpencodeSession(agent_id: string): void {
-    this.db.prepare(
-      `UPDATE agents
-       SET opencode_base_url=NULL, opencode_session_id=NULL
-       WHERE agent_id=?`
-    ).run(agent_id)
-  }
-
   setRuntimeBinding(
     agent_id: string,
     args: {
@@ -276,8 +254,6 @@ export class AgentsRepo {
          name,
          model,
          tmux_pane_id,
-         opencode_base_url,
-         opencode_session_id,
          delivery_kind,
          delivery_payload,
          last_seen_at
@@ -336,8 +312,6 @@ export class AgentsRepo {
          name,
          model,
          tmux_pane_id,
-         opencode_base_url,
-         opencode_session_id,
          delivery_kind,
          delivery_payload,
          last_seen_at

@@ -27,8 +27,6 @@ function createLegacyAgents(db: Database.Database): void {
     runtime_verification_mode TEXT,
     runtime_bound_at TEXT,
     channel_session_id TEXT,
-    opencode_base_url TEXT,
-    opencode_session_id TEXT,
     delivery_kind TEXT NOT NULL DEFAULT 'none',
     delivery_payload TEXT
   )`)

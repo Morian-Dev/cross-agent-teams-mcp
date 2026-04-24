@@ -56,7 +56,6 @@ describe('send_message auto_poke integration', () => {
   it('single recipient with idle pane: poked:true, no skip_reasons, retry_scheduled:false', async () => {
     const { svc, db, pokeCalls, cleanup } = setupService({ paneState: { '%2': 'idle' } })
     cleanups.push(cleanup)
-    const agents = new AgentsRepo(db)
     insertAgent(db, { agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' , name: 'A' })
     insertAgent(db, { agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' , name: 'B' })
 
@@ -80,7 +79,6 @@ describe('send_message auto_poke integration', () => {
   it('recipient without tmux_pane_id: poked:false, reason no_pane, retry_scheduled:false', async () => {
     const { svc, db, pokeCalls, cleanup } = setupService()
     cleanups.push(cleanup)
-    const agents = new AgentsRepo(db)
     insertAgent(db, { agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' , name: 'A' })
     insertAgent(db, { agent_id: 'B', model: 'm', role: 'worker' , name: 'B' }) // no pane
 
@@ -117,33 +115,9 @@ describe('send_message auto_poke integration', () => {
     expect(r.retry_scheduled).toBe(false)
   })
 
-  it('recipient with opencode binding and no tmux_pane_id still invokes poke', async () => {
-    const { svc, db, pokeCalls, cleanup } = setupService()
-    cleanups.push(cleanup)
-    insertAgent(db, { agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1', name: 'A' })
-    insertAgent(db, {
-      agent_id: 'B',
-      client: 'opencode',
-      model: 'opencode',
-      role: 'worker',
-      name: 'B',
-      opencode_base_url: 'http://127.0.0.1:4096',
-      opencode_session_id: 'sess-b',
-    })
-
-    const r = await svc.send({ from: 'A', to_agent_id: 'B', body: 'hi' })
-    if ('error' in r) throw new Error('expected success')
-
-    expect(r.poked).toBe(true)
-    expect(r.poke_skip_reasons ?? []).toEqual([])
-    expect(pokeCalls).toEqual([{ target: 'B', pane: null }])
-    expect(r.retry_scheduled).toBe(false)
-  })
-
   it('auto_poke:false disables the behavior, no skip_reasons', async () => {
     const { svc, db, pokeCalls, cleanup } = setupService({ paneState: { '%2': 'idle' } })
     cleanups.push(cleanup)
-    const agents = new AgentsRepo(db)
     insertAgent(db, { agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' , name: 'A' })
     insertAgent(db, { agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' , name: 'B' })
 
@@ -162,7 +136,6 @@ describe('send_message auto_poke integration', () => {
   it('single recipient with active pane: poked:false, guard_failed, retry_scheduled:true, delays=[30,180,600]', async () => {
     const { svc, db, pokeCalls, cleanup } = setupService({ paneState: { '%2': 'active' } })
     cleanups.push(cleanup)
-    const agents = new AgentsRepo(db)
     insertAgent(db, { agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' , name: 'A' })
     insertAgent(db, { agent_id: 'B', model: 'm', role: 'worker', tmux_pane_id: '%2' , name: 'B' })
 
@@ -211,7 +184,6 @@ describe('send_message auto_poke integration', () => {
   it('self as sole recipient is marked self (defensive; to_agent_id of caller)', async () => {
     const { svc, db, pokeCalls, cleanup } = setupService({ paneState: { '%1': 'idle' } })
     cleanups.push(cleanup)
-    const agents = new AgentsRepo(db)
     insertAgent(db, { agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1' , name: 'A' })
 
     const r = await svc.send({ from: 'A', to_agent_id: 'A', body: 'hi' })

@@ -42,16 +42,12 @@ interface RecipientPokeRow {
   agent_id: string
   tmux_pane_id: string | null
   delivery: DeliverySpec
-  opencode_base_url: string | null
-  opencode_session_id: string | null
 }
 
 interface RecipientLookupRow {
   agent_id: string
   team: string
   tmux_pane_id: string | null
-  opencode_base_url: string | null
-  opencode_session_id: string | null
   delivery_kind: string
   delivery_payload: string | null
 }
@@ -88,8 +84,6 @@ export class SendMessageService {
          agent_id,
          team,
          tmux_pane_id,
-         opencode_base_url,
-         opencode_session_id,
          delivery_kind,
          delivery_payload
        FROM agents
@@ -100,8 +94,6 @@ export class SendMessageService {
     const recipientRow: RecipientPokeRow = {
       agent_id: rcpt.agent_id,
       tmux_pane_id: rcpt.tmux_pane_id,
-      opencode_base_url: rcpt.opencode_base_url,
-      opencode_session_id: rcpt.opencode_session_id,
       delivery: parseDeliveryRow(rcpt),
     }
 

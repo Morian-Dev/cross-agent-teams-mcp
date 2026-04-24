@@ -30,6 +30,7 @@ describe('proxy startup channel notification', () => {
     const params = hit!.params as { content: string; meta: Record<string, string> }
     expect(params.content).toContain(csid)
     expect(params.content).toContain('register_claude_self')
+    expect(params.content).toContain('ui_pid')
     expect(params.content).toContain('bind_channel')
     expect(params.content).toContain('register_agent')
     expect(params.content).toContain('curl')

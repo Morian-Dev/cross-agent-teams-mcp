@@ -43,15 +43,9 @@ export type PokeResult =
       thread_id: string
     }
   | {
-      ok: true
-      transport_used: 'opencode-server'
-      base_url: string
-      session_id: string
-    }
-  | {
       error: string
       detail?: unknown
-      transport_used?: 'tmux-poke' | 'codex-appserver' | 'opencode-server'
+      transport_used?: 'tmux-poke' | 'codex-appserver'
     }
 
 interface TargetRow {
@@ -59,8 +53,6 @@ interface TargetRow {
   client: import('../lib/client-kind.js').ClientKind | null
   team: string
   tmux_pane_id: string | null
-  opencode_base_url: string | null
-  opencode_session_id: string | null
   delivery_kind: string
   delivery_payload: string | null
 }
@@ -143,8 +135,6 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
          client,
          team,
          tmux_pane_id,
-         opencode_base_url,
-         opencode_session_id,
          delivery_kind,
          delivery_payload
        FROM agents
@@ -169,13 +159,10 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
   const fanout = deps.channelWakeFanout
   const delivery = parseDeliveryRow(target) as DeliverySpec
   if (!fanout) {
-    if (
-      delivery.kind === 'codex-appserver'
-      || (target.opencode_base_url != null && target.opencode_session_id != null)
-    ) {
+    if (delivery.kind === 'codex-appserver') {
       return dispatchPoke(
         { tmuxPoke: tmuxPokeImpl },
-        { client: target.client, delivery, tmux_pane_id: target.tmux_pane_id, opencode_base_url: target.opencode_base_url, opencode_session_id: target.opencode_session_id },
+        { client: target.client, delivery, tmux_pane_id: target.tmux_pane_id },
         { content: input.prompt, meta: {} }
       )
     }
@@ -197,7 +184,7 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
 
   return dispatchPoke(
     { channelWakeFanout: fanout, tmuxPoke: tmuxPokeImpl },
-    { client: target.client, delivery, tmux_pane_id: target.tmux_pane_id, opencode_base_url: target.opencode_base_url, opencode_session_id: target.opencode_session_id },
+    { client: target.client, delivery, tmux_pane_id: target.tmux_pane_id },
     { content: input.prompt, meta: {} }
   )
 }

@@ -59,7 +59,6 @@ The daemon currently supports these wake-up paths:
 - `tmux_pane_id`: inject text directly into a target tmux pane
 - `delivery.kind='codex-appserver'`: resume a Codex thread over websocket and start a turn
 - `delivery.kind='claude-channel'`: bind a Claude channel session and deliver channel wake notifications
-- `opencode-server`: send a prompt to an opencode session via HTTP
 
 `register_agent(...)` now requires an explicit `client`.  Use one of `codex`, `claude-code`, or `opencode` for first-class runtimes.  For other agent harnesses, pass `client: "custom"` and optionally `client_name` for observability.
 
@@ -221,92 +220,43 @@ register_agent({
 
 For a more complete Claude Code setup example, see [docs/configs/claude-code.md](docs/configs/claude-code.md).
 
-## Opencode Delivery
+## Using opencode with xats (tmux)
 
-For opencode users who want server-based poke delivery (without relying on tmux), the first-class path is the **xats opencode launcher** (`launch-opencode.sh`).  The launcher creates an opencode server session, pre-registers the caller tmux pane with the xats daemon, and execs opencode so the daemon-side `opencode_base_url` / `opencode_session_id` metadata is auto-bound when opencode calls `register_opencode_self`.
+opencode integrates with xats as a plain tmux-hosted TUI.  There is no dedicated launcher and no HTTP transport — pokes are delivered by pasting into the opencode pane via tmux, exactly the same path used for `client: "custom"`.
 
-### Recommended: launcher alias
-
-Start the shared stack once (includes the opencode server on `http://127.0.0.1:4096`):
+Start opencode inside a tmux window, then register from within opencode's MCP session:
 
 ```bash
-./start-server.sh
+tmux new-window opencode
 ```
-
-Then add an alias in your shell config.  The recommended name is `free-xats-opencode` so the original `opencode` command stays untouched — the xats-integrated variant is invoked explicitly:
-
-```zsh
-# ~/.zshrc
-alias free-xats-opencode='/path/to/cross-agent-teams-mcp/launch-opencode.sh'
-```
-
-(If you prefer to shadow `opencode` itself, use `alias opencode='/path/...'` instead — but explicit opt-in is the safer default.)
-
-Launch opencode from any tmux pane:
-
-```bash
-free-xats-opencode
-```
-
-Inside the opencode MCP session, register with the self-register helper — omit `base_url` / `session_id`, the launcher pre-reg auto-binds them:
-
-```text
-register_opencode_self({
-  name: "my-opencode-agent",
-  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
-  role: "worker"
-})
-```
-
-After registration, `poke()` routes to the opencode session via HTTP:
-
-```json
-{
-  "ok": true,
-  "transport_used": "opencode-server",
-  "base_url": "http://127.0.0.1:4096",
-  "session_id": "ses_xxxxx"
-}
-```
-
-### Launcher requirements
-
-- Must run inside tmux (`$TMUX_PANE` is required; the launcher exits with a clear error otherwise).
-- The shared opencode server must be healthy (`./start-server.sh` brings it up; the launcher refuses to start otherwise).
-- `cross-agent-teams-mcp` CLI must be on `$PATH` and the xats daemon must be running (the launcher calls `cross-agent-teams-mcp pre-register-opencode-pane` over HTTP).
-- `base_url` is loopback-only (`127.0.0.1`, `localhost`, or `::1`).
-
-### Version requirement (open question O1 resolved)
-
-The launcher uses `opencode -s <session_id>` on the default TUI command to attach the interactive TUI to the pre-created server session.  This flag shipped on the default TUI command in **opencode 1.14.23**; the launcher auto-detects it via `opencode --help` at run time.  The pre-created session is pinned to the caller's `cwd` via `POST /session?directory=<encoded-cwd>` so the TUI can actually attach — if the pre-reg'd session lives in a different directory than the TUI's cwd, opencode silently forks its own session and the handshake breaks.
-
-- `opencode >= 1.14.23`: launcher execs `opencode -s $SESSION_ID`, so the TUI renders the same server session the xats daemon is bound to.  `opencode-server` transport pokes (`POST /session/{id}/prompt_async`) land in the session the TUI is actively showing.
-- `opencode < 1.14.23`: launcher falls back to plain `opencode` with a printed warning.  The interactive CLI creates its own orphan session; daemon HTTP pokes still succeed against the pre-reg'd server session but the TUI cannot see them, so wake-ups effectively fall back to tmux keystroke poke.
-
-Upgrade opencode to 1.14.23 or newer to close this gap.  If you run the shared opencode server (`./start-server.sh`), also restart it after upgrading — the running process keeps the version it was started with.
-
-### Advanced / custom: manual flow (no launcher)
-
-For setups that cannot use the launcher (e.g., opencode is not launched from tmux, or a custom server session is required), the unified registration path still works:
 
 ```text
 register_agent({
   client: "opencode",
-  model: "anthropic/claude-3-5-sonnet-20241022",
+  model: "opencode-default",
   name: "my-opencode-agent",
   project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
   role: "worker",
-  base_url: "http://127.0.0.1:4096",
-  session_id: "ses_xxxxx"
+  ui_pid: <opencode pid>
 })
 ```
 
-Passing `base_url` and `session_id` explicitly **disables the pre-reg auto-bind path**; the explicit values take precedence and any concurrent pre-reg row for the caller's pane is ignored.
+Pass the opencode process pid as `ui_pid`.  The daemon resolves `pid → tty → tmux pane` and populates `tmux_pane_id` in the same registration call.  After registration, pokes from other agents route to the opencode pane as `transport_used: "tmux-poke"`.
 
 ### Transport selection
 
 Transport selection is client-aware:
 
 - `client="claude-code"`: `claude-channel` first, then `tmux-poke`
-- `client="opencode"`: `opencode-server` first, then `tmux-poke`
+- `client="opencode"`: `tmux-poke`
 - `client="codex"`: `codex-appserver` first, then `tmux-poke`
+
+### Operator cutover
+
+If you are upgrading from a version that shipped the `opencode-server` transport:
+
+1. Stop the daemon with `./stop-server.sh` (this wipes `data.db` on purpose — the dropped `opencode_base_url` / `opencode_session_id` columns and the `opencode_pane_pre_registrations` table are not migrated).
+2. Rebuild: `pnpm build`.
+3. Restart with `./start-server.sh`.
+4. Remove any shell alias that pointed at `launch-opencode.sh` (the script no longer exists).
+5. Re-register opencode agents using the `register_agent({ client: "opencode", ui_pid, ... })` flow shown above.

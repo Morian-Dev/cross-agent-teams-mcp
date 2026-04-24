@@ -6,7 +6,10 @@ const LIVE_WINDOW_MS = 5 * 60 * 1000
 
 export interface AutoBindInput {
   callerAgentId: string
-  team: string
+  ui_pid: number
+}
+
+export interface LookupInput {
   ui_pid: number
 }
 
@@ -21,6 +24,18 @@ export interface AutoBindMiss {
 }
 
 export type AutoBindResult = AutoBindSuccess | AutoBindMiss
+
+export interface LookupSuccess {
+  ok: true
+  channel_session_id: string
+}
+
+export interface LookupMiss {
+  ok: false
+  reason: 'no_proxy_row' | 'proxy_payload_corrupt'
+}
+
+export type LookupResult = LookupSuccess | LookupMiss
 
 interface ProxyRow {
   delivery_payload: string | null
@@ -38,23 +53,14 @@ export class AutoBindChannelService {
     private readonly fanout: ChannelWakeFanout
   ) {}
 
+  lookup(input: LookupInput): LookupResult {
+    return this.findLiveProxyCsid(input)
+  }
+
   run(input: AutoBindInput): AutoBindResult {
-    const cutoff = new Date(Date.now() - LIVE_WINDOW_MS).toISOString()
-    const row = this.db
-      .prepare(
-        `SELECT delivery_payload
-         FROM agents
-         WHERE role = ?
-           AND claude_ui_pid = ?
-           AND team = ?
-           AND last_seen_at > ?
-         ORDER BY last_seen_at DESC
-         LIMIT 1`
-      )
-      .get(CHANNEL_PROXY_ROLE, input.ui_pid, input.team, cutoff) as ProxyRow | undefined
-    if (!row) return { ok: false, reason: 'no_proxy_row' }
-    const csid = extractCsid(row.delivery_payload)
-    if (!csid) return { ok: false, reason: 'proxy_payload_corrupt' }
+    const found = this.findLiveProxyCsid({ ui_pid: input.ui_pid })
+    if (!found.ok) return found
+    const csid = found.channel_session_id
     if (!this.fanout.has(csid)) return { ok: false, reason: 'sink_not_live' }
     this.db
       .prepare(
@@ -64,6 +70,25 @@ export class AutoBindChannelService {
          WHERE agent_id = ?`
       )
       .run(csid, input.callerAgentId)
+    return { ok: true, channel_session_id: csid }
+  }
+
+  private findLiveProxyCsid(input: LookupInput): LookupResult {
+    const cutoff = new Date(Date.now() - LIVE_WINDOW_MS).toISOString()
+    const row = this.db
+      .prepare(
+        `SELECT delivery_payload
+         FROM agents
+         WHERE role = ?
+           AND claude_ui_pid = ?
+           AND last_seen_at > ?
+         ORDER BY last_seen_at DESC
+         LIMIT 1`
+      )
+      .get(CHANNEL_PROXY_ROLE, input.ui_pid, cutoff) as ProxyRow | undefined
+    if (!row) return { ok: false, reason: 'no_proxy_row' }
+    const csid = extractCsid(row.delivery_payload)
+    if (!csid) return { ok: false, reason: 'proxy_payload_corrupt' }
     return { ok: true, channel_session_id: csid }
   }
 }

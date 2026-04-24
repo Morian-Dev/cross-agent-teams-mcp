@@ -1,10 +1,9 @@
 import type Database from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
 import { ONLINE_MS, type AgentsRepo } from '../storage/agents-repo.js'
-import type { SendMessageService } from './send-message.js'
 import type { AutoPokeSkipReason, FanoutDeps } from './auto-poke-fanout.js'
 import { runFanoutWithRetry } from './fanout-with-retry.js'
-import { parseDeliveryRow, type DeliverySpec } from '../lib/delivery-spec.js'
+import { parseDeliveryRow } from '../lib/delivery-spec.js'
 import { recordInitialDeliveryStatuses } from './delivery-status.js'
 
 export type BroadcastDeps = FanoutDeps
@@ -28,19 +27,10 @@ interface SuccessResult {
 
 export type BroadcastResult = SuccessResult | { error: 'unknown_recipient' }
 
-interface RecipientPokeRow {
-  agent_id: string
-  tmux_pane_id: string | null
-  delivery: DeliverySpec
-  opencode_base_url: string | null
-  opencode_session_id: string | null
-}
-
 export class BroadcastService {
   constructor(
     private db: Database.Database,
     private agents: AgentsRepo,
-    private _send: SendMessageService,
     private deps: BroadcastDeps = {}
   ) {}
 
@@ -52,8 +42,6 @@ export class BroadcastService {
       `SELECT
          agent_id,
          tmux_pane_id,
-         opencode_base_url,
-         opencode_session_id,
          delivery_kind,
          delivery_payload
        FROM agents
@@ -61,16 +49,12 @@ export class BroadcastService {
     ).all(fromRow.team, input.from, cutoffIso) as Array<{
       agent_id: string
       tmux_pane_id: string | null
-      opencode_base_url: string | null
-      opencode_session_id: string | null
       delivery_kind: string
       delivery_payload: string | null
     }>
     const rows = rawRows.map((row) => ({
       agent_id: row.agent_id,
       tmux_pane_id: row.tmux_pane_id,
-      opencode_base_url: row.opencode_base_url,
-      opencode_session_id: row.opencode_session_id,
       delivery: parseDeliveryRow(row),
     }))
     if (rows.length === 0) return { error: 'unknown_recipient' }

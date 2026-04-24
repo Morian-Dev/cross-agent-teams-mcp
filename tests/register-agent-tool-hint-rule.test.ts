@@ -128,26 +128,4 @@ describe('register_agent tool hint rule (tmux only)', () => {
     await t.close(); await app.close()
   })
 
-  it('register_agent rejects opencode fields without client=opencode', async () => {
-    const dir = tmp(); cleanups.push(dir)
-    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
-    const { c, t } = await connectClient(host, port)
-
-    const resp = await c.callTool({
-      name: 'register_agent',
-      arguments: {
-        client: 'custom',
-        model: 'gpt-5',
-        role: 'frontend',
-        name: 'alice',
-        base_url: 'http://127.0.0.1:4096',
-        session_id: 'sess-1',
-      }
-    })
-    const errResp = resp as { isError?: boolean; content: Array<{ text: string }> }
-    expect(errResp.isError).toBe(true)
-    expect(errResp.content[0].text).toMatch(/client=opencode/i)
-
-    await t.close(); await app.close()
-  })
 })

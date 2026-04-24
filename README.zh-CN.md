@@ -59,7 +59,6 @@ curl http://127.0.0.1:9100/health
 - `tmux_pane_id`: 直接把文本注入目标 tmux pane
 - `delivery.kind='codex-appserver'`: 通过 websocket 恢复 Codex thread 并启动一轮 turn
 - `delivery.kind='claude-channel'`: 绑定 Claude channel session 并发送 channel wake 通知
-- `opencode-server`: 通过 HTTP 向 opencode session 发送 prompt
 
 `register_agent(...)` 现在要求显式传 `client`.  一等运行时使用 `codex` / `claude-code` / `opencode`.  其它 agent harness 请传 `client: "custom"`, 并且可以选填 `client_name` 方便排查。
 
@@ -232,27 +231,42 @@ register_agent({
 
 更完整的 Claude Code 配置见 [docs/configs/claude-code.md](docs/configs/claude-code.md).
 
-## Opencode Delivery
+## 在 tmux 里使用 opencode
 
-如果你平时主要在 opencode 里使用, 更推荐直接调用 `register_agent({ client: "opencode", ... })`.  如果当前 host 已经知道本地 opencode server 的 `base_url` 和 `session_id`, 可以在统一入口里直接完成 opencode server 绑定:
+opencode 以普通 tmux TUI 的形式接入 xats, 不再提供专用 launcher, 也不再走 HTTP 专用 transport.  投递方式和 `client: "custom"` 完全一致: 由 daemon 将文本粘贴到 opencode 所在 tmux pane.
+
+在 tmux 窗口里启动 opencode, 然后在 opencode 自己的 MCP session 里注册:
+
+```bash
+tmux new-window opencode
+```
 
 ```text
 register_agent({
   client: "opencode",
-  model: "anthropic/claude-3-5-sonnet-20241022",
-  name: "worker-opencode",
+  model: "opencode-default",
+  name: "my-opencode-agent",
   project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
   role: "worker",
-  base_url: "http://127.0.0.1:4096",
-  session_id: "ses_xxxxx"
+  ui_pid: <opencode 进程 pid>
 })
 ```
 
+把 opencode 进程 pid 作为 `ui_pid` 传入, daemon 会在这次注册里走 `pid → tty → tmux pane` 的链路完成 `tmux_pane_id` 绑定.  其它 agent 对此 agent 的 `poke` 统一走 `transport_used: "tmux-poke"`.
+
 行为说明:
 
-- `client="opencode"` 时, `poke` 会优先走 `opencode-server`, 失败后再回退到 `tmux`
-- `base_url` 只能是 loopback 地址, 比如 `127.0.0.1`, `localhost`, `::1`
+- `client="opencode"` 时, `poke` 走 `tmux-poke`
 - 如果注册响应里仍然带 `hint`, 说明 tmux fallback 还没有完成绑定, 这时调用 `bind_runtime_identity(...)`
-- `bind_opencode_session(...)` 仍然保留, 但它只是低层重绑工具, 适合已注册 row 在本地 session 变化后补绑
+
+### 运维 cutover
+
+如果你从带 `opencode-server` 专用 transport 的旧版本升级:
+
+1. 用 `./stop-server.sh` 停掉 daemon (会顺便清空 `data.db`; 被删除的 `opencode_base_url` / `opencode_session_id` 列和 `opencode_pane_pre_registrations` 表并不做迁移)
+2. `pnpm build` 重新构建
+3. `./start-server.sh` 启动新版 daemon
+4. 删掉任何指向 `launch-opencode.sh` 的 shell alias (脚本已经不存在)
+5. 按上面的 `register_agent({ client: "opencode", ui_pid, ... })` 重新注册 opencode agent
 
 更完整的 opencode 配置见 [docs/configs/opencode.md](docs/configs/opencode.md).

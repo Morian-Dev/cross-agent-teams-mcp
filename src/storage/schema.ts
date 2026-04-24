@@ -30,8 +30,6 @@ const DDL = [
     runtime_verification_mode TEXT,
     runtime_bound_at TEXT,
     channel_session_id TEXT,
-    opencode_base_url TEXT,
-    opencode_session_id TEXT,
     delivery_kind TEXT NOT NULL DEFAULT 'none',
     delivery_payload TEXT
   )`,
@@ -96,12 +94,6 @@ const DDL = [
     pane_id TEXT PRIMARY KEY,
     xats_agent_id TEXT NOT NULL,
     expires_at TEXT NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS opencode_pane_pre_registrations (
-    pane_id TEXT PRIMARY KEY,
-    base_url TEXT NOT NULL,
-    session_id TEXT NOT NULL,
-    expires_at TEXT NOT NULL
   )`
 ]
 
@@ -120,8 +112,6 @@ function migrateAgentsDeliveryColumns(db: Database.Database): void {
   const needRuntimeTty = !existing.has('runtime_tty')
   const needRuntimeVerificationMode = !existing.has('runtime_verification_mode')
   const needRuntimeBoundAt = !existing.has('runtime_bound_at')
-  const needOpencodeBaseUrl = !existing.has('opencode_base_url')
-  const needOpencodeSessionId = !existing.has('opencode_session_id')
   const needClaudeUiPid = !existing.has('claude_ui_pid')
   if (
     !needClient &&
@@ -132,8 +122,6 @@ function migrateAgentsDeliveryColumns(db: Database.Database): void {
     !needRuntimeTty &&
     !needRuntimeVerificationMode &&
     !needRuntimeBoundAt &&
-    !needOpencodeBaseUrl &&
-    !needOpencodeSessionId &&
     !needClaudeUiPid
   ) return
   const tx = db.transaction(() => {
@@ -160,12 +148,6 @@ function migrateAgentsDeliveryColumns(db: Database.Database): void {
     }
     if (needRuntimeBoundAt) {
       db.exec(`ALTER TABLE agents ADD COLUMN runtime_bound_at TEXT`)
-    }
-    if (needOpencodeBaseUrl) {
-      db.exec(`ALTER TABLE agents ADD COLUMN opencode_base_url TEXT`)
-    }
-    if (needOpencodeSessionId) {
-      db.exec(`ALTER TABLE agents ADD COLUMN opencode_session_id TEXT`)
     }
     if (needClaudeUiPid) {
       db.exec(`ALTER TABLE agents ADD COLUMN claude_ui_pid INTEGER`)

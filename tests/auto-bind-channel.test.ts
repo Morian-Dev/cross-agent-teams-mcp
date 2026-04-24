@@ -65,7 +65,7 @@ describe('AutoBindChannelService', () => {
       team: 'default',
       runtime_ui_pid: 1234,
     })
-    const res = svc.run({ callerAgentId: caller.agent_id, team: 'default', ui_pid: 1234 })
+    const res = svc.run({ callerAgentId: caller.agent_id, ui_pid: 1234 })
     expect(res).toEqual({ ok: true, channel_session_id: 'csid-new' })
     db.close()
   })
@@ -80,7 +80,7 @@ describe('AutoBindChannelService', () => {
       team: 'default',
       runtime_ui_pid: 9999,
     })
-    const res = svc.run({ callerAgentId: caller.agent_id, team: 'default', ui_pid: 9999 })
+    const res = svc.run({ callerAgentId: caller.agent_id, ui_pid: 9999 })
     expect(res).toEqual({ ok: false, reason: 'no_proxy_row' })
     db.close()
   })
@@ -103,19 +103,19 @@ describe('AutoBindChannelService', () => {
       name: 'host',
       team: 'default',
     })
-    const res = svc.run({ callerAgentId: caller.agent_id, team: 'default', ui_pid: 555 })
+    const res = svc.run({ callerAgentId: caller.agent_id, ui_pid: 555 })
     expect(res).toEqual({ ok: false, reason: 'sink_not_live' })
     db.close()
   })
 
-  it('is team-scoped: proxy row in team A does not match caller in team B', () => {
+  it('ignores team: proxy row in team A still matches caller in team B when claude_ui_pid aligns', () => {
     const { dir, db, repo, fanout, svc } = setup(); cleanups.push(dir)
     repo.register({
       client: 'custom',
       model: 'proxy',
       role: CHANNEL_PROXY_ROLE,
       name: 'proxy-1',
-      team: 'alpha',
+      team: 'default',
       claude_ui_pid: 42,
       delivery: { kind: 'claude-channel', channel_session_id: 'csid-alpha' },
     })
@@ -125,10 +125,10 @@ describe('AutoBindChannelService', () => {
       model: 'opus',
       role: 'worker',
       name: 'host',
-      team: 'default',
+      team: 'alpha',
     })
-    const res = svc.run({ callerAgentId: caller.agent_id, team: 'default', ui_pid: 42 })
-    expect(res).toEqual({ ok: false, reason: 'no_proxy_row' })
+    const res = svc.run({ callerAgentId: caller.agent_id, ui_pid: 42 })
+    expect(res).toEqual({ ok: true, channel_session_id: 'csid-alpha' })
     db.close()
   })
 
@@ -153,7 +153,7 @@ describe('AutoBindChannelService', () => {
       name: 'host',
       team: 'default',
     })
-    const res = svc.run({ callerAgentId: caller.agent_id, team: 'default', ui_pid: 77 })
+    const res = svc.run({ callerAgentId: caller.agent_id, ui_pid: 77 })
     expect(res).toEqual({ ok: false, reason: 'no_proxy_row' })
     db.close()
   })

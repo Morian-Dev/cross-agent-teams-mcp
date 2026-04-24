@@ -228,14 +228,6 @@ describe('tool descriptions: auto-poke and delivery status', () => {
     expect(d).toMatch(/unregistered state/i)
   })
 
-  it('bind_opencode_session description marks it as a low-level rebind tool', async () => {
-    const tools = await listTools()
-    const d = tools.find(t => t.name === 'bind_opencode_session')!.description!
-    expect(d).toMatch(/low-level rebind tool/i)
-    expect(d).toMatch(/register_agent/)
-    expect(d).toMatch(/client: "opencode"|client.*opencode/i)
-  })
-
   it('send_message description documents delivery NOT filtered by online/idle', async () => {
     const tools = await listTools()
     const tool = tools.find(t => t.name === 'send_message')

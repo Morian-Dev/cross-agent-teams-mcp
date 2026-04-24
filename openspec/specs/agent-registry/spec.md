@@ -801,7 +801,7 @@ For all `role != '__channel_proxy__'` callers, the tool SHALL reject the `claude
 When `register_claude_self` is invoked AND the caller supplies `ui_pid` AND the caller does NOT supply `channel_session_id`, the daemon SHALL, after completing the identity UPSERT and any automatic runtime binding, perform a best-effort auto-bind of `delivery.kind='claude-channel'`:
 
 1. Persist the caller's `ui_pid` onto the identity row as `runtime_ui_pid` (this already happens during ui_pid-based automatic runtime binding; when that path is skipped — e.g. tmux detection fails or already converged without ui_pid — the value MUST still be persisted on the row so auto-bind can subsequently find it).
-2. Query: find a row where `role='__channel_proxy__'` AND `claude_ui_pid = <caller ui_pid>` AND `last_seen_at > now() - 5 minutes`, ordered by `last_seen_at DESC` with `LIMIT 1`.  The query MUST also filter by the caller's effective team (same team as the caller's identity row).
+2. Query: find a row where `role='__channel_proxy__'` AND `claude_ui_pid = <caller ui_pid>` AND `last_seen_at > now() - 5 minutes`, ordered by `last_seen_at DESC` with `LIMIT 1`.  The query MUST NOT filter by team: the channel proxy always registers into `team='default'` per the `claude-channel-transport` startup sequence, while Claude Code hosts typically register into a project-derived team, so a team filter would prevent auto-bind in the common case.  A single OS process (the caller's `ui_pid`) has exactly one channel proxy, so matching on `claude_ui_pid` alone uniquely identifies the correct proxy regardless of team membership.
 3. If no row matches, no action is taken — the caller's delivery is left as its existing value (typically `'none'`).
 4. If a row matches, extract `channel_session_id` from `delivery_payload`.  If the csid also has a live `ChannelWakeFanout` sink attached in-memory, write the caller's `delivery_kind='claude-channel'` and `delivery_payload=json_object('channel_session_id', <csid>)` and include `channel_session_id: <csid>` in the response envelope.  If the sink is not live, skip the write and behave as if no row matched.
 
@@ -846,11 +846,11 @@ If the caller explicitly supplies `channel_session_id`, the existing explicit-bi
 - **THEN** the call succeeds
 - **AND** the caller's agents row has `delivery_payload='{\"channel_session_id\":\"csid-explicit\"}'` (explicit value wins, auto-bind did not run)
 
-#### Scenario: auto-bind is scoped to the caller's team
+#### Scenario: auto-bind ignores team: proxy row in team A still matches caller in team B
 
-- **GIVEN** a `__channel_proxy__` row exists with `team='alpha'`, `claude_ui_pid=25424`, `delivery.channel_session_id='csid-alpha'`
-- **WHEN** a caller invokes `register_claude_self({name:'opus', team:'default', ui_pid:25424})`
-- **THEN** the caller's agents row is created in team `default` with `delivery_kind='none'` (no match because proxy's team differs)
+- **GIVEN** a `__channel_proxy__` row exists with `team='default'`, `claude_ui_pid=25424`, `delivery.channel_session_id='csid-abc'`, and a live `ChannelWakeFanout` sink under `'csid-abc'`
+- **WHEN** a caller invokes `register_claude_self({name:'opus', team:'alpha', ui_pid:25424})`
+- **THEN** the caller's agents row is created in team `alpha` with `delivery_kind='claude-channel'` and `delivery_payload='{\"channel_session_id\":\"csid-abc\"}'` (proxy team `default` does NOT block the match; `claude_ui_pid` alone uniquely identifies the caller's proxy)
 
 ### Requirement: register_agent client=claude-code auto-binds channel_session_id via ui_pid match
 

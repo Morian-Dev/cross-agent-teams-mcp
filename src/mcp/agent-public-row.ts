@@ -17,8 +17,6 @@ export interface PublicAgentListRow {
   tmux_pane_id: string | null
   delivery: PublicDelivery
   channel_session_id: string | null
-  opencode_base_url: string | null
-  opencode_session_id: string | null
   last_seen_at: string
   online: boolean
 }
@@ -48,8 +46,6 @@ export function toPublicAgentRow(row: AgentListRow): PublicAgentListRow {
       row.delivery.kind === 'claude-channel'
         ? row.delivery.channel_session_id
         : null,
-    opencode_base_url: row.opencode_base_url,
-    opencode_session_id: row.opencode_session_id,
     last_seen_at: row.last_seen_at,
     online: row.online,
   }

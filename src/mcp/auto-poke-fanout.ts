@@ -19,8 +19,6 @@ export interface AutoPokeRecipient {
   agent_id: string
   tmux_pane_id: string | null
   delivery?: DeliverySpec
-  opencode_base_url?: string | null
-  opencode_session_id?: string | null
 }
 
 export interface FanoutDeps {
@@ -44,10 +42,7 @@ export interface FanoutResult {
 }
 
 function hasNonTmuxTransport(recipient: AutoPokeRecipient): boolean {
-  if (recipient.delivery !== undefined && recipient.delivery.kind !== 'none') {
-    return true
-  }
-  return recipient.opencode_base_url != null && recipient.opencode_session_id != null
+  return recipient.delivery !== undefined && recipient.delivery.kind !== 'none'
 }
 
 // Recipients are supplied by the caller; no team filter is applied here, so cross-team fan-out works transparently.

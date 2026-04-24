@@ -26,8 +26,6 @@ describe('poke dispatch routes by delivery.kind', () => {
         client: 'claude-code',
         delivery: { kind: 'claude-channel', channel_session_id: 'csid-abc' },
         tmux_pane_id: '%42',
-        opencode_base_url: null,
-        opencode_session_id: null,
       },
       { content: 'wake up', meta: {} }
     )
@@ -47,7 +45,7 @@ describe('poke dispatch routes by delivery.kind', () => {
 
     const result = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
-      { client: null, delivery: { kind: 'none' }, tmux_pane_id: '%42', opencode_base_url: null, opencode_session_id: null },
+      { client: null, delivery: { kind: 'none' }, tmux_pane_id: '%42' },
       { content: 'wake up', meta: {} }
     )
 
@@ -65,13 +63,13 @@ describe('poke dispatch routes by delivery.kind', () => {
 
     const result = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
-      { client: null, delivery: { kind: 'none' }, tmux_pane_id: null, opencode_base_url: null, opencode_session_id: null },
+      { client: null, delivery: { kind: 'none' }, tmux_pane_id: null },
       { content: 'wake up', meta: {} }
     )
 
     expect(result).toEqual({
       error: 'no_transport_available',
-      detail: { channel_subscribed: false, opencode_bound: false, tmux_pane_set: false },
+      detail: { channel_subscribed: false, tmux_pane_set: false },
     })
     expect(tmux.calls).toHaveLength(0)
   })
@@ -98,8 +96,6 @@ describe('poke dispatch routes by delivery.kind', () => {
           ws_url: 'wss://example.test/ws',
         },
         tmux_pane_id: '%42',
-        opencode_base_url: null,
-        opencode_session_id: null,
       },
       { content: 'wake up', meta: {} }
     )
@@ -134,8 +130,6 @@ describe('poke dispatch routes by delivery.kind', () => {
           ws_url: 'wss://example.test/ws',
         },
         tmux_pane_id: '%42',
-        opencode_base_url: null,
-        opencode_session_id: null,
       },
       { content: 'wake up', meta: {} }
     )

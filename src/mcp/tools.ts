@@ -25,7 +25,6 @@ import type { ChannelWakeFanout } from '../daemon/channel-wake-fanout.js'
 import { SubscribeChannelWakeService } from './subscribe-channel-wake.js'
 import { BindChannelService } from './bind-channel.js'
 import { AutoBindChannelService } from './auto-bind-channel.js'
-import { BindOpencodeSessionService } from './bind-opencode-session.js'
 import { BindRuntimeIdentityService } from './bind-runtime-identity.js'
 import { RegisterCodexSelfService } from './register-codex-self.js'
 import { UnregisterSelfService } from './unregister-self.js'
@@ -40,16 +39,6 @@ import {
   preRegisterCodexPaneInputSchema,
 } from './pre-register-codex-pane.js'
 import { autoBindCodexPane } from './auto-bind-codex-pane.js'
-import { OpencodePanePreRegRepo } from '../storage/opencode-pane-prereg-repo.js'
-import {
-  PreRegisterOpencodePaneService,
-  preRegisterOpencodePaneInputSchema,
-} from './pre-register-opencode-pane.js'
-import { autoBindOpencodeFromPreReg } from './auto-bind-opencode-pane.js'
-import {
-  registerOpencodeSelfInputSchema,
-  DEFAULT_OPENCODE_SELF_MODEL,
-} from './register-opencode-self.js'
 
 export interface AgentIdHolder { current: string | undefined }
 
@@ -253,7 +242,7 @@ export function registerBusinessTools(
   const autoPokeImpl = createAutoPokeImpl(db, agents, channelWakeFanout)
 
   const sendSvc = new SendMessageService(db, agents, events, { poke: autoPokeImpl })
-  const broadcastSvc = new BroadcastService(db, agents, sendSvc, { poke: autoPokeImpl })
+  const broadcastSvc = new BroadcastService(db, agents, { poke: autoPokeImpl })
   const broadcastToRoleSvc = new BroadcastToRoleService(db, agents, events, { poke: autoPokeImpl })
   const inboxSvc = new GetInboxService(db, agents)
   const deliveryStatusSvc = new GetDeliveryStatusService(db)
@@ -268,8 +257,6 @@ export function registerBusinessTools(
   const pendingEventsSvc = new PendingContractEventsService(db, agents)
   const codexPanePreRegRepo = new CodexPanePreRegRepo(db)
   const preRegisterCodexPaneSvc = new PreRegisterCodexPaneService(codexPanePreRegRepo)
-  const opencodePanePreRegRepo = new OpencodePanePreRegRepo(db)
-  const preRegisterOpencodePaneSvc = new PreRegisterOpencodePaneService(opencodePanePreRegRepo)
 
   function caller(): string | undefined { return getCallerAgentId() }
 
@@ -383,8 +370,6 @@ export function registerBusinessTools(
       'STRONGLY RECOMMENDED. Visible agent UI process pid (e.g. Claude Code CLI pid — `$PPID` from a Bash tool call inside Claude Code). Enables one-shot pid → tty → pane binding at registration; without it, tmux-based cross-agent poke delivery typically stays off.'
     ),
     channel_session_id: z.string().min(1).optional(),
-    base_url: z.string().min(1).optional(),
-    session_id: z.string().min(1).optional(),
     thread_id: z.string().min(1).refine(v => v.trim().length > 0, { message: 'thread_id must not be empty' }).optional(),
     ws_url: z.string().optional(),
     auth_token_ref: z.string().min(1).optional(),
@@ -411,22 +396,6 @@ export function registerBusinessTools(
         code: z.ZodIssueCode.custom,
         path: ['client'],
         message: 'client=claude-code is required when channel_session_id is provided',
-      })
-    }
-    const hasOpencodeFields =
-      value.base_url !== undefined ||
-      value.session_id !== undefined
-    if (hasOpencodeFields && value.client !== 'opencode') {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['client'],
-        message: 'client=opencode is required when base_url or session_id is provided',
-      })
-    }
-    if ((value.base_url === undefined) !== (value.session_id === undefined)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'base_url and session_id must be provided together',
       })
     }
     if (value.client_name !== undefined && value.client !== 'custom') {
@@ -479,8 +448,6 @@ export function registerBusinessTools(
       project_dir?: string
       ui_pid?: number
       channel_session_id?: string
-      base_url?: string
-      session_id?: string
       thread_id?: string
       ws_url?: string
       auth_token_ref?: string
@@ -496,11 +463,32 @@ export function registerBusinessTools(
     const autoBindChannelSvc = channelWakeFanout
       ? new AutoBindChannelService(db, channelWakeFanout)
       : undefined
-    const bindOpencodeSvc = new BindOpencodeSessionService(db)
     const connectionId = getSessionId?.() ?? caller()
     if (!connectionId) return { error: 'unknown_agent' }
     const uiPidClientError = await preflightUiPidClient(args)
     if (uiPidClientError) return uiPidClientError
+    if (
+      args.client === 'claude-code' &&
+      args.channel_session_id !== undefined &&
+      args.ui_pid !== undefined &&
+      autoBindChannelSvc
+    ) {
+      const proxyLookup = autoBindChannelSvc.lookup({
+        ui_pid: args.ui_pid,
+      })
+      if (
+        proxyLookup.ok &&
+        proxyLookup.channel_session_id !== args.channel_session_id
+      ) {
+        return {
+          error: 'channel_session_id_ui_pid_mismatch',
+          detail: {
+            ui_pid_matched_csid: proxyLookup.channel_session_id,
+            supplied_csid: args.channel_session_id,
+          },
+        }
+      }
+    }
     const hasCodexTransportFields =
       args.thread_id !== undefined ||
       args.ws_url !== undefined ||
@@ -556,32 +544,6 @@ export function registerBusinessTools(
           return channelBind
         }
       }
-      if (args.client === 'opencode' && args.base_url !== undefined && args.session_id !== undefined) {
-        const opencodeBind = bindOpencodeSvc.bind({
-          callerAgentId: res.agent_id,
-          base_url: args.base_url,
-          session_id: args.session_id,
-        })
-        if ('ok' in opencodeBind && opencodeBind.ok) {
-          nativeDeliveryBound = true
-        } else {
-          return opencodeBind
-        }
-      } else if (args.client === 'opencode') {
-        const opencodeAutoBind = await autoBindOpencodeFromPreReg({
-          callerAgentId: res.agent_id,
-          repo: opencodePanePreRegRepo,
-          bindOpencodeSvc,
-        })
-        if (opencodeAutoBind) {
-          nativeDeliveryBound = true
-        } else {
-          // Revert to pre-bind state: when the opencode self-register path has
-          // no explicit base_url/session_id and no pre-reg matched, the agent
-          // row's opencode metadata is cleared (single-use pre-reg semantics).
-          agents.clearOpencodeSession(res.agent_id)
-        }
-      }
       if (
         args.client === 'claude-code' &&
         args.channel_session_id === undefined &&
@@ -590,7 +552,6 @@ export function registerBusinessTools(
       ) {
         const autoBind = autoBindChannelSvc.run({
           callerAgentId: res.agent_id,
-          team: res.team,
           ui_pid: args.ui_pid,
         })
         if (autoBind.ok) {
@@ -625,24 +586,6 @@ export function registerBusinessTools(
       try { fanout.detach(agentId) } catch { /* best-effort */ }
     }
   }
-
-  // pre_register_opencode_pane — callable by the opencode launcher before the opencode CLI starts
-  server.registerTool(
-    'pre_register_opencode_pane',
-    {
-      title: 'Pre-register opencode tmux pane',
-      description: [
-        'Pre-register a pending opencode server-session claim keyed by a tmux pane id so the opencode launcher can reserve a pane before execing opencode.',
-        'The launcher should call this with `$TMUX_PANE`, the loopback opencode `base_url`, and a freshly created `session_id` from the opencode server.',
-        'When the opencode CLI later calls `register_opencode_self(...)` (or `register_agent({client:"opencode"})` without `base_url`/`session_id`), the daemon resolves the caller\'s pane and consumes the pre-reg row to auto-bind `opencode_base_url` + `opencode_session_id`.',
-        'Callable without a prior `register_agent` — launchers have no agent identity yet.',
-        '`base_url` must be loopback (`127.0.0.1`, `localhost`, or `::1`).',
-        'TTL defaults to 120 seconds and is capped at 600; expired rows are garbage-collected opportunistically on every write.',
-      ].join(' '),
-      inputSchema: preRegisterOpencodePaneInputSchema,
-    },
-    async (args: unknown) => run(async () => preRegisterOpencodePaneSvc.register(args))
-  )
 
   // pre_register_codex_pane — callable by launchers before any agent row exists
   server.registerTool(
@@ -710,9 +653,7 @@ export function registerBusinessTools(
         '`agent_id` and refreshes `tmux_pane_id` and `model`; no duplicate row is created.',
         'Callers MUST pass `client` explicitly.',
         'Use `client="custom"` for unsupported agent harnesses; optionally provide `client_name` for observability.',
-        'Claude Code sessions can pass `client="claude-code"` together with `channel_session_id` to bind channel delivery through this same tool.',
-        'Opencode sessions can pass `client="opencode"` together with `base_url` and `session_id` to bind server delivery through this same tool.',
-        'Opencode clients launched via the xats opencode launcher SHOULD prefer `register_opencode_self` and omit `base_url` / `session_id`: the launcher\'s `pre_register_opencode_pane` pre-reg flow auto-binds the server session, and supplying explicit `base_url` / `session_id` disables the pre-reg auto-bind path.',
+        'Claude Code sessions can pass `client="claude-code"` together with `channel_session_id` to bind channel delivery through this same tool. PREFERRED: pass only `ui_pid` (from `$PPID`) and let the daemon auto-bind channel delivery — do not pass `channel_session_id` explicitly on register. When BOTH `ui_pid` AND `channel_session_id` are supplied, the daemon runs a consistency check against the caller `ui_pid`\'s live channel proxy; if the proxy\'s csid does not match the supplied `channel_session_id`, the call is rejected with `channel_session_id_ui_pid_mismatch` before any agent row is written. Use `bind_channel` for low-level rebind after registration instead of supplying csid here.',
         'Codex sessions can pass `client="codex"` together with `thread_id` to register Codex app-server delivery through this same tool.',
         'Codex clients SHOULD prefer `register_codex_self` instead — it is the codex-specific convenience entry point. Do NOT pass `ui_pid` from codex agents: the launcher\'s `pre_register_codex_pane` pre-reg flow handles tmux pane binding, and supplying `ui_pid` from codex disables that auto-bind path.',
         'Requests such as "register to xats" or "register to cross-agent-teams" refer to this MCP service, not to the `team` field; do not set `team` to `xats` or `cross-agent-teams` from those phrases.',
@@ -734,8 +675,6 @@ export function registerBusinessTools(
       project_dir?: string;
       ui_pid?: number;
       channel_session_id?: string
-      base_url?: string
-      session_id?: string
       thread_id?: string
       ws_url?: string
       auth_token_ref?: string
@@ -756,6 +695,7 @@ export function registerBusinessTools(
         'This tool always writes on the caller\'s current MCP session, so follow-up tools like get_inbox use the same identity immediately.',
         'AUTO-BIND: when `ui_pid` is supplied AND `channel_session_id` is omitted, the daemon best-effort looks up a live `__channel_proxy__` row whose `claude_ui_pid` matches the caller `ui_pid` and auto-binds `delivery.kind=\"claude-channel\"` to the proxy\'s current csid.  On success the response includes `channel_session_id`.  No match → delivery stays `none` (no error surfaced).  This makes `ui_pid` sufficient for channel delivery — the LLM does not need to read or pass csid explicitly.',
         'If `channel_session_id` is supplied explicitly, the explicit value wins and auto-bind is skipped (identical semantics to `bind_channel`).',
+        'When BOTH `ui_pid` AND `channel_session_id` are supplied, the daemon runs a consistency check: it looks up the live `__channel_proxy__` row matching the caller `ui_pid` and team, and if that proxy\'s persisted csid differs from the supplied `channel_session_id`, the call is rejected with `channel_session_id_ui_pid_mismatch` BEFORE any agent row is written. Prefer ui_pid-only registration (no `channel_session_id`) to avoid this class of stale-csid drift.',
         'Requests such as "register to xats" or "register to cross-agent-teams" refer to this MCP service, not to the `team` field; do not set `team` to `xats` or `cross-agent-teams` from those phrases.',
         'Do not treat the bare word "register" as a request for this tool unless the current conversation is already about cross-agent-teams registration.',
         'When the end user has not explicitly specified `team`, callers should pass `project_dir` as the current working directory so the daemon derives a project-scoped default team from its basename; if omitted, it falls back to `default`.',
@@ -823,38 +763,6 @@ export function registerBusinessTools(
       // RegisterCodexSelfService resolves the empty string to env/default ws_url.
       ws_url: args.ws_url ?? '',
       auth_token_ref: args.auth_token_ref,
-    }))
-  )
-
-  server.registerTool(
-    'register_opencode_self',
-    {
-      title: 'Register opencode MCP session',
-      description: [
-        'Register the current opencode MCP session as an agent bound to `opencode-server` delivery.',
-        'Prefer this helper inside opencode over the generic `register_agent` — it locks `client="opencode"` and keeps the input surface minimal.',
-        'Auto-bind flow: when the opencode CLI was launched via the xats opencode launcher, the launcher first calls `pre_register_opencode_pane(...)` to reserve the current tmux pane with the server `base_url` + `session_id`; this tool then resolves the caller\'s pane and consumes that row to populate `opencode_base_url` / `opencode_session_id` automatically.  No caller-side pane discovery needed.',
-        'DO NOT pass `ui_pid`, `base_url`, `session_id`, `thread_id`, `channel_session_id`, `claude_ui_pid`, or `delivery`: this tool\'s schema rejects them outright.  UI pid / session discovery are handled by the launcher\'s `pre_register_opencode_pane` pre-reg flow — passing those fields would silently disable the auto-bind path.',
-        'If no live pre-reg row matches the caller\'s pane, registration still succeeds but `opencode_base_url` / `opencode_session_id` stay NULL and poke delivery falls back to tmux until the HTTP transport is bound (via the launcher, a subsequent `pre_register_opencode_pane` + re-register, or the explicit `bind_opencode_session` path).',
-        'Requests such as "register to xats" or "register to cross-agent-teams" refer to this MCP service, not to the `team` field; do not set `team` to `xats` or `cross-agent-teams` from those phrases.',
-        'When the end user has not explicitly specified `team`, callers should pass `project_dir` as the current working directory so the daemon derives a project-scoped default team from its basename; if omitted, it falls back to `default`.',
-        `model is optional here; when omitted it falls back to \`${DEFAULT_OPENCODE_SELF_MODEL}\`.`,
-      ].join(' '),
-      inputSchema: registerOpencodeSelfInputSchema,
-    },
-    async (args: {
-      name: string
-      model?: string
-      role?: string
-      team?: string
-      project_dir?: string
-    }) => run(async () => executeRegister({
-      client: 'opencode',
-      name: args.name,
-      model: args.model ?? DEFAULT_OPENCODE_SELF_MODEL,
-      role: args.role,
-      team: args.team,
-      project_dir: args.project_dir,
     }))
   )
 
@@ -1311,36 +1219,6 @@ export function registerBusinessTools(
       }
     )
   }
-
-  // bind_opencode_session — self-binding for opencode hosts
-  const bindOpencodeSvc = new BindOpencodeSessionService(db)
-  server.registerTool(
-    'bind_opencode_session',
-    {
-      title: 'Bind opencode session to caller',
-      description: [
-        'Low-level rebind tool for opencode server delivery.',
-        'Bind the caller session\'s agent row to an opencode server session.',
-        'Most callers should prefer `register_agent({ client: "opencode", base_url, session_id, ... })` on the unified registration path.',
-        'Call this when you need to rebind an already-registered row after the opencode session metadata changes.',
-        'The base_url must be a loopback address (127.0.0.1, localhost, or ::1).',
-        'The session_id is the opencode session identifier from the server.'
-      ].join(' '),
-      inputSchema: {
-        base_url: z.string().min(1),
-        session_id: z.string().min(1)
-      }
-    },
-    async (args: { base_url: string; session_id: string }) => {
-      const who = requireAgent()
-      if (typeof who !== 'string') return toText(who)
-      return run(() => bindOpencodeSvc.bind({
-        callerAgentId: who,
-        base_url: args.base_url,
-        session_id: args.session_id
-      }))
-    }
-  )
 
   // pending_contract_events
   server.registerTool(
