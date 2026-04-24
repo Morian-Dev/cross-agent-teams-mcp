@@ -4,7 +4,10 @@ import {
   type DeliveryValidationReason,
 } from '../lib/delivery-spec.js'
 import type { ClientKind } from '../lib/client-kind.js'
+import { deriveDefaultTeam } from '../lib/default-team.js'
 import { AgentsRepo } from '../storage/agents-repo.js'
+
+export { deriveDefaultTeam } from '../lib/default-team.js'
 
 export interface RegisterInput {
   connection_id: string
@@ -14,6 +17,7 @@ export interface RegisterInput {
   name: string
   role?: string
   team?: string
+  project_dir?: string
   tmux_pane_id?: string
   delivery?: unknown
 }
@@ -40,7 +44,10 @@ export class RegisterAgentService {
         : validateDeliveryForWrite(input.delivery)
     if (validated && 'error' in validated) return validated
 
-    const team = input.team ?? 'default'
+    const team = deriveDefaultTeam({
+      team: input.team,
+      project_dir: input.project_dir,
+    })
     const role = input.role ?? 'default'
     const key = identityKey(team, input.name)
     const bound = this.connections.get(key)

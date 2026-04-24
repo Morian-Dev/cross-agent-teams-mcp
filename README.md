@@ -63,6 +63,8 @@ The daemon currently supports these wake-up paths:
 
 `register_agent(...)` now requires an explicit `client`.  Use one of `codex`, `claude-code`, or `opencode` for first-class runtimes.  For other agent harnesses, pass `client: "custom"` and optionally `client_name` for observability.
 
+When you do not explicitly choose a `team`, pass `project_dir` as the caller's current working directory.  The daemon derives the default team from that directory's basename, and still falls back to `"default"` when both fields are omitted.
+
 ## Codex App-Server Delivery
 
 For daily Codex usage, the recommended entry point is `register_agent({ client: "codex", ... })`.  It registers a caller-supplied `thread_id` as a `codex-appserver` delivery target through the unified registration API.  It does not auto-bind a tmux pane.  If you want tmux fallback delivery, call `bind_runtime_identity(...)` after registration.
@@ -76,7 +78,7 @@ register_agent({
   client: "codex",
   model: "gpt-5",
   name: "lead",
-  team: "default",
+  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
   role: "worker",
   thread_id: "11111111-1111-4111-8111-111111111111"
 })
@@ -108,7 +110,7 @@ register_agent({
   client: "codex",
   model: "gpt-5",
   name: "lead",
-  team: "default",
+  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
   role: "worker",
   thread_id: "11111111-1111-4111-8111-111111111111",
   ws_url: "ws://127.0.0.1:8799"
@@ -122,7 +124,7 @@ register_agent({
   client: "codex",
   model: "gpt-5",
   name: "lead",
-  team: "default",
+  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
   role: "worker",
   thread_id: "11111111-1111-4111-8111-111111111111",
   auth_token_ref: "CODEX_REMOTE_TOKEN"
@@ -191,6 +193,34 @@ Behavior notes:
 
 For a more complete Codex CLI setup example, see [docs/configs/codex-cli.md](docs/configs/codex-cli.md).
 
+## Claude Code Channel Delivery
+
+For Claude Code sessions, prefer registering from the active MCP session with `register_claude_self(...)`.  If you do not explicitly choose a `team`, pass `project_dir` as the current working directory so the daemon derives the project team from its basename.
+
+```text
+register_claude_self({
+  name: "lead",
+  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
+  role: "worker",
+  channel_session_id: "csid-abc"
+})
+```
+
+You can also use the unified entry point:
+
+```text
+register_agent({
+  client: "claude-code",
+  model: "opus-4-7",
+  name: "lead",
+  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
+  role: "worker",
+  channel_session_id: "csid-abc"
+})
+```
+
+For a more complete Claude Code setup example, see [docs/configs/claude-code.md](docs/configs/claude-code.md).
+
 ## Opencode Delivery
 
 For opencode users who want server-based poke delivery (without relying on tmux), the recommended path is `register_agent({ client: "opencode", base_url, session_id, ... })`.  This binds your agent row to an opencode server session so the daemon can deliver pokes via HTTP without a second tool call.
@@ -215,7 +245,7 @@ register_agent({
   client: "opencode",
   model: "anthropic/claude-3-5-sonnet-20241022",
   name: "my-opencode-agent",
-  team: "default",
+  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
   role: "worker",
   base_url: "http://127.0.0.1:4096",
   session_id: "ses_xxxxx"

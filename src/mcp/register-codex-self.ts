@@ -15,6 +15,7 @@ export interface RegisterCodexSelfInput {
   model?: string
   role?: string
   team?: string
+  project_dir?: string
   ws_url?: string
   auth_token_ref?: string
   thread_id?: string
@@ -240,6 +241,7 @@ export class RegisterCodexSelfService {
         name: input.name,
         role: input.role,
         team: input.team,
+        project_dir: input.project_dir,
         tmux_pane_id: tmuxPaneId,
         delivery: {
           kind: 'codex-appserver',

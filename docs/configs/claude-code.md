@@ -41,11 +41,13 @@ With `--token`:
 
 Claude Code 推荐优先在当前会话里调用 `register_claude_self(...)`.  这条 helper 会把注册写到 Claude host 当前正在使用的 MCP session 上, 并且可以顺手绑定 proxy 宣告的 `channel_session_id`.  这样后续 `get_inbox`, `send_message`, `poke` 都会立刻沿用同一个身份, 不会出现 "刚注册完, 下一次又 unknown_agent" 的错位。
 
+当用户没有显式指定 `team` 时, 推荐传 `project_dir` 为当前工作目录.  daemon 会用该目录 basename 派生默认 team, 两者都不传时仍回落到 `"default"`.
+
 ```text
 register_claude_self({
   name: "lead",
   role: "worker",
-  team: "default",
+  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
   channel_session_id: "csid-abc"
 })
 ```
@@ -59,7 +61,7 @@ register_agent({
   client: "claude-code",
   model: "opus-4-7",
   name: "lead",
-  team: "default",
+  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
   role: "worker",
   channel_session_id: "csid-abc"
 })

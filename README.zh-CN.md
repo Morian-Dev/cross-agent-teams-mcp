@@ -63,6 +63,8 @@ curl http://127.0.0.1:9100/health
 
 `register_agent(...)` 现在要求显式传 `client`.  一等运行时使用 `codex` / `claude-code` / `opencode`.  其它 agent harness 请传 `client: "custom"`, 并且可以选填 `client_name` 方便排查。
 
+当用户没有显式指定 `team` 时, 调用方推荐传 `project_dir` 为当前工作目录.  daemon 会用该目录 basename 派生默认 team, 两者都不传时仍回落到 `"default"`.
+
 ## Codex App-Server Delivery
 
 如果你平时主要在 Codex 里使用, 更推荐直接调用 `register_agent({ client: "codex", ... })`.  它会用调用者显式提供的 `thread_id` 把当前会话注册成 `codex-appserver` delivery, 同时保持统一入口.  它不会自动绑定 tmux pane.  如果你还需要 tmux 作为兜底唤醒路径, 请在注册成功后单独调用 `bind_runtime_identity(...)`.
@@ -76,7 +78,7 @@ register_agent({
   client: "codex",
   model: "gpt-5",
   name: "lead",
-  team: "default",
+  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
   role: "worker",
   thread_id: "11111111-1111-4111-8111-111111111111"
 })
@@ -108,7 +110,7 @@ register_agent({
   client: "codex",
   model: "gpt-5",
   name: "lead",
-  team: "default",
+  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
   role: "worker",
   thread_id: "11111111-1111-4111-8111-111111111111",
   ws_url: "ws://127.0.0.1:8799"
@@ -122,7 +124,7 @@ register_agent({
   client: "codex",
   model: "gpt-5",
   name: "lead",
-  team: "default",
+  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
   role: "worker",
   thread_id: "11111111-1111-4111-8111-111111111111",
   auth_token_ref: "CODEX_REMOTE_TOKEN"
@@ -199,7 +201,7 @@ register_agent({
 ```text
 register_claude_self({
   name: "lead",
-  team: "default",
+  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
   role: "worker",
   channel_session_id: "csid-abc"
 })
@@ -212,7 +214,7 @@ register_agent({
   client: "claude-code",
   model: "opus-4-7",
   name: "lead",
-  team: "default",
+  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
   role: "worker",
   channel_session_id: "csid-abc"
 })
@@ -237,7 +239,7 @@ register_agent({
   client: "opencode",
   model: "anthropic/claude-3-5-sonnet-20241022",
   name: "worker-opencode",
-  team: "default",
+  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
   role: "worker",
   base_url: "http://127.0.0.1:4096",
   session_id: "ses_xxxxx"

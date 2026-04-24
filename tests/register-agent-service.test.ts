@@ -52,4 +52,35 @@ describe('RegisterAgentService', () => {
     if ('error' in r1 || 'error' in r2) throw new Error('unexpected error')
     expect(r2.agent_id).not.toBe(r1.agent_id)
   })
+
+  it('derives team from project_dir when team is omitted', () => {
+    const { svc, db } = setup()
+    const result = svc.register({
+      connection_id: 'conn-1',
+      model: 'm',
+      role: 'backend',
+      name: 'alice',
+      project_dir: '/x/y/cross-agent-teams-mcp',
+    })
+    if ('error' in result) throw new Error('unexpected error')
+    expect(result.team).toBe('cross-agent-teams-mcp')
+    const row = db.prepare(
+      'SELECT team FROM agents WHERE agent_id=?'
+    ).get(result.agent_id) as { team: string }
+    expect(row.team).toBe('cross-agent-teams-mcp')
+  })
+
+  it('uses explicit team before project_dir', () => {
+    const { svc } = setup()
+    const result = svc.register({
+      connection_id: 'conn-1',
+      model: 'm',
+      role: 'backend',
+      name: 'alice',
+      team: 'alpha',
+      project_dir: '/x/y/cross-agent-teams-mcp',
+    })
+    if ('error' in result) throw new Error('unexpected error')
+    expect(result.team).toBe('alpha')
+  })
 })

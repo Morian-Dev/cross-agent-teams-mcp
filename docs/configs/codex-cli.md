@@ -80,7 +80,7 @@ register_agent({
   client: "codex",
   model: "gpt-5",
   name: "lead",
-  team: "default",
+  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
   role: "worker",
   thread_id: "11111111-1111-4111-8111-111111111111"
 })
@@ -93,7 +93,7 @@ register_agent({
   client: "codex",
   model: "gpt-5",
   name: "lead",
-  team: "default",
+  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
   role: "worker",
   thread_id: "11111111-1111-4111-8111-111111111111",
   ws_url: "ws://127.0.0.1:8799",
@@ -106,7 +106,7 @@ register_agent({
 ```json
 {
   "agent_id": "...",
-  "team": "default",
+  "team": "cross-agent-teams-mcp",
   "thread_id": "11111111-1111-4111-8111-111111111111",
   "ws_url": "ws://127.0.0.1:8799"
 }
@@ -115,6 +115,7 @@ register_agent({
 补充说明:
 
 - `register_agent({ client: "codex", ... })` 是新的推荐入口
+- 未显式指定 `team` 时, 推荐传 `project_dir` 为当前工作目录, daemon 会用目录名派生默认 team
 - `bind_runtime_identity` 才是写入 `tmux_pane_id` 的路径
 - `detect_tmux_pane(...)` 仅用于调试
 

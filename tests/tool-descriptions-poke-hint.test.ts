@@ -176,6 +176,18 @@ describe('tool descriptions: fire-and-forget tools hint at poke', () => {
     expect(d).toMatch(/same tool|through this same tool/i)
   })
 
+  it('register tools describe project_dir team derivation', async () => {
+    const tools = await listTools()
+    const registerAgent = tools.find(t => t.name === 'register_agent')!.description!
+    const registerClaudeSelf = tools.find(t => t.name === 'register_claude_self')!.description!
+    for (const description of [registerAgent, registerClaudeSelf]) {
+      expect(description).toMatch(/project_dir/)
+      expect(description).toMatch(/current working directory/)
+      expect(description).toMatch(/team/)
+      expect(description).toMatch(/basename/)
+    }
+  })
+
   it('bind_runtime_identity description documents pid-first verification', async () => {
     const tools = await listTools()
     const tool = tools.find(t => t.name === 'bind_runtime_identity')

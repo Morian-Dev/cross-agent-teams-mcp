@@ -38,11 +38,13 @@ register_agent({
   client: "opencode",
   model: "anthropic/claude-3-5-sonnet-20241022",
   name: "worker-opencode",
-  team: "default",
+  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
   role: "worker",
   base_url: "http://127.0.0.1:4096",
   session_id: "ses_xxxxx"
 })
 ```
+
+当用户没有显式指定 `team` 时, 推荐传 `project_dir` 为当前工作目录.  daemon 会用该目录 basename 派生默认 team, 两者都不传时仍回落到 `"default"`.
 
 If registration still returns a `hint`, that means automatic runtime binding did not converge and there is still no usable `tmux_pane_id` for tmux-based poke delivery.  Call `bind_runtime_identity(...)` to bind explicitly.  Use `detect_tmux_pane(...)` only for debugging.  `bind_opencode_session(...)` remains available as a low-level rebind tool when an already-registered opencode host needs to swap to a new local session.

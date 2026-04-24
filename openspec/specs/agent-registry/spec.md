@@ -144,27 +144,34 @@ The hint text MUST advise the caller that automatic runtime binding did not conv
 
 ### Requirement: register_agent reuses agent_id by (team, name, role) identity
 
-The `register_agent` MCP tool SHALL take `{ client: 'codex' | 'claude-code' | 'opencode' | 'custom', client_name?: string, model: string, name: string, role?: string = 'default', team?: string = 'default', ui_pid?: number, delivery?: DeliverySpec }` and:
+The `register_agent` MCP tool SHALL take `{ client: 'codex' | 'claude-code' | 'opencode' | 'custom', client_name?: string, model: string, name: string, role?: string = 'default', team?: string, project_dir?: string, ui_pid?: number, delivery?: DeliverySpec }` and:
 
 1. Trim `name` and reject with a validation error if empty.
 2. Require `client` explicitly.  `client_name` MAY be supplied only when `client='custom'`.
-3. Execute an atomic UPSERT keyed on `(team, name)`:
+3. Derive the effective `team` value by applying this three-level precedence:
+   - If `team` is provided and non-empty after trimming, use it as-is.
+   - Else if `project_dir` is provided, compute `basename(project_dir)`, trim it, lowercase it (POSIX `basename` semantics — trailing slashes stripped before taking the last component), and if the result is non-empty use it as the effective team.
+   - Else fall back to the literal string `'default'`.
+   The derived value is then used wherever the original `team` parameter was consumed (UPSERT key, response, runtime binding).
+4. Execute an atomic UPSERT keyed on `(team, name)` where `team` is the derived value:
    - If no row exists for `(team, name)`: INSERT a new row with a freshly generated `agent_id = randomUUID()`, the provided `role`, `model`, `registered_at = now`, `last_seen_at = now`, and `tmux_pane_id = NULL` unless an earlier runtime binding already existed for that identity.
    - If a row already exists for `(team, name)`: UPDATE that row's `client`, `client_name`, `role`, `model`, `last_seen_at`; preserve `agent_id`, `registered_at`, and `last_processed_event_id`; preserve the existing `tmux_pane_id` until a later automatic or explicit runtime-binding attempt writes a new usable value.
-4. After the identity row exists, best-effort attempt automatic runtime binding for this session:
+5. After the identity row exists, best-effort attempt automatic runtime binding for this session:
    - The daemon MUST NOT accept caller-supplied pane ids or pane-detect hints through the MCP tool surface.
    - If `ui_pid` is provided, the daemon MUST prefer the verified `ui_pid -> tty -> pane` runtime-binding path.
    - For `client='codex' | 'claude-code' | 'opencode'`, the daemon MUST use that explicit client kind as the built-in matcher for automatic tmux detection.
    - For `client='custom'`, the daemon MUST skip built-in matcher inference and treat automatic runtime binding as not attempted unless a later dedicated binding tool is invoked.
    - If `ui_pid` is absent and a built-in matcher is available, the daemon MUST invoke the same pane detector behind `detect_tmux_pane` for that matcher, and if detection succeeds, it MUST run the same verified persistence path as `bind_runtime_identity(...)` using the detected pane's tty plus pane id.
    - If no matcher is available, or the detector/runtime binder returns `ambiguous_match`, `not_found`, `tmux_unavailable`, or any other non-success result, the daemon MUST treat this attempt as having no new pane id rather than failing the registration.
-5. Return `{ agent_id, team }` where `agent_id` is either the preserved or newly generated id.
+6. Return `{ agent_id, team }` where `agent_id` is either the preserved or newly generated id and `team` is the derived value from step 3.
 
 The returned `agent_id` MUST be considered the stable identity for this `(team, name)` pair across reconnects AND across role changes. Changing the `role` parameter on a subsequent register does NOT produce a new `agent_id`; it updates the existing row's `role` column in place. The MCP session id is an orthogonal transport-level artifact and MUST NOT be conflated with `agent_id`.
 
 When an automatic or explicit runtime-binding attempt resolves a usable `tmux_pane_id`, its value MUST be persisted. If the current registration attempt resolves no new pane id, the column value in the reuse case MUST remain the previously-persisted value; in the create-new case it MUST be NULL.
 
 The hint-on-missing-pane-id semantics (see Requirement "register_agent response hints when tmux_pane_id missing") apply unchanged.
+
+`project_dir` MUST be treated as an input-only hint for default team derivation; it MUST NOT be persisted on the agents row and MUST NOT be returned in the response.
 
 #### Scenario: Automatic runtime binding persists a detected pane during register_agent
 
@@ -264,10 +271,64 @@ The hint-on-missing-pane-id semantics (see Requirement "register_agent response 
 - **WHEN** a caller invokes `register_agent({ client: 'custom', model: 'opus-4-7', name: 'alice' })` (no `role` field)
 - **THEN** the call succeeds and the agents row has `role='default'`
 
-#### Scenario: Team defaults to "default" when omitted
+#### Scenario: Team defaults to "default" when both team and project_dir are omitted
 
-- **WHEN** a caller invokes `register_agent({ client: 'custom', model, name: 'alice', role: 'backend' })` (no `team` field)
+- **WHEN** a caller invokes `register_agent({ client: 'custom', model, name: 'alice', role: 'backend' })` (no `team` and no `project_dir`)
 - **THEN** the call succeeds and the agents row has `team='default'`
+- **AND** the response is `{ agent_id: <uuid>, team: 'default' }`
+
+#### Scenario: team is derived from basename of project_dir when team is omitted
+
+- **GIVEN** the agents table has no row for `(team='cross-agent-teams-mcp', name='alice')`
+- **WHEN** a caller invokes `register_agent({ client: 'custom', model, name: 'alice', role: 'backend', project_dir: '/Users/jt/workspace/cross-agent-teams-mcp' })`
+- **THEN** the call succeeds
+- **AND** the agents row has `team='cross-agent-teams-mcp'`
+- **AND** the response is `{ agent_id: <uuid>, team: 'cross-agent-teams-mcp' }`
+
+#### Scenario: basename normalization strips trailing slashes and lowercases
+
+- **WHEN** a caller invokes `register_agent({ client: 'custom', model, name: 'alice', role: 'backend', project_dir: '/Users/jt/workspace/Cross-Agent-Teams-MCP/' })`
+- **THEN** the derived team is `'cross-agent-teams-mcp'` (trailing slash ignored, mixed case normalized to lowercase)
+
+#### Scenario: explicit team overrides project_dir derivation
+
+- **WHEN** a caller invokes `register_agent({ client: 'custom', model, name: 'alice', role: 'backend', team: 'alpha', project_dir: '/Users/jt/workspace/some-repo' })`
+- **THEN** the derived team is `'alpha'` (explicit `team` wins over `project_dir`)
+- **AND** the agents row has `team='alpha'`
+
+#### Scenario: project_dir is not persisted on the agents row
+
+- **WHEN** a caller invokes `register_agent({ client: 'custom', model, name: 'alice', project_dir: '/Users/jt/workspace/some-repo' })`
+- **THEN** the call succeeds
+- **AND** the agents row has no column or JSON blob containing the literal string `'/Users/jt/workspace/some-repo'`
+- **AND** the `list_agents` response for this agent does NOT expose `project_dir`
+
+#### Scenario: project_dir with empty basename falls back to 'default'
+
+- **WHEN** a caller invokes `register_agent({ client: 'custom', model, name: 'alice', project_dir: '/' })`
+- **THEN** `basename('/')` is empty after trimming, so team falls back to `'default'`
+- **AND** the agents row has `team='default'`
+
+### Requirement: register_claude_self mirrors register_agent team default derivation
+
+The `register_claude_self` MCP tool SHALL accept an optional `project_dir: string` field and SHALL apply the same three-level team precedence (`team` > `basename(project_dir)` > `'default'`) as `register_agent`, via the same derivation code path (so the two tools share a single source of truth for default team selection).
+
+#### Scenario: register_claude_self derives team from project_dir when team is omitted
+
+- **WHEN** a caller invokes `register_claude_self({ name: 'lead', project_dir: '/Users/jt/workspace/cross-agent-teams-mcp' })` with no explicit `team`
+- **THEN** the call succeeds
+- **AND** the agents row has `team='cross-agent-teams-mcp'`
+
+#### Scenario: register_claude_self falls back to 'default' when both team and project_dir are omitted
+
+- **WHEN** a caller invokes `register_claude_self({ name: 'lead' })` with neither `team` nor `project_dir`
+- **THEN** the call succeeds
+- **AND** the agents row has `team='default'`
+
+#### Scenario: explicit team still wins in register_claude_self
+
+- **WHEN** a caller invokes `register_claude_self({ name: 'lead', team: 'alpha', project_dir: '/Users/jt/workspace/some-repo' })`
+- **THEN** the agents row has `team='alpha'`
 
 ### Requirement: Repeated register_agent for same identity updates metadata
 

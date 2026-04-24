@@ -103,4 +103,75 @@ describe('register_claude_self tool', () => {
     db.close()
     await server.close()
   })
+
+  it('derives team from project_dir when team is omitted', async () => {
+    detectTmuxPaneMock.mockResolvedValue({ error: 'not_found', candidates: [] })
+    const { db, server, client, transport } = await setup()
+
+    const result = await parseTool(await client.callTool({
+      name: 'register_claude_self',
+      arguments: {
+        name: 'lead',
+        project_dir: '/Users/jt/workspace/cross-agent-teams-mcp',
+      },
+    }))
+
+    expect(result.team).toBe('cross-agent-teams-mcp')
+    expect(result.project_dir).toBeUndefined()
+    const row = db.prepare(
+      `SELECT team FROM agents WHERE name='lead'`
+    ).get() as { team: string }
+    expect(row.team).toBe('cross-agent-teams-mcp')
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it('falls back to default when team and project_dir are omitted', async () => {
+    detectTmuxPaneMock.mockResolvedValue({ error: 'not_found', candidates: [] })
+    const { db, server, client, transport } = await setup()
+
+    const result = await parseTool(await client.callTool({
+      name: 'register_claude_self',
+      arguments: { name: 'lead' },
+    }))
+
+    expect(result.team).toBe('default')
+    const row = db.prepare(
+      `SELECT team FROM agents WHERE name='lead'`
+    ).get() as { team: string }
+    expect(row.team).toBe('default')
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it('uses explicit team before project_dir', async () => {
+    detectTmuxPaneMock.mockResolvedValue({ error: 'not_found', candidates: [] })
+    const { db, server, client, transport } = await setup()
+
+    const result = await parseTool(await client.callTool({
+      name: 'register_claude_self',
+      arguments: {
+        name: 'lead',
+        team: 'alpha',
+        project_dir: '/Users/jt/workspace/cross-agent-teams-mcp',
+      },
+    }))
+
+    expect(result.team).toBe('alpha')
+    const row = db.prepare(
+      `SELECT team FROM agents WHERE name='lead'`
+    ).get() as { team: string }
+    expect(row.team).toBe('alpha')
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
 })

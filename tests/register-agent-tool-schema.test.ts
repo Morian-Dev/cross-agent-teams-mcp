@@ -37,6 +37,7 @@ describe('register_agent tool schema', () => {
         name: expect.anything(),
         role: expect.anything(),
         team: expect.anything(),
+        project_dir: expect.anything(),
         client: expect.anything(),
         client_name: expect.anything(),
         ui_pid: expect.anything(),

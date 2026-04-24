@@ -80,12 +80,42 @@ describe('register_agent name field validation', () => {
     db.close()
   })
 
-  it('team defaults to "default" when omitted', async () => {
+  it('team defaults to "default" when team and project_dir are omitted', async () => {
     const b = await boot(); teardown.push(() => b.cleanup()); teardown.push(() => b.app.close())
     const { c, t } = await connect(b.host, b.port)
     teardown.push(async () => { await t.close(); await c.close() })
     const resp = await c.callTool({ name: 'register_agent', arguments: { client: 'custom', model: 'opus', name: 'alice', role: 'backend' } })
     const obj = JSON.parse((resp.content as Array<{ text: string }>)[0].text) as { team: string }
     expect(obj.team).toBe('default')
+  })
+
+  it('derives team from project_dir and does not return project_dir', async () => {
+    const b = await boot(); teardown.push(() => b.cleanup()); teardown.push(() => b.app.close())
+    const { c, t } = await connect(b.host, b.port)
+    teardown.push(async () => { await t.close(); await c.close() })
+    const resp = await c.callTool({
+      name: 'register_agent',
+      arguments: {
+        client: 'custom',
+        model: 'opus',
+        name: 'alice',
+        role: 'backend',
+        project_dir: '/x/y/Cross-Agent-Teams-MCP/',
+      },
+    })
+    const obj = JSON.parse((resp.content as Array<{ text: string }>)[0].text) as {
+      team: string
+      project_dir?: string
+    }
+    expect(obj.team).toBe('cross-agent-teams-mcp')
+    expect(obj.project_dir).toBeUndefined()
+
+    const listedResp = await c.callTool({ name: 'list_agents', arguments: {} })
+    const listed = JSON.parse((listedResp.content as Array<{ text: string }>)[0].text) as {
+      agents: Array<Record<string, unknown>>
+    }
+    expect(listed.agents).toHaveLength(1)
+    expect(listed.agents[0].team).toBe('cross-agent-teams-mcp')
+    expect(Object.prototype.hasOwnProperty.call(listed.agents[0], 'project_dir')).toBe(false)
   })
 })

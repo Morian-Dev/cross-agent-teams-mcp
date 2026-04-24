@@ -298,6 +298,7 @@ export function registerBusinessTools(
     name: z.string().min(1).refine(v => v.trim().length > 0, { message: 'name must not be empty' }),
     role: z.string().optional(),
     team: z.string().optional(),
+    project_dir: z.string().min(1).optional(),
     client: clientSchema,
     client_name: z.string().min(1).optional(),
     ui_pid: z.number().int().positive().optional(),
@@ -359,6 +360,7 @@ export function registerBusinessTools(
     model: z.string().optional(),
     role: z.string().optional(),
     team: z.string().optional(),
+    project_dir: z.string().min(1).optional(),
     ui_pid: z.number().int().positive().optional(),
     channel_session_id: z.string().min(1).optional(),
   }).strict()
@@ -371,6 +373,7 @@ export function registerBusinessTools(
       name: string
       role?: string
       team?: string
+      project_dir?: string
       ui_pid?: number
       channel_session_id?: string
       base_url?: string
@@ -402,6 +405,7 @@ export function registerBusinessTools(
             model: args.model,
             role: args.role,
             team: args.team,
+            project_dir: args.project_dir,
             thread_id: args.thread_id,
             ws_url: args.ws_url,
             auth_token_ref: args.auth_token_ref,
@@ -414,6 +418,7 @@ export function registerBusinessTools(
             name: args.name,
             role: args.role,
             team: args.team,
+            project_dir: args.project_dir,
             delivery: args.delivery,
           })
     if ('thread_id' in res && 'agent_id' in res) {
@@ -526,6 +531,7 @@ export function registerBusinessTools(
         'Claude Code sessions can pass `client="claude-code"` together with `channel_session_id` to bind channel delivery through this same tool.',
         'Opencode sessions can pass `client="opencode"` together with `base_url` and `session_id` to bind server delivery through this same tool.',
         'Codex sessions can pass `client="codex"` together with `thread_id` to register Codex app-server delivery through this same tool.',
+        'When the end user has not explicitly specified `team`, callers should pass `project_dir` as the current working directory so the daemon derives a project-scoped default team from its basename; if omitted, it falls back to `default`.',
         'When available, callers may pass `ui_pid` so automatic runtime binding can use verified pid → tty → pane evidence instead of heuristic pane detection.',
         'After registration, the daemon best-effort attempts runtime binding for recognized local clients so tmux-based poke delivery can come up without a second tool call.',
         'If automatic runtime binding does not converge, call `bind_runtime_identity(...)` explicitly so the daemon can verify and persist your pane binding.',
@@ -538,6 +544,7 @@ export function registerBusinessTools(
       client: ClientKind
       client_name?: string
       model: string; name: string; role?: string; team?: string;
+      project_dir?: string;
       ui_pid?: number;
       channel_session_id?: string
       base_url?: string
@@ -560,6 +567,7 @@ export function registerBusinessTools(
         'Prefer this helper inside Claude Code when you want to avoid session-mismatch issues caused by external HTTP or curl registration.',
         'This tool always writes on the caller\'s current MCP session, so follow-up tools like get_inbox use the same identity immediately.',
         'If channel_session_id is provided, it binds claude-channel delivery through the same path used by register_agent({ client: "claude-code", ... }).',
+        'When the end user has not explicitly specified `team`, callers should pass `project_dir` as the current working directory so the daemon derives a project-scoped default team from its basename; if omitted, it falls back to `default`.',
         'model is optional here; when omitted it falls back to a Claude-specific default.'
       ].join(' '),
       inputSchema: registerClaudeSelfInputSchema
@@ -569,6 +577,7 @@ export function registerBusinessTools(
       model?: string
       role?: string
       team?: string
+      project_dir?: string
       ui_pid?: number
       channel_session_id?: string
     }) => run(async () => executeRegister({
@@ -577,6 +586,7 @@ export function registerBusinessTools(
       model: args.model ?? defaultClaudeSelfModel(getSessionClientInfo?.()),
       role: args.role,
       team: args.team,
+      project_dir: args.project_dir,
       ui_pid: args.ui_pid,
       channel_session_id: args.channel_session_id,
     }))

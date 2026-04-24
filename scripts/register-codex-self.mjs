@@ -11,7 +11,7 @@ function usage() {
 
 function parseArgs(argv) {
   const out = {
-    team: "default",
+    team: undefined,
     role: "default",
     model: "gpt-5",
     daemonUrl: "http://127.0.0.1:9100/mcp",
@@ -191,7 +191,8 @@ async function main() {
         arguments: {
           client: "codex",
           name: args.name,
-          team: args.team,
+          ...(args.team === undefined ? {} : { team: args.team }),
+          project_dir: process.cwd(),
           role: args.role,
           model: args.model,
           ui_pid: uiPid,
