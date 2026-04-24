@@ -96,6 +96,12 @@ const DDL = [
     pane_id TEXT PRIMARY KEY,
     xats_agent_id TEXT NOT NULL,
     expires_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS opencode_pane_pre_registrations (
+    pane_id TEXT PRIMARY KEY,
+    base_url TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    expires_at TEXT NOT NULL
   )`
 ]
 

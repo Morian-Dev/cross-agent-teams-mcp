@@ -229,6 +229,14 @@ export class AgentsRepo {
     ).run(base_url, session_id, agent_id)
   }
 
+  clearOpencodeSession(agent_id: string): void {
+    this.db.prepare(
+      `UPDATE agents
+       SET opencode_base_url=NULL, opencode_session_id=NULL
+       WHERE agent_id=?`
+    ).run(agent_id)
+  }
+
   setRuntimeBinding(
     agent_id: string,
     args: {

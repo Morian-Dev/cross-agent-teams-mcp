@@ -223,22 +223,71 @@ For a more complete Claude Code setup example, see [docs/configs/claude-code.md]
 
 ## Opencode Delivery
 
-For opencode users who want server-based poke delivery (without relying on tmux), the recommended path is `register_agent({ client: "opencode", base_url, session_id, ... })`.  This binds your agent row to an opencode server session so the daemon can deliver pokes via HTTP without a second tool call.
+For opencode users who want server-based poke delivery (without relying on tmux), the first-class path is the **xats opencode launcher** (`launch-opencode.sh`).  The launcher creates an opencode server session, pre-registers the caller tmux pane with the xats daemon, and execs opencode so the daemon-side `opencode_base_url` / `opencode_session_id` metadata is auto-bound when opencode calls `register_opencode_self`.
 
-First, start opencode with a fixed port (omit `--port` to use the default random port):
+### Recommended: launcher alias
+
+Start the shared stack once (includes the opencode server on `http://127.0.0.1:4096`):
 
 ```bash
-opencode serve --port 4096
+./start-server.sh
 ```
 
-Then, in your opencode session, create a session and note its `id`:
+Then add an alias in your shell config.  The recommended name is `free-xats-opencode` so the original `opencode` command stays untouched — the xats-integrated variant is invoked explicitly:
+
+```zsh
+# ~/.zshrc
+alias free-xats-opencode='/path/to/cross-agent-teams-mcp/launch-opencode.sh'
+```
+
+(If you prefer to shadow `opencode` itself, use `alias opencode='/path/...'` instead — but explicit opt-in is the safer default.)
+
+Launch opencode from any tmux pane:
+
+```bash
+free-xats-opencode
+```
+
+Inside the opencode MCP session, register with the self-register helper — omit `base_url` / `session_id`, the launcher pre-reg auto-binds them:
 
 ```text
-# The session id is shown when you create a session, or query via:
-GET http://127.0.0.1:4096/session
+register_opencode_self({
+  name: "my-opencode-agent",
+  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
+  role: "worker"
+})
 ```
 
-Register your agent through the unified entry point:
+After registration, `poke()` routes to the opencode session via HTTP:
+
+```json
+{
+  "ok": true,
+  "transport_used": "opencode-server",
+  "base_url": "http://127.0.0.1:4096",
+  "session_id": "ses_xxxxx"
+}
+```
+
+### Launcher requirements
+
+- Must run inside tmux (`$TMUX_PANE` is required; the launcher exits with a clear error otherwise).
+- The shared opencode server must be healthy (`./start-server.sh` brings it up; the launcher refuses to start otherwise).
+- `cross-agent-teams-mcp` CLI must be on `$PATH` and the xats daemon must be running (the launcher calls `cross-agent-teams-mcp pre-register-opencode-pane` over HTTP).
+- `base_url` is loopback-only (`127.0.0.1`, `localhost`, or `::1`).
+
+### Known limitation (open question O1)
+
+Opencode 1.14.19's CLI has **no documented "attach to existing server session" flag** (no `--session` / `--server`).  The launcher therefore execs plain `opencode` and the interactive CLI starts its own internal session that is **not** the same session the xats daemon is bound to.  This means:
+
+- Daemon-side HTTP poke delivery IS wired: the daemon sends pokes to the pre-reg'd server session via `opencode-server` transport.
+- Whether the user's interactive opencode CLI sees those pokes depends on the upstream `opencode` binary growing an attach-to-session flag.  Until it does, the interactive side of the loop falls back to tmux keystroke poke, and the launcher prints a one-line warning at start-up.
+
+Track upstream opencode for attach-to-session support; this document will be updated once a compatible flag ships.
+
+### Advanced / custom: manual flow (no launcher)
+
+For setups that cannot use the launcher (e.g., opencode is not launched from tmux, or a custom server session is required), the unified registration path still works:
 
 ```text
 register_agent({
@@ -252,24 +301,11 @@ register_agent({
 })
 ```
 
-Requirements:
+Passing `base_url` and `session_id` explicitly **disables the pre-reg auto-bind path**; the explicit values take precedence and any concurrent pre-reg row for the caller's pane is ignored.
 
-- `base_url` must be a loopback address (`127.0.0.1`, `localhost`, or `::1`)
-- `session_id` is the opencode session identifier from the server
-- The server only accepts loopback opencode endpoints for self-binding
+### Transport selection
 
-On success, `poke()` will route to your opencode session via HTTP:
-
-```json
-{
-  "ok": true,
-  "transport_used": "opencode-server",
-  "base_url": "http://127.0.0.1:4096",
-  "session_id": "ses_xxxxx"
-}
-```
-
-Transport selection is now client-aware:
+Transport selection is client-aware:
 
 - `client="claude-code"`: `claude-channel` first, then `tmux-poke`
 - `client="opencode"`: `opencode-server` first, then `tmux-poke`
