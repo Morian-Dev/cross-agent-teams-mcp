@@ -163,12 +163,16 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
     return { error: 'cross_team_denied' }
   }
 
-  // If no ChannelWakeFanout is available (e.g., legacy callers), fall back to
-  // a disabled fanout so the dispatcher uniformly treats channel as unsubscribed.
+  // Legacy callers may not have ChannelWakeFanout. Keep the historical tmux-only
+  // fallback for plain targets, but still allow non-tmux transports that are
+  // fully described by the target row itself.
   const fanout = deps.channelWakeFanout
   const delivery = parseDeliveryRow(target) as DeliverySpec
   if (!fanout) {
-    if (delivery.kind === 'codex-appserver') {
+    if (
+      delivery.kind === 'codex-appserver'
+      || (target.opencode_base_url != null && target.opencode_session_id != null)
+    ) {
       return dispatchPoke(
         { tmuxPoke: tmuxPokeImpl },
         { client: target.client, delivery, tmux_pane_id: target.tmux_pane_id, opencode_base_url: target.opencode_base_url, opencode_session_id: target.opencode_session_id },
