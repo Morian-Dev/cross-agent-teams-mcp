@@ -18,6 +18,6 @@
 
 ## 3. Full test suite and validation
 
-- [ ] 3.1 Run `pnpm test` and confirm all suites pass
-- [ ] 3.2 Run `pnpm typecheck` and confirm no type errors
-- [ ] 3.3 Run `openspec validate harden-delivery-read-path` and confirm it is valid
+- [x] 3.1 Run `pnpm test` and confirm all suites pass
+- [x] 3.2 Run `pnpm typecheck` and confirm no type errors
+- [x] 3.3 Run `openspec validate harden-delivery-read-path` and confirm it is valid
