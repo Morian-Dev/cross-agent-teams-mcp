@@ -25,7 +25,7 @@ The daemon MAY keep internal functions and transport-specific envelopes for wake
 
 ### Requirement: poke happy path delivers paste and returns before/after tails
 
-When the caller and target are both registered agents in the same team, the target has `tmux_pane_id` set, and tmux CLI is available, the daemon SHALL (in order) capture the target pane's tail, load the `prompt` bytes into a scoped tmux buffer, paste-buffer that buffer into the target pane with bracketed paste, wait ~400ms, send the Enter key, wait ~400ms, and capture the pane's tail again. The successful response MUST contain the target's `pane_id`, the pre-paste tail as `pane_tail_before`, and the post-Enter tail as `pane_tail_after`. Each tail SHOULD cover approximately 8 lines of scrollback.
+When the caller and target are both registered agents in the same team, the target has `tmux_pane_id` set, tmux CLI is available, and no higher-priority transport succeeded for that poke call, the daemon SHALL (in order) capture the target pane's tail, load the `prompt` bytes into a scoped tmux buffer, paste-buffer that buffer into the target pane with bracketed paste, wait ~400ms, send the Enter key, wait ~400ms, and capture the pane's tail again.  The successful response MUST contain the target's `pane_id`, the pre-paste tail as `pane_tail_before`, and the post-Enter tail as `pane_tail_after`.  Each tail SHOULD cover approximately 8 lines of scrollback.
 
 #### Scenario: Happy path returns before/after tails
 
@@ -34,6 +34,18 @@ When the caller and target are both registered agents in the same team, the targ
 - **AND** tmux CLI is available
 - **WHEN** `sess-A` calls `poke({ target_agent_id: 'sess-B', prompt: 'hello' })`
 - **THEN** the response has `ok === true`, `pane_id === '%42'`
+- **AND** `pane_tail_before` is a non-empty string reflecting pane `%42` state before paste
+- **AND** `pane_tail_after` is a non-empty string reflecting pane `%42` state after paste+Enter
+- **AND** `pane_tail_after !== pane_tail_before` in the common case where the agent TUI redraws the input box
+
+#### Scenario: Happy path returns before/after tails when tmux is selected
+
+- **GIVEN** caller `sess-A` and target `sess-B` both registered in team `default`
+- **AND** `sess-B` has `tmux_pane_id = '%42'` and the pane is live
+- **AND** tmux CLI is available
+- **AND** `sess-B` has no live Claude channel sink and no bound opencode session
+- **WHEN** `sess-A` calls `poke({ target_agent_id: 'sess-B', prompt: 'hello' })`
+- **THEN** the response has `ok === true`, `transport_used === 'tmux-poke'`, and `pane_id === '%42'`
 - **AND** `pane_tail_before` is a non-empty string reflecting pane `%42` state before paste
 - **AND** `pane_tail_after` is a non-empty string reflecting pane `%42` state after paste+Enter
 - **AND** `pane_tail_after !== pane_tail_before` in the common case where the agent TUI redraws the input box
@@ -47,15 +59,15 @@ When the caller and target are both registered agents in the same team, the targ
 
 ### Requirement: Target without any available delivery transport returns no_transport_available
 
-If the target has no usable configured delivery transport and also has no `tmux_pane_id`, the daemon MUST return `{ error: 'no_transport_available', detail: { channel_subscribed: false, tmux_pane_set: false } }`.
+If the target has no usable configured delivery transport — no live `channel_session_id` sink, no complete opencode binding, and no `tmux_pane_id` — the daemon MUST return `{ error: 'no_transport_available', detail: { channel_subscribed: false, opencode_bound: false, tmux_pane_set: false } }`.
 
-This requirement covers the modern delivery abstraction surface where the target may have `delivery.kind='none'`, or `delivery.kind='claude-channel'` without an attached sink.  A target with `delivery.kind='codex-appserver'` does NOT require a tmux pane and MUST be routed through the Codex dispatcher instead.
+This requirement covers the modern delivery abstraction surface where the target may have `delivery.kind='none'`, or `delivery.kind='claude-channel'` without an attached sink, and also has neither a bound opencode session nor a tmux pane.  A target with `delivery.kind='codex-appserver'` does NOT require a tmux pane and MUST be routed through the Codex dispatcher instead.
 
 #### Scenario: Target with no delivery transport returns no_transport_available
 
-- **GIVEN** target `sess-B` is registered with `delivery={kind: 'none'}` and no `tmux_pane_id`
+- **GIVEN** target `sess-B` is registered with `delivery={kind: 'none'}`, `opencode_base_url=NULL`, `opencode_session_id=NULL`, and no `tmux_pane_id`
 - **WHEN** caller `sess-A` calls `poke({ target_agent_id: 'sess-B', prompt: 'p' })`
-- **THEN** the response is `{ error: 'no_transport_available', detail: { channel_subscribed: false, tmux_pane_set: false } }`
+- **THEN** the response is `{ error: 'no_transport_available', detail: { channel_subscribed: false, opencode_bound: false, tmux_pane_set: false } }`
 - **AND** no tmux command is executed
 
 #### Scenario: Codex target with no tmux_pane_id still routes successfully
@@ -104,24 +116,27 @@ If `Buffer.byteLength(prompt, 'utf8')` is greater than 8192, the daemon MUST ret
 
 ### Requirement: tmux unavailable returns tmux_unavailable
 
-If the daemon cannot invoke `tmux` (e.g. `tmux -V` returns ENOENT or non-zero), the `poke` tool MUST return `{ error: 'tmux_unavailable', detail: <stderr or node error message> }`. The daemon MAY cache the availability probe result across invocations.
+If the daemon cannot invoke `tmux` (e.g. `tmux -V` returns ENOENT or non-zero) and a poke call has already fallen through higher-priority transports to the tmux path, the `poke` tool MUST return `{ error: 'tmux_unavailable', detail: <stderr or node error message>, transport_used: 'tmux-poke' }`.  The daemon MAY cache the availability probe result across invocations.
 
 #### Scenario: No tmux binary on PATH
 
 - **GIVEN** a daemon launched on a host where `tmux` is not installed
-- **WHEN** any caller calls `poke({ ... })` with otherwise valid input
-- **THEN** the response is `{ error: 'tmux_unavailable', detail: '<non-empty string>' }`
+- **AND** target `sess-B` has no live Claude channel sink and no bound opencode session
+- **AND** `sess-B` has a non-null `tmux_pane_id`
+- **WHEN** caller `sess-A` calls `poke({ target_agent_id: 'sess-B', prompt: 'p' })`
+- **THEN** the response is `{ error: 'tmux_unavailable', detail: '<non-empty string>', transport_used: 'tmux-poke' }`
 
 ### Requirement: tmux pane dead returns pane_dead
 
-If tmux returns an error that indicates the target pane no longer exists or is marked dead (`can't find pane` in stderr or `#{pane_dead} == 1`), the daemon MUST return `{ error: 'pane_dead', detail: <tmux stderr> }`.
+If tmux returns an error that indicates the target pane no longer exists or is marked dead (`can't find pane` in stderr or `#{pane_dead} == 1`), and the poke call is already on the tmux path, the daemon MUST return `{ error: 'pane_dead', detail: <tmux stderr>, transport_used: 'tmux-poke' }`.
 
 #### Scenario: Target pane was killed after registration
 
 - **GIVEN** target `sess-B` was registered with `tmux_pane_id = '%42'`
+- **AND** `sess-B` has no live Claude channel sink and no bound opencode session
 - **AND** the user subsequently killed pane `%42` in tmux
 - **WHEN** caller `sess-A` calls `poke({ target_agent_id: 'sess-B', prompt: 'p' })`
-- **THEN** the response is `{ error: 'pane_dead', detail: <string containing 'find pane' or similar> }`
+- **THEN** the response is `{ error: 'pane_dead', detail: <string containing 'find pane' or similar>, transport_used: 'tmux-poke' }`
 
 ### Requirement: Other tmux CLI failures return tmux_cmd_failed
 
