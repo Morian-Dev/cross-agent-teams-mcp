@@ -8,15 +8,13 @@
 #   2. Create a new session on that server via HTTP POST /session.
 #   3. Read $TMUX_PANE (required — the launcher must run inside tmux).
 #   4. Call `cross-agent-teams-mcp pre-register-opencode-pane` to reserve the pane.
-#   5. exec opencode so the CLI runs in the same tmux pane we just pre-reg'd.
-#
-# NOTE on open question O1: opencode 1.14.19 has no documented "attach to
-# existing server session" CLI flag (no --session / --server). This launcher
-# therefore execs plain `opencode`; only the daemon-side half of the handshake
-# is wired (the pre-reg row + auto-bind inside register_opencode_self). The
-# interactive opencode CLI will create its own internal session that is NOT the
-# same as the server session reserved for xats poke delivery. See README
-# "Opencode Delivery" for the limitation.
+#   5. exec opencode -s $SESSION_ID so the TUI attaches to the pre-created
+#      server session. Requires opencode >= 1.14.23 (the version that exposed
+#      -s/--session on the default TUI command). If the local binary is older,
+#      the launcher falls back to plain `opencode` with a printed warning —
+#      daemon-side poke delivery still works via tmux keystroke fallback, but
+#      prompt_async wake-ups will land in an orphan server session the TUI
+#      cannot see.
 #
 # Usage:
 #   ./launch-opencode.sh [--help]
@@ -46,7 +44,7 @@ XATS_PORT="${XATS_PORT:-9100}"
 OPENCODE_BIN="${OPENCODE_BIN:-opencode}"
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit 0
 fi
 
@@ -102,8 +100,16 @@ if ! "$XATS_CLI" "${XATS_ARGS[@]}"; then
   die "pre_register_opencode_pane call failed — is the xats daemon running?"
 fi
 
-# 5. exec opencode. See the O1 note above: no attach-to-session argv is known
-#    on opencode 1.14.19, so we exec the plain binary with the user's argv.
-echo "launch-opencode: exec ${OPENCODE_BIN} $* (note: opencode 1.14.19 has no --session/--server flag, so the interactive CLI starts its own session; only daemon-side poke delivery is pre-bound to ${SESSION_ID})" >&2
-
-exec "$OPENCODE_BIN" "$@"
+# 5. Detect whether the local opencode binary supports `-s <session_id>` on the
+#    default TUI command (shipped in 1.14.23). If yes, pass the session id so
+#    the TUI attaches to the pre-created server session — that closes the
+#    session-misalignment gap and lets prompt_async wake-ups land in the
+#    session the TUI is actually rendering. If no, fall back to plain opencode
+#    with a warning; daemon-side tmux fallback still works.
+if "$OPENCODE_BIN" --help 2>/dev/null | grep -qE '^\s*-s,\s*--session\b'; then
+  echo "launch-opencode: exec ${OPENCODE_BIN} -s ${SESSION_ID} $* (TUI attached to pre-reg'd server session)" >&2
+  exec "$OPENCODE_BIN" -s "$SESSION_ID" "$@"
+else
+  echo "launch-opencode: exec ${OPENCODE_BIN} $* (warning: this opencode binary lacks --session on TUI; the interactive CLI will create its own orphan session — prompt_async wake-ups will not reach the TUI. Upgrade opencode to >= 1.14.23 to enable attach-to-session. Daemon-side poke delivery is pre-bound to ${SESSION_ID})" >&2
+  exec "$OPENCODE_BIN" "$@"
+fi

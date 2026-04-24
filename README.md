@@ -276,14 +276,14 @@ After registration, `poke()` routes to the opencode session via HTTP:
 - `cross-agent-teams-mcp` CLI must be on `$PATH` and the xats daemon must be running (the launcher calls `cross-agent-teams-mcp pre-register-opencode-pane` over HTTP).
 - `base_url` is loopback-only (`127.0.0.1`, `localhost`, or `::1`).
 
-### Known limitation (open question O1)
+### Version requirement (open question O1 resolved)
 
-Opencode 1.14.19's CLI has **no documented "attach to existing server session" flag** (no `--session` / `--server`).  The launcher therefore execs plain `opencode` and the interactive CLI starts its own internal session that is **not** the same session the xats daemon is bound to.  This means:
+The launcher uses `opencode -s <session_id>` on the default TUI command to attach the interactive TUI to the pre-created server session.  This flag shipped on the default TUI command in **opencode 1.14.23**; the launcher auto-detects it via `opencode --help` at run time:
 
-- Daemon-side HTTP poke delivery IS wired: the daemon sends pokes to the pre-reg'd server session via `opencode-server` transport.
-- Whether the user's interactive opencode CLI sees those pokes depends on the upstream `opencode` binary growing an attach-to-session flag.  Until it does, the interactive side of the loop falls back to tmux keystroke poke, and the launcher prints a one-line warning at start-up.
+- `opencode >= 1.14.23`: launcher execs `opencode -s $SESSION_ID`, so the TUI renders the same server session the xats daemon is bound to.  `opencode-server` transport pokes (`POST /session/{id}/prompt_async`) land in the session the TUI is actively showing.
+- `opencode < 1.14.23`: launcher falls back to plain `opencode` with a printed warning.  The interactive CLI creates its own orphan session; daemon HTTP pokes still succeed against the pre-reg'd server session but the TUI cannot see them, so wake-ups effectively fall back to tmux keystroke poke.
 
-Track upstream opencode for attach-to-session support; this document will be updated once a compatible flag ships.
+Upgrade opencode to 1.14.23 or newer to close this gap.  If you run the shared opencode server (`./start-server.sh`), also restart it after upgrading — the running process keeps the version it was started with.
 
 ### Advanced / custom: manual flow (no launcher)
 
