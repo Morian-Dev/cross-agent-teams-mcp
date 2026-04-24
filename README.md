@@ -278,7 +278,7 @@ After registration, `poke()` routes to the opencode session via HTTP:
 
 ### Version requirement (open question O1 resolved)
 
-The launcher uses `opencode -s <session_id>` on the default TUI command to attach the interactive TUI to the pre-created server session.  This flag shipped on the default TUI command in **opencode 1.14.23**; the launcher auto-detects it via `opencode --help` at run time:
+The launcher uses `opencode -s <session_id>` on the default TUI command to attach the interactive TUI to the pre-created server session.  This flag shipped on the default TUI command in **opencode 1.14.23**; the launcher auto-detects it via `opencode --help` at run time.  The pre-created session is pinned to the caller's `cwd` via `POST /session?directory=<encoded-cwd>` so the TUI can actually attach — if the pre-reg'd session lives in a different directory than the TUI's cwd, opencode silently forks its own session and the handshake breaks.
 
 - `opencode >= 1.14.23`: launcher execs `opencode -s $SESSION_ID`, so the TUI renders the same server session the xats daemon is bound to.  `opencode-server` transport pokes (`POST /session/{id}/prompt_async`) land in the session the TUI is actively showing.
 - `opencode < 1.14.23`: launcher falls back to plain `opencode` with a printed warning.  The interactive CLI creates its own orphan session; daemon HTTP pokes still succeed against the pre-reg'd server session but the TUI cannot see them, so wake-ups effectively fall back to tmux keystroke poke.

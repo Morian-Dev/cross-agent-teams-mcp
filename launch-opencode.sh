@@ -67,10 +67,18 @@ if [[ -z "${TMUX_PANE:-}" ]]; then
   die "TMUX_PANE is empty — wrap this launcher inside tmux (or attach to an existing tmux session) before using the xats opencode handshake"
 fi
 
-# 3. Create a server-side session via HTTP.
-SESSION_JSON="$(curl -fsS -X POST "${OPENCODE_BASE_URL}${OPENCODE_SESSION_CREATE_PATH}" || true)"
+# 3. Create a server-side session via HTTP, pinned to the caller's cwd.
+#    opencode assigns the session's `directory` / `projectID` at create time
+#    from the `?directory=<path>` query param; without it, the session falls
+#    back to the server process's own cwd, which typically differs from the
+#    cwd where the TUI is launched. When those diverge, `opencode -s <id>`
+#    refuses to attach and the TUI forks a new session instead, breaking the
+#    handshake.
+LAUNCH_CWD="$(pwd -P)"
+SESSION_DIR_QS="$(node -e "process.stdout.write(encodeURIComponent(process.argv[1]))" "$LAUNCH_CWD")"
+SESSION_JSON="$(curl -fsS -X POST "${OPENCODE_BASE_URL}${OPENCODE_SESSION_CREATE_PATH}?directory=${SESSION_DIR_QS}" -H 'content-type: application/json' -d '{}' || true)"
 if [[ -z "$SESSION_JSON" ]]; then
-  die "failed to create opencode session via POST ${OPENCODE_BASE_URL}${OPENCODE_SESSION_CREATE_PATH}"
+  die "failed to create opencode session via POST ${OPENCODE_BASE_URL}${OPENCODE_SESSION_CREATE_PATH}?directory=..."
 fi
 
 SESSION_ID="$(printf '%s' "$SESSION_JSON" | node -e "
@@ -89,7 +97,7 @@ if [[ -z "$SESSION_ID" ]]; then
   die "opencode session response did not contain an id: ${SESSION_JSON}"
 fi
 
-echo "launch-opencode: created opencode session ${SESSION_ID} on ${OPENCODE_BASE_URL}"
+echo "launch-opencode: created opencode session ${SESSION_ID} on ${OPENCODE_BASE_URL} (directory=${LAUNCH_CWD})"
 
 # 4. Pre-register this pane with the xats daemon.
 XATS_ARGS=(pre-register-opencode-pane --pane "$TMUX_PANE" --base-url "$OPENCODE_BASE_URL" --session-id "$SESSION_ID")
