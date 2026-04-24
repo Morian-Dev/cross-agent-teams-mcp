@@ -39,14 +39,32 @@ export async function sendOpencodePrompt(
     }
   }
 
+  const contentType = (response.headers.get('content-type') ?? '').toLowerCase()
+
   if (response.ok) {
-    return { ok: true }
+    if (contentType.includes('application/json')) {
+      return { ok: true }
+    }
+    const preview = await response.text().catch(() => '')
+    return {
+      error: 'opencode_request_failed',
+      detail: {
+        reason: 'non_json_success_response',
+        http_status: response.status,
+        content_type: contentType || 'unknown',
+        body_preview: preview.slice(0, 120),
+      },
+    }
   }
 
   let body: unknown
-  try {
-    body = await response.json()
-  } catch {
+  if (contentType.includes('application/json')) {
+    try {
+      body = await response.json()
+    } catch {
+      body = await response.text().catch(() => null)
+    }
+  } else {
     body = await response.text().catch(() => null)
   }
 
