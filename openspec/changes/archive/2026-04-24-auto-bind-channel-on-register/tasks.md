@@ -42,26 +42,26 @@
 
 ## 6. Tests
 
-- [ ] 6.1 Unit test: `register_agent` schema rejects `claude_ui_pid` when `role!='__channel_proxy__'`
-- [ ] 6.2 Unit test: `register_agent` schema rejects non-positive / non-integer `claude_ui_pid`
-- [ ] 6.3 Unit test: `register_agent` with `role='__channel_proxy__'` + `claude_ui_pid` persists the column
-- [ ] 6.4 Unit test: proxy lookup returns most recent live row when multiple exist for the same `claude_ui_pid`
-- [ ] 6.5 Unit test: `register_claude_self({ui_pid})` with live proxy row → writes `delivery.kind='claude-channel'` with the proxy's csid
-- [ ] 6.6 Unit test: `register_claude_self({ui_pid})` with no matching proxy row → delivery stays `'none'`
-- [ ] 6.7 Unit test: `register_claude_self({ui_pid})` with matching proxy row but dead `ChannelWakeFanout` sink → delivery stays `'none'`
-- [ ] 6.8 Unit test: `register_claude_self` without `ui_pid` → auto-bind does not run
-- [ ] 6.9 Unit test: `register_claude_self({ui_pid, channel_session_id})` (explicit) → explicit path runs, auto-bind does not
-- [ ] 6.10 Unit test: reactive rebind promotes a pre-existing `delivery='none'` host to `claude-channel` when proxy registers
-- [ ] 6.11 Unit test: reactive rebind rewrites stale csid when proxy restarts with a new csid
-- [ ] 6.12 Unit test: reactive rebind skips hosts with `runtime_ui_pid IS NULL`
-- [ ] 6.13 Unit test: reactive rebind does not overwrite `codex-appserver` delivery
-- [ ] 6.14 Unit test: reactive rebind is scoped to the proxy's team (hosts in other teams unchanged)
-- [ ] 6.15 Unit test: startup migration adds `claude_ui_pid` column to legacy schema idempotently
-- [ ] 6.16 Integration test: end-to-end — host registers first, then proxy starts; after proxy registers, `list_agents` shows host's `delivery.kind='claude-channel'` with proxy's csid
-- [ ] 6.17 Integration test: end-to-end — proxy restart with new csid automatically rebinds all bound hosts
+- [x] 6.1 Unit test: `register_agent` schema rejects `claude_ui_pid` when `role!='__channel_proxy__'`
+- [x] 6.2 Unit test: `register_agent` schema rejects non-positive / non-integer `claude_ui_pid`
+- [x] 6.3 Unit test: `register_agent` with `role='__channel_proxy__'` + `claude_ui_pid` persists the column
+- [x] 6.4 Unit test: proxy lookup returns most recent live row when multiple exist for the same `claude_ui_pid`
+- [x] 6.5 Unit test: `register_claude_self({ui_pid})` with live proxy row → writes `delivery.kind='claude-channel'` with the proxy's csid
+- [x] 6.6 Unit test: `register_claude_self({ui_pid})` with no matching proxy row → delivery stays `'none'`
+- [x] 6.7 Unit test: `register_claude_self({ui_pid})` with matching proxy row but dead `ChannelWakeFanout` sink → delivery stays `'none'`
+- [x] 6.8 Unit test: `register_claude_self` without `ui_pid` → auto-bind does not run
+- [x] 6.9 Unit test: `register_claude_self({ui_pid, channel_session_id})` (explicit) → explicit path runs, auto-bind does not
+- [x] 6.10 Unit test: reactive rebind promotes a pre-existing `delivery='none'` host to `claude-channel` when proxy registers
+- [x] 6.11 Unit test: reactive rebind rewrites stale csid when proxy restarts with a new csid
+- [x] 6.12 Unit test: reactive rebind skips hosts with `runtime_ui_pid IS NULL`
+- [x] 6.13 Unit test: reactive rebind does not overwrite `codex-appserver` delivery
+- [x] 6.14 Unit test: reactive rebind is scoped to the proxy's team (hosts in other teams unchanged)
+- [x] 6.15 Unit test: startup migration adds `claude_ui_pid` column to legacy schema idempotently
+- [x] 6.16 Integration test: end-to-end — host registers first, then proxy starts; after proxy registers, `list_agents` shows host's `delivery.kind='claude-channel'` with proxy's csid
+- [x] 6.17 Integration test: end-to-end — proxy restart with new csid automatically rebinds all bound hosts
 
 ## 7. Docs
 
-- [ ] 7.1 Update `docs/configs/claude-code.md` to explain auto-bind: `ui_pid` is now sufficient for channel delivery; explicit csid is optional
-- [ ] 7.2 Update `plugins/cross-agent-teams-channel/README.md` to mention that `register_claude_self({ui_pid})` is the preferred flow and the startup hint notification is now backward-compat only
-- [ ] 7.3 Update the `register_claude_self` tool description in `src/mcp/tools.ts` to mention auto-bind behavior tied to `ui_pid`
+- [x] 7.1 Update `docs/configs/claude-code.md` to explain auto-bind: `ui_pid` is now sufficient for channel delivery; explicit csid is optional
+- [x] 7.2 Update `plugins/cross-agent-teams-channel/README.md` to mention that `register_claude_self({ui_pid})` is the preferred flow and the startup hint notification is now backward-compat only
+- [x] 7.3 Update the `register_claude_self` tool description in `src/mcp/tools.ts` to mention auto-bind behavior tied to `ui_pid`

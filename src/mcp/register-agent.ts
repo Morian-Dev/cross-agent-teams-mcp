@@ -25,7 +25,7 @@ export interface RegisterInput {
 }
 
 export type RegisterResult =
-  | { agent_id: string; team: string; rebound_host_agent_ids: string[] }
+  | { agent_id: string; team: string }
   | { error: 'agent_id_collision' }
   | { error: 'invalid_delivery'; reason: DeliveryValidationReason }
   | { error: 'claude_ui_pid_requires_channel_proxy' }

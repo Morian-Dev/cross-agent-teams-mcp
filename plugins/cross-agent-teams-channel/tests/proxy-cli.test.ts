@@ -198,7 +198,6 @@ describe('proxy CLI entrypoint (self-binding)', () => {
     const cliJs = await buildPluginOnce()
     const cacheDir = tmp(); cleanups.push(cacheDir)
     const daemon1 = await startFakeDaemon(); daemons.push(daemon1)
-    const url1 = `http://127.0.0.1:${daemon1.port}/mcp`
 
     const spawnAndCapture = async (port: number, daemon: FakeDaemon): Promise<string> => {
       const proc = spawn(process.execPath, [cliJs, '--daemon-url', `http://127.0.0.1:${port}/mcp`], {

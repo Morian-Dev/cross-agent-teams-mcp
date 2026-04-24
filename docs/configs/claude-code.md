@@ -39,24 +39,42 @@ With `--token`:
 
 ## Claude self-registration
 
-Claude Code 推荐优先在当前会话里调用 `register_claude_self(...)`.  这条 helper 会把注册写到 Claude host 当前正在使用的 MCP session 上, 并且可以顺手绑定 proxy 宣告的 `channel_session_id`.  这样后续 `get_inbox`, `send_message`, `poke` 都会立刻沿用同一个身份, 不会出现 "刚注册完, 下一次又 unknown_agent" 的错位。
+Claude Code 推荐优先在当前会话里调用 `register_claude_self(...)`.  这条 helper 会把注册写到 Claude host 当前正在使用的 MCP session 上.  这样后续 `get_inbox`, `send_message`, `poke` 都会立刻沿用同一个身份, 不会出现 "刚注册完, 下一次又 unknown_agent" 的错位。
 
 当用户没有显式指定 `team` 时, 推荐传 `project_dir` 为当前工作目录.  daemon 会用该目录 basename 派生默认 team, 两者都不传时仍回落到 `"default"`.
 
 如果你是在 Claude Code 里替别的 runtime 注册, 不要复用 `register_claude_self(...)`.  这时应该调用 `register_agent(...)`, 并让 `client` 匹配 `ui_pid` 背后的真实进程类型。  例如, `ui_pid` 指向 opencode 进程时, 传 `client: "opencode"`, 不是 `"claude-code"`。
+
+### Channel auto-bind (推荐)
+
+只要在 Claude Code 里加载了 `cross-agent-teams-channel` proxy, **只需要传 `ui_pid` (就是 `$PPID`), 不需要显式传 `channel_session_id`**.  daemon 会根据 `ui_pid` 匹配 proxy 进程 (它的 `process.ppid` 与 host 的 `ui_pid` 相同), 自动把 host 的 `delivery.kind` 绑到 `claude-channel` + proxy 当前的 csid.  这是新增的 auto-bind 通道, 省掉了 LLM 手动读 `notifications/claude/channel` 启动提示的一步。
 
 ```text
 register_claude_self({
   name: "lead",
   role: "worker",
   project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
+  ui_pid: 25424  // $PPID, 也即 Claude Code CLI 的进程 id
+})
+```
+
+成功时响应里会带 `channel_session_id: "csid-..."` 字段.  如果当前没有匹配的 proxy row (例如 plugin 没加载), 该字段缺席, delivery 保持 `'none'`, 注册本身仍然成功, 还能走 tmux fallback。
+
+`model` 在这个 helper 里是可选的.  省略时会回退到 Claude Code 专用默认值。
+
+### 显式传 channel_session_id (向后兼容)
+
+如果你仍然想显式指定 csid (例如从 proxy 启动提示里读出来了), 也可以继续传.  显式值会覆盖 auto-bind:
+
+```text
+register_claude_self({
+  name: "lead",
+  ui_pid: 25424,
   channel_session_id: "csid-abc"
 })
 ```
 
-`model` 在这个 helper 里是可选的.  省略时会回退到 Claude Code 专用默认值。
-
-如果你想继续走统一入口, 也可以直接在当前 Claude 会话里调用:
+走统一入口也支持 auto-bind:
 
 ```text
 register_agent({
@@ -65,7 +83,7 @@ register_agent({
   name: "lead",
   project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
   role: "worker",
-  channel_session_id: "csid-abc"
+  ui_pid: 25424  // 同样触发 auto-bind
 })
 ```
 
