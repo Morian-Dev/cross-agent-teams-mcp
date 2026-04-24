@@ -436,6 +436,17 @@ export function registerBusinessTools(
     channel_session_id: z.string().min(1).optional(),
   }).strict()
 
+  const registerCodexSelfInputSchema = z.object({
+    name: z.string().min(1).refine(v => v.trim().length > 0, { message: 'name must not be empty' }),
+    model: z.string().optional(),
+    role: z.string().optional(),
+    team: z.string().optional(),
+    project_dir: z.string().min(1).optional(),
+    thread_id: z.string().min(1).refine(v => v.trim().length > 0, { message: 'thread_id must not be empty' }).optional(),
+    ws_url: z.string().min(1).optional(),
+    auth_token_ref: z.string().min(1).optional(),
+  }).strict()
+
   async function executeRegister(
     args: {
       client?: ClientKind
@@ -649,6 +660,7 @@ export function registerBusinessTools(
         'Claude Code sessions can pass `client="claude-code"` together with `channel_session_id` to bind channel delivery through this same tool.',
         'Opencode sessions can pass `client="opencode"` together with `base_url` and `session_id` to bind server delivery through this same tool.',
         'Codex sessions can pass `client="codex"` together with `thread_id` to register Codex app-server delivery through this same tool.',
+        'Codex clients SHOULD prefer `register_codex_self` instead — it is the codex-specific convenience entry point. Do NOT pass `ui_pid` from codex agents: the launcher\'s `pre_register_codex_pane` pre-reg flow handles tmux pane binding, and supplying `ui_pid` from codex disables that auto-bind path.',
         'Requests such as "register to xats" or "register to cross-agent-teams" refer to this MCP service, not to the `team` field; do not set `team` to `xats` or `cross-agent-teams` from those phrases.',
         'Do not treat the bare word "register" as a request for this tool unless the current conversation is already about cross-agent-teams registration.',
         'When the end user has not explicitly specified `team`, callers should pass `project_dir` as the current working directory so the daemon derives a project-scoped default team from its basename; if omitted, it falls back to `default`.',
@@ -715,6 +727,48 @@ export function registerBusinessTools(
       project_dir: args.project_dir,
       ui_pid: args.ui_pid,
       channel_session_id: args.channel_session_id,
+    }))
+  )
+
+  server.registerTool(
+    'register_codex_self',
+    {
+      title: 'Register codex MCP session',
+      description: [
+        'Register the current codex MCP session as an agent bound to `codex-appserver` delivery.',
+        'Prefer this helper inside codex over the generic `register_agent` — it locks `client="codex"` and keeps the input surface minimal.',
+        'THREAD_ID: read `$CODEX_THREAD_ID` from your tool shell environment (codex 0.124.0+ exports it for every MCP tool subprocess) and pass its value as `thread_id`. When `thread_id` is omitted, the daemon returns the existing `thread_id_required` envelope listing resumable thread_ids as a candidate fallback.',
+        'DO NOT pass `ui_pid`: this tool\'s schema rejects it outright. UI pid discovery and tmux pane binding are handled automatically by the launcher\'s `pre_register_codex_pane` pre-reg flow — passing `ui_pid` would silently disable that auto-bind path.',
+        'The daemon connects to `ws_url` (default `ws://127.0.0.1:8799`, env override `CROSS_AGENT_TEAMS_CODEX_WS_URL`), runs the codex `initialize` + `thread/resume` handshake, and writes `delivery.kind="codex-appserver"`.',
+        'Requests such as "register to xats" or "register to cross-agent-teams" refer to this MCP service, not to the `team` field; do not set `team` to `xats` or `cross-agent-teams` from those phrases.',
+        'When the end user has not explicitly specified `team`, callers should pass `project_dir` as the current working directory so the daemon derives a project-scoped default team from its basename; if omitted, it falls back to `default`.',
+        'model is optional here; when omitted it falls back to `gpt`.',
+      ].join(' '),
+      inputSchema: registerCodexSelfInputSchema,
+    },
+    async (args: {
+      name: string
+      model?: string
+      role?: string
+      team?: string
+      project_dir?: string
+      thread_id?: string
+      ws_url?: string
+      auth_token_ref?: string
+    }) => run(async () => executeRegister({
+      client: 'codex',
+      name: args.name,
+      model: args.model ?? 'gpt',
+      role: args.role,
+      team: args.team,
+      project_dir: args.project_dir,
+      thread_id: args.thread_id,
+      // Ensure the codex-appserver path is always taken even when thread_id is
+      // omitted: callers of register_codex_self expect the thread_id_required
+      // candidate-list fallback, not a plain delivery=none registration.
+      // RegisterCodexSelfService resolves the empty string to env/default ws_url.
+      ws_url: args.ws_url ?? '',
+      auth_token_ref: args.auth_token_ref,
     }))
   )
 
