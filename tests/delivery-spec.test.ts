@@ -90,6 +90,91 @@ describe('parseDeliveryRow (Task 1.2)', () => {
   });
 });
 
+describe('parseDeliveryRow read-side validation (harden-delivery-read-path)', () => {
+  it('throws corrupt_delivery_payload when delivery_kind is unknown', () => {
+    const row = { delivery_kind: 'irc', delivery_payload: '{}' };
+    expect(() => parseDeliveryRow(row)).toThrow('corrupt_delivery_payload');
+  });
+
+  it('throws corrupt_delivery_payload for claude-channel with empty payload {}', () => {
+    const row = { delivery_kind: 'claude-channel', delivery_payload: '{}' };
+    expect(() => parseDeliveryRow(row)).toThrow('corrupt_delivery_payload');
+  });
+
+  it('throws corrupt_delivery_payload for claude-channel with empty channel_session_id', () => {
+    const row = {
+      delivery_kind: 'claude-channel',
+      delivery_payload: '{"channel_session_id":""}',
+    };
+    expect(() => parseDeliveryRow(row)).toThrow('corrupt_delivery_payload');
+  });
+
+  it('throws corrupt_delivery_payload for codex-appserver missing thread_id', () => {
+    const row = {
+      delivery_kind: 'codex-appserver',
+      delivery_payload: '{"ws_url":"ws://127.0.0.1:8799"}',
+    };
+    expect(() => parseDeliveryRow(row)).toThrow('corrupt_delivery_payload');
+  });
+
+  it('throws corrupt_delivery_payload for codex-appserver missing ws_url', () => {
+    const row = {
+      delivery_kind: 'codex-appserver',
+      delivery_payload:
+        '{"thread_id":"11111111-1111-4111-8111-111111111111"}',
+    };
+    expect(() => parseDeliveryRow(row)).toThrow('corrupt_delivery_payload');
+  });
+
+  it('throws corrupt_delivery_payload for codex-appserver with empty auth_token_ref', () => {
+    const row = {
+      delivery_kind: 'codex-appserver',
+      delivery_payload:
+        '{"thread_id":"11111111-1111-4111-8111-111111111111","ws_url":"ws://127.0.0.1:8799","auth_token_ref":""}',
+    };
+    expect(() => parseDeliveryRow(row)).toThrow('corrupt_delivery_payload');
+  });
+
+  it('reconstructs codex-appserver with full payload including auth_token_ref', () => {
+    const row = {
+      delivery_kind: 'codex-appserver',
+      delivery_payload:
+        '{"thread_id":"11111111-1111-4111-8111-111111111111","ws_url":"wss://example/app","auth_token_ref":"env:TOKEN"}',
+    };
+    expect(parseDeliveryRow(row)).toEqual({
+      kind: 'codex-appserver',
+      thread_id: '11111111-1111-4111-8111-111111111111',
+      ws_url: 'wss://example/app',
+      auth_token_ref: 'env:TOKEN',
+    });
+  });
+
+  it('reconstructs codex-appserver without auth_token_ref omits the optional key', () => {
+    const row = {
+      delivery_kind: 'codex-appserver',
+      delivery_payload:
+        '{"thread_id":"22222222-2222-2222-2222-222222222222","ws_url":"ws://127.0.0.1:8799"}',
+    };
+    const spec = parseDeliveryRow(row);
+    expect(spec).toEqual({
+      kind: 'codex-appserver',
+      thread_id: '22222222-2222-2222-2222-222222222222',
+      ws_url: 'ws://127.0.0.1:8799',
+    });
+    expect(Object.prototype.hasOwnProperty.call(spec, 'auth_token_ref')).toBe(false);
+  });
+
+  it('does not leak extra payload fields through the spread for claude-channel', () => {
+    const row = {
+      delivery_kind: 'claude-channel',
+      delivery_payload: '{"channel_session_id":"csid-abc","leak":"should-not-appear"}',
+    };
+    const spec = parseDeliveryRow(row);
+    expect(spec).toEqual({ kind: 'claude-channel', channel_session_id: 'csid-abc' });
+    expect(Object.prototype.hasOwnProperty.call(spec, 'leak')).toBe(false);
+  });
+});
+
 describe('serializeDelivery (Task 1.3)', () => {
   it('serializes {kind: none} to {delivery_kind: none, delivery_payload: null}', () => {
     const spec: DeliverySpec = { kind: 'none' };

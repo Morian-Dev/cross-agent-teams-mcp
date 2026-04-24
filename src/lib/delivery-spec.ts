@@ -37,6 +37,9 @@ export function parseDeliveryRow(row: DeliveryRow): DeliverySpec {
   if (kind === 'none') {
     return { kind: 'none' };
   }
+  if (!(DELIVERY_KINDS as readonly string[]).includes(kind)) {
+    throw new Error('corrupt_delivery_payload');
+  }
   let payload: unknown;
   try {
     payload = row.delivery_payload == null ? {} : JSON.parse(row.delivery_payload);
@@ -46,7 +49,39 @@ export function parseDeliveryRow(row: DeliveryRow): DeliverySpec {
   if (typeof payload !== 'object' || payload === null) {
     throw new Error('corrupt_delivery_payload');
   }
-  return { kind, ...(payload as Record<string, unknown>) } as DeliverySpec;
+  const record = payload as Record<string, unknown>;
+  if (kind === 'claude-channel') {
+    const csid = record.channel_session_id;
+    if (typeof csid !== 'string' || csid.length === 0) {
+      throw new Error('corrupt_delivery_payload');
+    }
+    return { kind: 'claude-channel', channel_session_id: csid };
+  }
+  if (kind === 'codex-appserver') {
+    const threadId = record.thread_id;
+    if (typeof threadId !== 'string' || threadId.length === 0) {
+      throw new Error('corrupt_delivery_payload');
+    }
+    const wsUrl = record.ws_url;
+    if (typeof wsUrl !== 'string' || wsUrl.length === 0) {
+      throw new Error('corrupt_delivery_payload');
+    }
+    const hasAuthTokenRef = Object.prototype.hasOwnProperty.call(record, 'auth_token_ref');
+    if (hasAuthTokenRef) {
+      const authTokenRef = record.auth_token_ref;
+      if (typeof authTokenRef !== 'string' || authTokenRef.length === 0) {
+        throw new Error('corrupt_delivery_payload');
+      }
+      return {
+        kind: 'codex-appserver',
+        thread_id: threadId,
+        ws_url: wsUrl,
+        auth_token_ref: authTokenRef,
+      };
+    }
+    return { kind: 'codex-appserver', thread_id: threadId, ws_url: wsUrl };
+  }
+  throw new Error('corrupt_delivery_payload');
 }
 
 export function serializeDelivery(spec: DeliverySpec): DeliveryRow {
