@@ -146,7 +146,7 @@ On startup, the channel proxy SHALL, in order:
 1. Parse CLI args: `--daemon-url <url>` (or env `CROSS_AGENT_TEAMS_MCP_DAEMON_URL`).  The proxy is identity-agnostic — it MUST NOT accept `--agent-team` or `--agent-name`.  If daemon-url is missing, exit with a non-zero status and a diagnostic on stderr.
 2. Generate a fresh UUID v4 as `channel_session_id` for this process lifetime.  No persistence — each proxy startup gets a new csid.  (Rationale: the proxy is shared-by-directory in `.mcp.json`, so persisting by identity would collide across multi-instance Claude Code runs; a fresh csid per startup sidesteps the issue entirely.)
 3. Open an MCP Streamable HTTP client to `<daemon-url>`.
-4. Call `register_agent({role: '__channel_proxy__', name: 'channel-proxy-<pid>', team: 'default', model: 'proxy'})` to establish its own MCP session identity.
+4. Call `register_agent({client: 'custom', client_name: 'cross-agent-teams-channel', role: '__channel_proxy__', name: 'channel-proxy-<pid>', team: 'default', model: 'proxy'})` to establish its own MCP session identity.
 5. Call `subscribe_channel_wake({channel_session_id: <csid>})` to attach its notification sink.
 6. Emit a `notifications/claude/channel` JSON-RPC notification on its host stdio telling Claude: its `channel_session_id` is `<csid>` and it should call `bind_channel({channel_session_id: '<csid>'})` to complete binding.  This hands off self-binding to Claude.
 7. Enter an idle loop receiving `notifications/channel_wake` from the daemon and relaying them to the host.

@@ -6,9 +6,9 @@ Persist agent identity tied to MCP session ids, scope visibility by team, and tr
 ## Requirements
 ### Requirement: Agents table schema
 
-The database SHALL contain an `agents` table with columns: `agent_id TEXT PRIMARY KEY`, `team TEXT NOT NULL`, `role TEXT NOT NULL`, `name TEXT NOT NULL`, `model TEXT`, `registered_at TEXT NOT NULL`, `last_seen_at TEXT NOT NULL`, `last_processed_event_id INTEGER NOT NULL DEFAULT 0`, `tmux_pane_id TEXT`.
+The database SHALL contain an `agents` table with columns: `agent_id TEXT PRIMARY KEY`, `client TEXT`, `client_name TEXT`, `team TEXT NOT NULL`, `role TEXT NOT NULL`, `name TEXT NOT NULL`, `model TEXT`, `registered_at TEXT NOT NULL`, `last_seen_at TEXT NOT NULL`, `last_processed_event_id INTEGER NOT NULL DEFAULT 0`, `tmux_pane_id TEXT`.
 
-The `name` column is the human-readable identifier used as part of the 2-tuple identity key `(team, name)` — it MUST NOT be NULL and MUST NOT be empty after trimming. The `role` column remains a non-null informational field that describes the agent's function (e.g. `backend`, `frontend`) but is NOT part of the identity key; multiple successive registrations for the same `(team, name)` MAY carry different `role` values and MUST collapse to a single row. The `tmux_pane_id` column remains nullable and stores an optional tmux pane identifier (e.g. `%42`).
+The `name` column is the human-readable identifier used as part of the 2-tuple identity key `(team, name)` — it MUST NOT be NULL and MUST NOT be empty after trimming. The `role` column remains a non-null informational field that describes the agent's function (e.g. `backend`, `frontend`) but is NOT part of the identity key; multiple successive registrations for the same `(team, name)` MAY carry different `role` values and MUST collapse to a single row. The `client` column stores the explicitly declared runtime kind (`codex`, `claude-code`, `opencode`, or `custom`) and MAY be NULL only for legacy rows written before this requirement. The `client_name` column is nullable and stores an optional free-form runtime label used only when `client='custom'`. The `tmux_pane_id` column remains nullable and stores an optional tmux pane identifier (e.g. `%42`).
 
 A UNIQUE index `agents_identity_idx` SHALL exist on `(team, name)` to support O(log n) identity lookup AND to physically prevent multiple rows with the same `(team, name)`.
 
@@ -22,7 +22,7 @@ A UNIQUE index `agents_identity_idx` SHALL exist on `(team, name)` to support O(
 #### Scenario: agents table columns match schema
 
 - **WHEN** the daemon bootstraps a fresh `data.db`
-- **THEN** `PRAGMA table_info('agents')` lists columns: `agent_id`, `team`, `role`, `name`, `model`, `registered_at`, `last_seen_at`, `last_processed_event_id`, `tmux_pane_id`
+- **THEN** `PRAGMA table_info('agents')` lists columns: `agent_id`, `client`, `client_name`, `team`, `role`, `name`, `model`, `registered_at`, `last_seen_at`, `last_processed_event_id`, `tmux_pane_id`
 - **AND** the `tmux_pane_id` column exists with type `TEXT` and `notnull = 0`
 - **AND** the `name` column has `notnull = 1`
 - **AND** the `role` column has `notnull = 1`
@@ -36,7 +36,7 @@ A UNIQUE index `agents_identity_idx` SHALL exist on `(team, name)` to support O(
 
 ### Requirement: list_agents scoped to caller team
 
-The `list_agents` MCP tool SHALL take `{ team?: string }` (defaults to caller's team) and return `{ agents: Array<{ agent_id, role, name, model?, tmux_pane_id?, last_seen_at, online: boolean }> }`. `online` MUST be true when `last_seen_at` is within the last 5 minutes. Agents from other teams MUST NOT appear. The `name` field is always present and non-empty. The `tmux_pane_id` field MUST be present in every agent entry; its value is the persisted pane id (string) or `null` if unset.
+The `list_agents` MCP tool SHALL take `{ team?: string }` (defaults to caller's team) and return `{ agents: Array<{ agent_id, client?, client_name?, role, name, model?, tmux_pane_id?, last_seen_at, online: boolean }> }`. `online` MUST be true when `last_seen_at` is within the last 5 minutes. Agents from other teams MUST NOT appear. The `name` field is always present and non-empty. The `tmux_pane_id` field MUST be present in every agent entry; its value is the persisted pane id (string) or `null` if unset. `client_name` SHALL be `null` unless `client='custom'`.
 
 #### Scenario: Caller in team 'alpha' sees only team 'alpha' agents
 
@@ -110,7 +110,7 @@ The hint text MUST advise the caller that automatic runtime binding did not conv
 
 #### Scenario: Register succeeds without a usable pane and returns a hint
 
-- **GIVEN** a caller that invokes `register_agent({ model, role })`
+- **GIVEN** a caller that invokes `register_agent({ client: 'custom', model, role })`
 - **WHEN** the call is processed and succeeds
 - **THEN** the response contains `hint: <string>`
 - **AND** the hint string contains the substring `tmux_pane_id`
@@ -126,13 +126,13 @@ The hint text MUST advise the caller that automatic runtime binding did not conv
 
 #### Scenario: Explicit tmux_pane_id input is rejected at the schema layer
 
-- **WHEN** a caller invokes `register_agent({ model, name, role, tmux_pane_id: '%42' })`
+- **WHEN** a caller invokes `register_agent({ client: 'custom', model, name, role, tmux_pane_id: '%42' })`
 - **THEN** the call is rejected at the schema layer as an unrecognized top-level key
 - **AND** no row is created or updated
 
 #### Scenario: Non-tmux delivery suppresses hint
 
-- **GIVEN** a caller that invokes `register_agent({ model, role, delivery: { kind: 'codex-appserver', thread_id: '11111111-1111-4111-8111-111111111111', ws_url: 'ws://127.0.0.1:8799' } })`
+- **GIVEN** a caller that invokes `register_agent({ client: 'codex', model, role, delivery: { kind: 'codex-appserver', thread_id: '11111111-1111-4111-8111-111111111111', ws_url: 'ws://127.0.0.1:8799' } })`
 - **WHEN** the call is processed and succeeds
 - **THEN** the response object MUST NOT have a `hint` field
 
@@ -144,20 +144,21 @@ The hint text MUST advise the caller that automatic runtime binding did not conv
 
 ### Requirement: register_agent reuses agent_id by (team, name, role) identity
 
-The `register_agent` MCP tool SHALL take `{ model: string, name: string, role?: string = 'default', team?: string = 'default', ui_pid?: number, delivery?: DeliverySpec }` and:
+The `register_agent` MCP tool SHALL take `{ client: 'codex' | 'claude-code' | 'opencode' | 'custom', client_name?: string, model: string, name: string, role?: string = 'default', team?: string = 'default', ui_pid?: number, delivery?: DeliverySpec }` and:
 
 1. Trim `name` and reject with a validation error if empty.
-2. Execute an atomic UPSERT keyed on `(team, name)`:
+2. Require `client` explicitly.  `client_name` MAY be supplied only when `client='custom'`.
+3. Execute an atomic UPSERT keyed on `(team, name)`:
    - If no row exists for `(team, name)`: INSERT a new row with a freshly generated `agent_id = randomUUID()`, the provided `role`, `model`, `registered_at = now`, `last_seen_at = now`, and `tmux_pane_id = NULL` unless an earlier runtime binding already existed for that identity.
-   - If a row already exists for `(team, name)`: UPDATE that row's `role`, `model`, `last_seen_at`; preserve `agent_id`, `registered_at`, and `last_processed_event_id`; preserve the existing `tmux_pane_id` until a later automatic or explicit runtime-binding attempt writes a new usable value.
-3. After the identity row exists, best-effort attempt automatic runtime binding for this session:
+   - If a row already exists for `(team, name)`: UPDATE that row's `client`, `client_name`, `role`, `model`, `last_seen_at`; preserve `agent_id`, `registered_at`, and `last_processed_event_id`; preserve the existing `tmux_pane_id` until a later automatic or explicit runtime-binding attempt writes a new usable value.
+4. After the identity row exists, best-effort attempt automatic runtime binding for this session:
    - The daemon MUST NOT accept caller-supplied pane ids or pane-detect hints through the MCP tool surface.
    - If `ui_pid` is provided, the daemon MUST prefer the verified `ui_pid -> tty -> pane` runtime-binding path.
-   - The daemon MUST infer a built-in matcher from local session evidence such as the MCP client's `clientInfo` and the supplied `model`.
-   - If `delivery.kind` implies a specific built-in client, the daemon SHOULD prefer that matcher.
-   - If `ui_pid` is absent, the daemon MUST invoke the same pane detector behind `detect_tmux_pane` for the inferred matcher, and if detection succeeds, it MUST run the same verified persistence path as `bind_runtime_identity(...)` using the detected pane's tty plus pane id.
-   - If matcher inference fails, or the detector/runtime binder returns `ambiguous_match`, `not_found`, `tmux_unavailable`, or any other non-success result, the daemon MUST treat this attempt as having no new pane id rather than failing the registration.
-4. Return `{ agent_id, team }` where `agent_id` is either the preserved or newly generated id.
+   - For `client='codex' | 'claude-code' | 'opencode'`, the daemon MUST use that explicit client kind as the built-in matcher for automatic tmux detection.
+   - For `client='custom'`, the daemon MUST skip built-in matcher inference and treat automatic runtime binding as not attempted unless a later dedicated binding tool is invoked.
+   - If `ui_pid` is absent and a built-in matcher is available, the daemon MUST invoke the same pane detector behind `detect_tmux_pane` for that matcher, and if detection succeeds, it MUST run the same verified persistence path as `bind_runtime_identity(...)` using the detected pane's tty plus pane id.
+   - If no matcher is available, or the detector/runtime binder returns `ambiguous_match`, `not_found`, `tmux_unavailable`, or any other non-success result, the daemon MUST treat this attempt as having no new pane id rather than failing the registration.
+5. Return `{ agent_id, team }` where `agent_id` is either the preserved or newly generated id.
 
 The returned `agent_id` MUST be considered the stable identity for this `(team, name)` pair across reconnects AND across role changes. Changing the `role` parameter on a subsequent register does NOT produce a new `agent_id`; it updates the existing row's `role` column in place. The MCP session id is an orthogonal transport-level artifact and MUST NOT be conflated with `agent_id`.
 
@@ -167,8 +168,7 @@ The hint-on-missing-pane-id semantics (see Requirement "register_agent response 
 
 #### Scenario: Automatic runtime binding persists a detected pane during register_agent
 
-- **GIVEN** the caller invokes `register_agent({ model, name: 'alice' })`
-- **AND** internal client inference resolves to the Codex matcher
+- **GIVEN** the caller invokes `register_agent({ client: 'codex', model, name: 'alice' })`
 - **AND** the detector converges on a single pane `%1902`
 - **AND** verified runtime binding succeeds for `%1902`
 - **WHEN** the call is processed and succeeds
@@ -177,8 +177,7 @@ The hint-on-missing-pane-id semantics (see Requirement "register_agent response 
 
 #### Scenario: ui_pid drives automatic runtime binding during register_agent
 
-- **GIVEN** the caller invokes `register_agent({ model, name: 'alice', ui_pid: 25079 })`
-- **AND** internal client inference resolves to the Codex matcher
+- **GIVEN** the caller invokes `register_agent({ client: 'codex', model, name: 'alice', ui_pid: 25079 })`
 - **AND** verified runtime binding via `ui_pid=25079` succeeds and resolves pane `%1902`
 - **WHEN** the call is processed and succeeds
 - **THEN** the stored `tmux_pane_id` is `'%1902'`
@@ -188,7 +187,7 @@ The hint-on-missing-pane-id semantics (see Requirement "register_agent response 
 #### Scenario: New identity creates a fresh agent_id
 
 - **GIVEN** the agents table has no row for `(team='default', name='alice')`
-- **WHEN** a new MCP session calls `register_agent({ model: 'opus-4-7', role: 'backend', name: 'alice' })`
+- **WHEN** a new MCP session calls `register_agent({ client: 'custom', model: 'opus-4-7', role: 'backend', name: 'alice' })`
 - **THEN** response is `{ agent_id: <uuid>, team: 'default' }`
 - **AND** the agents row has `name='alice'`, `role='backend'`, `team='default'`
 - **AND** `agent_id` is NOT equal to the MCP session id
@@ -196,7 +195,7 @@ The hint-on-missing-pane-id semantics (see Requirement "register_agent response 
 #### Scenario: Reconnect reuses existing agent_id
 
 - **GIVEN** agent with `(team='default', name='alice')` already exists with `agent_id='X'` and `role='backend'`
-- **WHEN** a different MCP session (new session id) calls `register_agent({ model: 'opus-4-7', role: 'backend', name: 'alice' })`
+- **WHEN** a different MCP session (new session id) calls `register_agent({ client: 'custom', model: 'opus-4-7', role: 'backend', name: 'alice' })`
 - **THEN** response is `{ agent_id: 'X', team: 'default' }` (same X as before)
 - **AND** the agents table still has exactly one row for this identity
 - **AND** that row's `last_seen_at` is updated to the current timestamp
@@ -205,52 +204,69 @@ The hint-on-missing-pane-id semantics (see Requirement "register_agent response 
 #### Scenario: Role change updates existing agent_id in-place
 
 - **GIVEN** agent `(team='default', name='alice')` exists with `agent_id='X'` and `role='backend'`
-- **WHEN** a subsequent session calls `register_agent({ model, role: 'frontend', name: 'alice' })`
+- **WHEN** a subsequent session calls `register_agent({ client: 'custom', model, role: 'frontend', name: 'alice' })`
 - **THEN** response is `{ agent_id: 'X', team: 'default' }` (same X — NOT a new UUID)
 - **AND** the agents table still has exactly one row for `(team='default', name='alice')`
 - **AND** that row's `role` is now `'frontend'`
 - **AND** that row's `last_processed_event_id` (mailbox cursor) is preserved across the role change
 
+#### Scenario: custom client may persist client_name
+
+- **GIVEN** a caller invokes `register_agent({ client: 'custom', client_name: 'kimi-coder', model, name: 'alice' })`
+- **WHEN** the call is processed and succeeds
+- **THEN** the agents row stores `client='custom'`
+- **AND** the agents row stores `client_name='kimi-coder'`
+
+#### Scenario: client_name is rejected for non-custom clients
+
+- **WHEN** a caller invokes `register_agent({ client: 'codex', client_name: 'codex-cli', model, name: 'alice' })`
+- **THEN** the call is rejected at the schema layer
+
+#### Scenario: missing client is rejected
+
+- **WHEN** a caller invokes `register_agent({ model, name: 'alice' })`
+- **THEN** the call is rejected at the schema layer
+
 #### Scenario: Reuse updates tmux_pane_id when a later registration finds a new unique pane
 
 - **GIVEN** agent `(default, alice)` exists with `agent_id='X'`, `role='backend'`, and `tmux_pane_id='%42'`
 - **AND** a later registration attempt auto-detects `%99` as the unique pane for the same identity
-- **WHEN** a new session calls `register_agent({ model, role: 'backend', name: 'alice' })`
+- **WHEN** a new session calls `register_agent({ client: 'custom', model, role: 'backend', name: 'alice' })`
 - **THEN** response is `{ agent_id: 'X', team: 'default' }`
 - **AND** the row's `tmux_pane_id` is now `'%99'`
 
 #### Scenario: Reuse preserves tmux_pane_id when omitted
 
 - **GIVEN** agent `(default, alice)` exists with `tmux_pane_id='%42'`
-- **WHEN** a new session calls `register_agent({ model, role: 'backend', name: 'alice' })`
+- **WHEN** a new session calls `register_agent({ client: 'custom', model, role: 'backend', name: 'alice' })`
 - **AND** that registration attempt does not resolve any new pane
 - **THEN** the row's `tmux_pane_id` remains `'%42'`
 
 #### Scenario: Team change produces new agent_id
 
 - **GIVEN** agent `(team='default', name='alice')` exists with `agent_id='X'`
-- **WHEN** a new session calls `register_agent({ model, role: 'backend', name: 'alice', team: 'alpha' })`
+- **WHEN** a new session calls `register_agent({ client: 'custom', model, role: 'backend', name: 'alice', team: 'alpha' })`
 - **THEN** response `agent_id` is a fresh UUID (NOT `'X'`)
 - **AND** two rows exist: one in team `default`, one in team `alpha`
 
 #### Scenario: Name is required and must be non-empty
 
-- **WHEN** a caller invokes `register_agent({ model, role: 'backend' })` (no `name` field)
+- **WHEN** a caller invokes `register_agent({ client: 'custom', model, role: 'backend' })` (no `name` field)
 - **THEN** the call is rejected at the schema layer (MCP returns a validation error; no row is created)
 
 #### Scenario: Name after trim must be non-empty
 
-- **WHEN** a caller invokes `register_agent({ model, role: 'backend', name: '   ' })` (whitespace only)
+- **WHEN** a caller invokes `register_agent({ client: 'custom', model, role: 'backend', name: '   ' })` (whitespace only)
 - **THEN** the call is rejected with a validation error; no row is created
 
 #### Scenario: Role defaults to "default" when omitted
 
-- **WHEN** a caller invokes `register_agent({ model: 'opus-4-7', name: 'alice' })` (no `role` field)
+- **WHEN** a caller invokes `register_agent({ client: 'custom', model: 'opus-4-7', name: 'alice' })` (no `role` field)
 - **THEN** the call succeeds and the agents row has `role='default'`
 
 #### Scenario: Team defaults to "default" when omitted
 
-- **WHEN** a caller invokes `register_agent({ model, name: 'alice', role: 'backend' })` (no `team` field)
+- **WHEN** a caller invokes `register_agent({ client: 'custom', model, name: 'alice', role: 'backend' })` (no `team` field)
 - **THEN** the call succeeds and the agents row has `team='default'`
 
 ### Requirement: Repeated register_agent for same identity updates metadata
@@ -263,14 +279,14 @@ Upsert fields: `role`, `model`, `last_seen_at` are overwritten by the incoming v
 
 - **GIVEN** session `sess-A` has registered `(default, alice)` with `role='backend'`, `tmux_pane_id='%42'` and received `agent_id='X'`
 - **AND** a later registration attempt auto-detects `%99` as the unique pane for that same identity
-- **WHEN** the same session calls `register_agent({ model, role: 'backend', name: 'alice' })`
+- **WHEN** the same session calls `register_agent({ client: 'custom', model, role: 'backend', name: 'alice' })`
 - **THEN** response is `{ agent_id: 'X', team: 'default' }`
 - **AND** the row's `tmux_pane_id` becomes `'%99'`
 
 #### Scenario: Re-register after reconnect preserves mailbox continuity
 
 - **GIVEN** agent with `agent_id='X'` has unread messages addressed to X in the mailbox, and `last_processed_event_id=5`
-- **WHEN** the owner reconnects (new MCP session) and calls `register_agent({ model, role, name })` for the same `(team, name)` identity — with the same OR a different `role`
+- **WHEN** the owner reconnects (new MCP session) and calls `register_agent({ client: 'custom', model, role, name })` for the same `(team, name)` identity — with the same OR a different `role`
 - **THEN** the returned `agent_id` is `'X'`
 - **AND** the row's `last_processed_event_id` is still `5`
 - **AND** a subsequent `get_inbox()` call returns those unread messages
@@ -300,7 +316,7 @@ Arriving on a different TCP socket (e.g. after keep-alive expiry) MUST NOT by it
 #### Scenario: Same (team, name) claimed by a different role from another live session is a collision
 
 - **GIVEN** session `sess-A` has registered `(team='default', name='alice', role='backend')` and is still live (connection open, binding held)
-- **WHEN** session `sess-B` calls `register_agent({ model, team: 'default', name: 'alice', role: 'frontend' })`
+- **WHEN** session `sess-B` calls `register_agent({ client: 'custom', model, team: 'default', name: 'alice', role: 'frontend' })`
 - **THEN** response is HTTP 409 with body `{ error: 'agent_id_collision' }`
 - **AND** the original row for `(default, alice)` is unchanged (still `role='backend'`, bound to `sess-A`)
 
@@ -376,7 +392,7 @@ Validation failures SHALL return `{error: 'invalid_delivery', reason: ...}` with
 
 #### Scenario: register_agent without delivery preserves existing default behavior
 
-- **GIVEN** a fresh MCP session calling `register_agent({team: 'default', name: 'alice', model: 'sonnet'})` with no `delivery` field
+- **GIVEN** a fresh MCP session calling `register_agent({client: 'custom', team: 'default', name: 'alice', model: 'sonnet'})` with no `delivery` field
 - **WHEN** the tool returns successfully
 - **THEN** the `agents` row for alice has `delivery_kind='none'` and `delivery_payload IS NULL`
 
@@ -426,7 +442,7 @@ The Codex registration path is Codex-only.  If the websocket endpoint is unreach
 
 #### Scenario: register_agent rejects Codex thread inputs without client=codex
 
-- **WHEN** a caller invokes `register_agent({ name: 'lead', model: 'gpt-5', thread_id: '11111111-1111-4111-8111-111111111111' })`
+- **WHEN** a caller invokes `register_agent({ client: 'custom', name: 'lead', model: 'gpt-5', thread_id: '11111111-1111-4111-8111-111111111111' })`
 - **THEN** the MCP tool schema rejects the request as carrying an unknown top-level key
 - **AND** the tool does not accept Codex-only fields unless `client='codex'`
 
@@ -575,6 +591,6 @@ Historical mailbox events, messages, contracts, and completed tasks MAY continue
 #### Scenario: Same identity can register again after unregister_self
 
 - **GIVEN** agent `alice` in team `default` successfully invoked `unregister_self({})`
-- **WHEN** a later MCP session invokes `register_agent({ model: 'opus-4-7', name: 'alice', team: 'default' })`
+- **WHEN** a later MCP session invokes `register_agent({ client: 'custom', model: 'opus-4-7', name: 'alice', team: 'default' })`
 - **THEN** the call succeeds
 - **AND** the `agents` table contains exactly one row for `(team='default', name='alice')`
