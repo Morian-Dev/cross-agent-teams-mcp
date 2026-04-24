@@ -45,6 +45,7 @@ const DDL = [
     to_role TEXT,
     subject TEXT,
     body TEXT NOT NULL,
+    need_reply INTEGER NOT NULL DEFAULT 1,
     sent_at TEXT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS tasks (
@@ -151,7 +152,19 @@ function migrateAgentsDeliveryColumns(db: Database.Database): void {
   tx()
 }
 
+function migrateMessagesNeedReplyColumn(db: Database.Database): void {
+  const tableExists = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='messages'`)
+    .get() as { name: string } | undefined
+  if (!tableExists) return
+  const cols = db.pragma('table_info(messages)') as Array<{ name: string }>
+  const existing = new Set(cols.map(c => c.name))
+  if (existing.has('need_reply')) return
+  db.exec(`ALTER TABLE messages ADD COLUMN need_reply INTEGER NOT NULL DEFAULT 1`)
+}
+
 export function applySchema(db: Database.Database): void {
   for (const sql of DDL) db.exec(sql)
   migrateAgentsDeliveryColumns(db)
+  migrateMessagesNeedReplyColumn(db)
 }

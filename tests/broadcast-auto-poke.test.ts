@@ -143,6 +143,20 @@ describe('broadcast auto_poke default-on integration', () => {
     expect(e.to_team).toBe('default')
   })
 
+  it('broadcast rows are marked no-reply', async () => {
+    const { svc, db, cleanup } = setupService()
+    cleanups.push(cleanup)
+    insertAgent(db, { agent_id: 'A', team: 'default' })
+    insertAgent(db, { agent_id: 'B', team: 'default' })
+    insertAgent(db, { agent_id: 'C', team: 'default' })
+    const resp = await svc.broadcast({ from: 'A', body: 'FYI', auto_poke: false })
+    if ('error' in resp) throw new Error(resp.error)
+    const rows = db.prepare(`SELECT need_reply FROM messages`).all() as
+      Array<{ need_reply: number }>
+    expect(rows).toHaveLength(2)
+    expect(rows.every(row => row.need_reply === 0)).toBe(true)
+  })
+
   it('explicit auto_poke:true with active pane: guard_failed → retry_scheduled:true, delays=[30,180,600]', async () => {
     const { svc, db, pokeCalls, cleanup } = setupService({
       paneState: { '%2': 'active' }

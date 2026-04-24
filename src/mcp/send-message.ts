@@ -19,6 +19,7 @@ export interface SendInput {
   subject?: string
   body: string
   auto_poke?: boolean
+  need_reply?: boolean
 }
 
 interface SuccessResult {
@@ -128,19 +129,24 @@ export class SendMessageService {
     fromTeam: string; toTeam: string; from: string; toAgentId: string; input: SendInput
   }): { message_id: string; event_id: number; recipients: string[]; sent_at: string } {
     const tx = this.db.transaction(() => {
+      const needReply = args.input.need_reply !== false ? 1 : 0
       const event_id = this.events.append({
         from_team: args.fromTeam, to_team: args.toTeam,
         event_type: 'message_sent', actor_agent_id: args.from,
-        payload: { recipients: [args.toAgentId], subject: args.input.subject ?? null }
+        payload: {
+          recipients: [args.toAgentId],
+          subject: args.input.subject ?? null,
+          need_reply: needReply === 1,
+        }
       })
       const sent_at = new Date().toISOString()
       const id = randomUUID()
       this.db.prepare(
-        `INSERT INTO messages (id, event_id, from_team, to_team, from_agent_id, to_agent_id, to_role, subject, body, sent_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`
+        `INSERT INTO messages (id, event_id, from_team, to_team, from_agent_id, to_agent_id, to_role, subject, body, need_reply, sent_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`
       ).run(id, event_id, args.fromTeam, args.toTeam, args.from,
         args.toAgentId,
-        null, args.input.subject ?? null, args.input.body, sent_at)
+        null, args.input.subject ?? null, args.input.body, needReply, sent_at)
       return { message_id: id, event_id, sent_at }
     })
     const { message_id, event_id, sent_at } = tx()

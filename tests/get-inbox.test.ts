@@ -51,6 +51,26 @@ describe('get_inbox', () => {
     expect(next.messages[0].event_id).toBeGreaterThan(cursor)
   })
 
+  it('returns need_reply as boolean for each message', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const db = openDb(join(dir, 'data.db')); applySchema(db)
+    const agents = new AgentsRepo(db)
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'backend' , name: 'A' })
+    insertAgent(db, { agent_id: 'B', model: 'm', role: 'frontend' , name: 'B' })
+    const send = new SendMessageService(db, agents, new EventsOutbox(db))
+    await send.send({
+      from: 'A',
+      to_agent_id: 'B',
+      body: 'FYI',
+      auto_poke: false,
+      need_reply: false,
+    })
+    const svc = new GetInboxService(db, agents)
+    const r = svc.get({ caller: 'B', since_event_id: 0 })
+    expect(r.messages).toHaveLength(1)
+    expect(r.messages[0].need_reply).toBe(false)
+  })
+
   function setupInbox() {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)

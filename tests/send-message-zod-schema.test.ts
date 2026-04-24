@@ -69,6 +69,17 @@ describe('send_message Zod schema', () => {
     await close()
   })
 
+  it('accepts need_reply as optional boolean', async () => {
+    const { c, close } = await client()
+    const resp = await c.callTool({
+      name: 'send_message',
+      arguments: { to_agent_id: 'fake', body: 'FYI', need_reply: false }
+    }) as ToolCallResult
+    expect(resp.isError).toBeFalsy()
+    expect(textOf(resp)).toMatch(/unknown_agent|unknown_recipient/)
+    await close()
+  })
+
   it('rejects both to_agent_id and to_agent_name at the boundary', async () => {
     const { c, close } = await registeredClient()
     const resp = await c.callTool({

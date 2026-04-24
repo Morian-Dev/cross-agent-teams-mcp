@@ -52,6 +52,16 @@ describe('events + messages schema uses from_team and to_team', () => {
     expect(cols.find(c => c.name === 'to_team')!.notnull).toBe(1)
   })
 
+  it('messages table has need_reply NOT NULL with default true', () => {
+    const db = freshDb()
+    const cols = db.prepare(`PRAGMA table_info('messages')`).all() as
+      Array<ColInfo & { dflt_value: string | null }>
+    const col = cols.find(c => c.name === 'need_reply')
+    expect(col).toBeTruthy()
+    expect(col!.notnull).toBe(1)
+    expect(col!.dflt_value).toBe('1')
+  })
+
   it('INSERT without from_team/to_team throws NOT NULL constraint error', () => {
     const db = freshDb()
     expect(() => {

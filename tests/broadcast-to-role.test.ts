@@ -81,6 +81,25 @@ describe('broadcast_to_role', () => {
     expect(new Set(rows.map(row => row.event_id)).size).toBe(1)
   })
 
+  it('marks role fan-out rows no-reply', async () => {
+    const { svc, db, cleanup } = setup()
+    cleanups.push(cleanup)
+    insertAgent(db, { agent_id: 'S', team: 'default', role: 'lead' })
+    insertAgent(db, { agent_id: 'F1', team: 'default', role: 'frontend' })
+    insertAgent(db, { agent_id: 'F2', team: 'default', role: 'frontend' })
+    const r = await svc.broadcast({
+      from: 'S',
+      to_role: 'frontend',
+      body: 'status',
+      auto_poke: false,
+    })
+    if ('error' in r) throw new Error(r.error)
+    const rows = db.prepare(`SELECT need_reply FROM messages`).all() as
+      Array<{ need_reply: number }>
+    expect(rows).toHaveLength(2)
+    expect(rows.every(row => row.need_reply === 0)).toBe(true)
+  })
+
   it('returns unknown_recipient when no agent matches role', async () => {
     const { svc, db, cleanup } = setup()
     cleanups.push(cleanup)

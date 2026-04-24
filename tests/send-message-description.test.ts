@@ -28,4 +28,21 @@ describe('send_message description', () => {
     expect(desc).toMatch(/to_team/)
     await t.close(); await app.close()
   })
+
+  it('mentions need_reply default and no-reply opt-out', async () => {
+    const dir = tmp(); dirs.push(dir)
+    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+    const url = new URL(`http://${host}:${port}/mcp`)
+    const t = new StreamableHTTPClientTransport(url)
+    const c = new Client({ name: 'test', version: '0' })
+    await c.connect(t)
+    const tools = await c.listTools()
+    const sm = tools.tools.find((x) => x.name === 'send_message')
+    expect(sm).toBeDefined()
+    const desc = sm!.description ?? ''
+    expect(desc).toMatch(/need_reply/)
+    expect(desc).toMatch(/need_reply:false/)
+    expect(desc).toMatch(/no-response-needed|no reply/i)
+    await t.close(); await app.close()
+  })
 })

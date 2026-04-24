@@ -95,7 +95,8 @@ const bindRuntimeIdentityArgsSchema = bindRuntimeIdentitySchema.superRefine((val
 })
 
 const SEND_MESSAGE_DESC = [
-  'Private 1→1 message to another agent.  By default auto-poke=true with quiet-guard (auto_poke:false opts out).',
+  'Private 1→1 message to another agent.  By default auto-poke=true with quiet-guard (auto_poke:false opts out), and need_reply=true.',
+  'Set need_reply:false for FYI/no-response-needed messages; recipients see need_reply in get_inbox.',
   'Provide exactly one of to_agent_id (UUID) or to_agent_name (the target\'s `name` in its team); to_agent_name is preferred when you know the target by (team, name).',
   'For multi-recipient use broadcast (same-team) or broadcast_to_role (same-team, by role).',
   '除非用户明确指定 to_team, 不要跨 team 沟通 (explicitly set to_team only when user asks).',
@@ -655,10 +656,19 @@ export function registerBusinessTools(
         to_team: z.string().min(1).optional(),
         subject: z.string().optional(),
         body: z.string().min(1),
-        auto_poke: z.boolean().optional()
+        auto_poke: z.boolean().optional(),
+        need_reply: z.boolean().optional()
       }).strict()
     },
-    async (args: { to_agent_id?: string; to_agent_name?: string; to_team?: string; subject?: string; body: string; auto_poke?: boolean }) => {
+    async (args: {
+      to_agent_id?: string
+      to_agent_name?: string
+      to_team?: string
+      subject?: string
+      body: string
+      auto_poke?: boolean
+      need_reply?: boolean
+    }) => {
       const who = requireAgent()
       if (typeof who !== 'string') return toText(who)
       return run(() => sendSvc.send({ from: who, ...args }))

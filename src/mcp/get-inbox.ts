@@ -12,6 +12,7 @@ export interface InboxMessage {
   to_role: string | null
   subject: string | null
   body: string
+  need_reply: boolean
   sent_at: string
 }
 
@@ -33,7 +34,7 @@ export class GetInboxService {
     const limit = Math.min(args.limit ?? 50, 200)
     const since = args.since_event_id ?? 0
     const rows = this.db.prepare(
-      `SELECT m.id, m.event_id, m.from_team, m.to_team, m.from_agent_id, m.to_agent_id, m.to_role, m.subject, m.body, m.sent_at,
+      `SELECT m.id, m.event_id, m.from_team, m.to_team, m.from_agent_id, m.to_agent_id, m.to_role, m.subject, m.body, m.need_reply, m.sent_at,
               a.role as from_role
          FROM messages m
          LEFT JOIN agents a ON a.agent_id = m.from_agent_id
@@ -42,9 +43,14 @@ export class GetInboxService {
           AND ( m.to_agent_id = ? OR (m.to_role IS NOT NULL AND m.to_role = ?) )
         ORDER BY m.event_id ASC
         LIMIT ?`
-    ).all(callerTeam, since, args.caller, callerRole?.role ?? '__none__', limit + 1) as InboxMessage[]
+    ).all(callerTeam, since, args.caller, callerRole?.role ?? '__none__', limit + 1) as Array<
+      Omit<InboxMessage, 'need_reply'> & { need_reply: number }
+    >
     const has_more = rows.length > limit
-    const trimmed = has_more ? rows.slice(0, limit) : rows
+    const trimmed = (has_more ? rows.slice(0, limit) : rows).map(row => ({
+      ...row,
+      need_reply: row.need_reply === 1,
+    }))
     const last_event_id = trimmed.length > 0 ? trimmed[trimmed.length - 1].event_id : since
     return { messages: trimmed, has_more, last_event_id }
   }

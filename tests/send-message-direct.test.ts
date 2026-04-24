@@ -49,6 +49,36 @@ describe('send_message direct', () => {
     cleanup()
   })
 
+  it('defaults need_reply to true', async () => {
+    const { db, svc, cleanup } = setupService()
+    insertAgent(db, { agent_id: 'A', team: 'default', role: 'backend', name: 'A' })
+    insertAgent(db, { agent_id: 'B', team: 'default', role: 'frontend', name: 'B' })
+    const r = await svc.send({ from: 'A', to_agent_id: 'B', body: 'question', auto_poke: false })
+    if ('error' in r) throw new Error('expected success')
+    const msg = db.prepare('SELECT need_reply FROM messages WHERE id=?').get(r.message_id) as
+      { need_reply: number }
+    expect(msg.need_reply).toBe(1)
+    cleanup()
+  })
+
+  it('persists explicit need_reply=false', async () => {
+    const { db, svc, cleanup } = setupService()
+    insertAgent(db, { agent_id: 'A', team: 'default', role: 'backend', name: 'A' })
+    insertAgent(db, { agent_id: 'B', team: 'default', role: 'frontend', name: 'B' })
+    const r = await svc.send({
+      from: 'A',
+      to_agent_id: 'B',
+      body: 'FYI',
+      auto_poke: false,
+      need_reply: false,
+    })
+    if ('error' in r) throw new Error('expected success')
+    const msg = db.prepare('SELECT need_reply FROM messages WHERE id=?').get(r.message_id) as
+      { need_reply: number }
+    expect(msg.need_reply).toBe(0)
+    cleanup()
+  })
+
   it('same-team send writes from_team=to_team=caller.team, paired events row matches', async () => {
     const { db, svc, cleanup } = setupService()
     insertAgent(db, { agent_id: 'A', team: 'default', role: 'r' })

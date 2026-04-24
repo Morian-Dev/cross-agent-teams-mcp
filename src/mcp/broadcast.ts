@@ -95,12 +95,12 @@ export class BroadcastService {
         new Date().toISOString()).lastInsertRowid)
       const sent_at = new Date().toISOString()
       const insert = this.db.prepare(
-        `INSERT INTO messages (id, event_id, from_team, to_team, from_agent_id, to_agent_id, to_role, subject, body, sent_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`
+        `INSERT INTO messages (id, event_id, from_team, to_team, from_agent_id, to_agent_id, to_role, subject, body, need_reply, sent_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`
       )
       for (let i = 0; i < recipients.length; i++) {
         const id = i === 0 ? baseId : `${baseId}-${i}`
-        insert.run(id, event_id, team, team, from, recipients[i], '*broadcast*', subject ?? null, body, sent_at)
+        insert.run(id, event_id, team, team, from, recipients[i], '*broadcast*', subject ?? null, body, 0, sent_at)
       }
       return { message_id: baseId, event_id, sent_at }
     })

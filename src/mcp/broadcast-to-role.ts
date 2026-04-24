@@ -106,12 +106,12 @@ export class BroadcastToRoleService {
       })
       const sent_at = new Date().toISOString()
       const stmt = this.db.prepare(
-        `INSERT INTO messages (id, event_id, from_team, to_team, from_agent_id, to_agent_id, to_role, subject, body, sent_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`
+        `INSERT INTO messages (id, event_id, from_team, to_team, from_agent_id, to_agent_id, to_role, subject, body, need_reply, sent_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`
       )
       for (let i = 0; i < recipients.length; i++) {
         const id = i === 0 ? baseId : `${baseId}-${i}`
-        stmt.run(id, event_id, team, team, input.from, recipients[i], input.to_role, input.subject ?? null, input.body, sent_at)
+        stmt.run(id, event_id, team, team, input.from, recipients[i], input.to_role, input.subject ?? null, input.body, 0, sent_at)
       }
       return { message_id: baseId, event_id, sent_at }
     })
