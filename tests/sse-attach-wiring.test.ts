@@ -34,7 +34,7 @@ describe('SSE fanout attach/rebind/detach wiring into MCP sessions', () => {
       const afterInit = fanout.peek()
       expect(afterInit.length).toBe(0)
 
-      const reg = parseTool(await client.callTool({ name: 'register_agent', arguments: { name: 'alice', model: 'm', role: 'r', team: 'alpha' } }))
+      const reg = parseTool(await client.callTool({ name: 'register_agent', arguments: { client: 'custom', name: 'alice', model: 'm', role: 'r', team: 'alpha' } }))
       const afterRegister = fanout.peek()
       expect(afterRegister.length).toBe(1)
       expect(afterRegister[0]).toEqual({ agent_id: reg.agent_id, team: 'alpha' })

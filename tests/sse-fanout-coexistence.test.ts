@@ -60,8 +60,8 @@ describe('sse fanout heartbeat / contract_event coexistence', () => {
     await clientB.connect(transportB)
 
     try {
-      await clientA.callTool({ name: 'register_agent', arguments: { name: 'tester-14', model: 'm', role: 'r' } })
-      await clientB.callTool({ name: 'register_agent', arguments: { name: 'tester-15', model: 'm', role: 'r' } })
+      await clientA.callTool({ name: 'register_agent', arguments: { client: 'custom', name: 'tester-14', model: 'm', role: 'r' } })
+      await clientB.callTool({ name: 'register_agent', arguments: { client: 'custom', name: 'tester-15', model: 'm', role: 'r' } })
 
       const subA = parseTool(await clientA.callTool({ name: 'subscribe_contract', arguments: { name: 'X' } }))
       expect(subA.ok).toBe(true)

@@ -1,1 +1,1 @@
-export type ClientKind = 'codex' | 'claude-code' | 'opencode'
+export type ClientKind = 'codex' | 'claude-code' | 'opencode' | 'custom'

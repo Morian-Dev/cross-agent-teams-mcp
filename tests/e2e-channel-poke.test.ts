@@ -86,7 +86,7 @@ describe('e2e channel poke (self-binding)', () => {
     await bobC.connect(bobT)
     const bobResp = await bobC.callTool({
       name: 'register_agent',
-      arguments: { model: 'opus', role: 'backend', name: 'bob' }
+      arguments: { client: 'custom', model: 'opus', role: 'backend', name: 'bob' }
     })
     const bob = await parseTool(bobResp)
     expect(bob.agent_id).toBeDefined()
@@ -131,7 +131,7 @@ describe('e2e channel poke (self-binding)', () => {
     await aliceC.connect(aliceT)
     await aliceC.callTool({
       name: 'register_agent',
-      arguments: { model: 'opus', role: 'backend', name: 'alice' }
+      arguments: { client: 'custom', model: 'opus', role: 'backend', name: 'alice' }
     })
     const pokeResp = await aliceC.callTool({
       name: 'poke',

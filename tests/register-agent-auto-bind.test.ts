@@ -72,7 +72,7 @@ describe('register_agent auto runtime binding', () => {
 
     const resp = await c.callTool({
       name: 'register_agent',
-      arguments: { model: 'gpt-5', role: 'worker', name: 'alice' },
+      arguments: { client: 'codex', model: 'gpt-5', role: 'worker', name: 'alice' },
     })
     const obj = await parseTool(resp)
 
@@ -128,7 +128,7 @@ describe('register_agent auto runtime binding', () => {
 
     const resp = await c.callTool({
       name: 'register_agent',
-      arguments: { model: 'gpt-5', role: 'worker', name: 'alice', ui_pid: 25079 },
+      arguments: { client: 'codex', model: 'gpt-5', role: 'worker', name: 'alice', ui_pid: 25079 },
     })
     const obj = await parseTool(resp)
 
@@ -178,7 +178,7 @@ describe('register_agent auto runtime binding', () => {
 
     const resp = await c.callTool({
       name: 'register_agent',
-      arguments: { model: 'gpt-5', role: 'worker', name: 'alice' },
+      arguments: { client: 'codex', model: 'gpt-5', role: 'worker', name: 'alice' },
     })
     const obj = await parseTool(resp)
 

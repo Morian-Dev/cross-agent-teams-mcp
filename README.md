@@ -61,6 +61,8 @@ The daemon currently supports these wake-up paths:
 - `delivery.kind='claude-channel'`: bind a Claude channel session and deliver channel wake notifications
 - `opencode-server`: send a prompt to an opencode session via HTTP
 
+`register_agent(...)` now requires an explicit `client`.  Use one of `codex`, `claude-code`, or `opencode` for first-class runtimes.  For other agent harnesses, pass `client: "custom"` and optionally `client_name` for observability.
+
 ## Codex App-Server Delivery
 
 For daily Codex usage, the recommended entry point is `register_agent({ client: "codex", ... })`.  It registers a caller-supplied `thread_id` as a `codex-appserver` delivery target through the unified registration API.  It does not auto-bind a tmux pane.  If you want tmux fallback delivery, call `bind_runtime_identity(...)` after registration.

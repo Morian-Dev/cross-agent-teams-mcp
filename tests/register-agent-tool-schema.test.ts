@@ -38,6 +38,7 @@ describe('register_agent tool schema', () => {
         role: expect.anything(),
         team: expect.anything(),
         client: expect.anything(),
+        client_name: expect.anything(),
         ui_pid: expect.anything(),
         channel_session_id: expect.anything(),
         base_url: expect.anything(),
@@ -47,7 +48,7 @@ describe('register_agent tool schema', () => {
         auth_token_ref: expect.anything(),
         delivery: expect.anything(),
       }),
-      required: expect.arrayContaining(['model', 'name']),
+      required: expect.arrayContaining(['client', 'model', 'name']),
       additionalProperties: false,
     })
 

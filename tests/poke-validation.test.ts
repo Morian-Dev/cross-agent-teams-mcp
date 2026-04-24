@@ -24,6 +24,7 @@ async function connectClient(host: string, port: number): Promise<{ c: Client; t
 }
 
 async function register(c: Client, args: {
+  client?: 'codex' | 'claude-code' | 'opencode' | 'custom'
   name?: string
   role?: string
   team?: string
@@ -34,6 +35,7 @@ async function register(c: Client, args: {
   const resp = await c.callTool({
     name: 'register_agent',
     arguments: {
+      client: args.client ?? 'custom',
       name: args.name ?? 'tester-8',
       model: 'opus-4-7',
       role: args.role ?? 'dev',
@@ -222,6 +224,7 @@ describe('poke validation', () => {
     const B = await connectClient(host, port)
     await register(A.c, { name: 'caller-codex', role: 'caller' })
     const targetId = await register(B.c, {
+      client: 'codex',
       name: 'target-codex',
       role: 'target',
       delivery: {

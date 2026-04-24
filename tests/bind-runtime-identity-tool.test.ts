@@ -45,7 +45,7 @@ describe('bind_runtime_identity tool', () => {
 
     await c.callTool({
       name: 'register_agent',
-      arguments: { model: 'opus', role: 'worker', name: 'alice' },
+      arguments: { client: 'custom', model: 'opus', role: 'worker', name: 'alice' },
     })
 
     const tools = await c.listTools()

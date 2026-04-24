@@ -32,7 +32,7 @@ describe('register_agent tool hint rule (tmux only)', () => {
 
     const resp = await c.callTool({
       name: 'register_agent',
-      arguments: { model: 'opus-4-7', role: 'frontend', name: 'alice' }
+      arguments: { client: 'custom', model: 'opus-4-7', role: 'frontend', name: 'alice' }
     })
     const obj = await parseTool(resp)
 
@@ -52,7 +52,7 @@ describe('register_agent tool hint rule (tmux only)', () => {
 
     const resp = await c.callTool({
       name: 'register_agent',
-      arguments: { model: 'opus-4-7', role: 'frontend', name: 'alice', tmux_pane_id: '%42' }
+      arguments: { client: 'custom', model: 'opus-4-7', role: 'frontend', name: 'alice', tmux_pane_id: '%42' }
     })
     const errResp = resp as { isError?: boolean; content: Array<{ text: string }> }
     expect(errResp.isError).toBe(true)
@@ -68,6 +68,7 @@ describe('register_agent tool hint rule (tmux only)', () => {
     const resp = await c.callTool({
       name: 'register_agent',
       arguments: {
+        client: 'codex',
         model: 'opus-4-7',
         role: 'frontend',
         name: 'alice',
@@ -93,6 +94,7 @@ describe('register_agent tool hint rule (tmux only)', () => {
     const resp = await c.callTool({
       name: 'register_agent',
       arguments: {
+        client: 'custom',
         model: 'opus-4-7', role: 'frontend', name: 'alice',
         channel_session_id: 'csid-should-not-be-written'
       }
@@ -112,6 +114,7 @@ describe('register_agent tool hint rule (tmux only)', () => {
     const resp = await c.callTool({
       name: 'register_agent',
       arguments: {
+        client: 'custom',
         model: 'gpt-5',
         role: 'frontend',
         name: 'alice',
@@ -133,6 +136,7 @@ describe('register_agent tool hint rule (tmux only)', () => {
     const resp = await c.callTool({
       name: 'register_agent',
       arguments: {
+        client: 'custom',
         model: 'gpt-5',
         role: 'frontend',
         name: 'alice',

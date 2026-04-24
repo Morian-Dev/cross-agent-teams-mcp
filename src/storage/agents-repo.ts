@@ -10,6 +10,7 @@ import type { ClientKind } from '../lib/client-kind.js'
 
 export interface RegisterInput {
   client?: ClientKind
+  client_name?: string
   model: string
   name: string
   role?: string
@@ -21,6 +22,7 @@ export interface RegisterInput {
 export interface AgentRow {
   agent_id: string
   client: ClientKind | null
+  client_name: string | null
   team: string
   role: string
   name: string
@@ -42,6 +44,7 @@ export const ONLINE_MS = 5 * 60 * 1000
 type DbAgentRow = {
   agent_id: string
   client: ClientKind | null
+  client_name: string | null
   team: string
   role: string
   name: string
@@ -57,6 +60,7 @@ function toAgentRow(row: DbAgentRow): AgentRow {
   return {
     agent_id: row.agent_id,
     client: row.client,
+    client_name: row.client_name,
     team: row.team,
     role: row.role,
     name: row.name,
@@ -91,12 +95,13 @@ export class AgentsRepo {
     const preserveExistingDelivery = input.delivery === undefined ? 1 : 0
     this.db.prepare(
       `INSERT INTO agents (
-         agent_id, client, team, role, name, model, registered_at, last_seen_at,
+         agent_id, client, client_name, team, role, name, model, registered_at, last_seen_at,
          tmux_pane_id, delivery_kind, delivery_payload
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (team, name) DO UPDATE SET
-         client = COALESCE(excluded.client, client),
+         client = excluded.client,
+         client_name = excluded.client_name,
          role = excluded.role,
          model = excluded.model,
          last_seen_at = excluded.last_seen_at,
@@ -112,6 +117,7 @@ export class AgentsRepo {
     ).run(
       newId,
       input.client ?? null,
+      input.client_name ?? null,
       team,
       role,
       name,
@@ -137,12 +143,13 @@ export class AgentsRepo {
     ).run(serialized.delivery_kind, serialized.delivery_payload, agent_id)
   }
 
-  setClient(agent_id: string, client: ClientKind): void {
+  setClient(agent_id: string, client: ClientKind, client_name?: string | null): void {
     this.db.prepare(
       `UPDATE agents
-       SET client=?
+       SET client=?,
+           client_name=?
        WHERE agent_id=?`
-    ).run(client, agent_id)
+    ).run(client, client_name ?? null, agent_id)
   }
 
   setOpencodeSession(agent_id: string, base_url: string, session_id: string): void {
@@ -186,6 +193,7 @@ export class AgentsRepo {
       `SELECT
          agent_id,
          client,
+         client_name,
          team,
          role,
          name,
@@ -245,6 +253,7 @@ export class AgentsRepo {
       `SELECT
          agent_id,
          client,
+         client_name,
          team,
          role,
          name,

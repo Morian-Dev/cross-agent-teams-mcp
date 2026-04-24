@@ -29,7 +29,7 @@ describe('send_message Zod schema', () => {
 
   async function registeredClient(): Promise<{ c: Client; close: () => Promise<void> }> {
     const { c, close } = await client()
-    await c.callTool({ name: 'register_agent', arguments: { model: 'test', name: 'caller', team: 'default' } })
+    await c.callTool({ name: 'register_agent', arguments: { client: 'custom', model: 'test', name: 'caller', team: 'default' } })
     return { c, close }
   }
 

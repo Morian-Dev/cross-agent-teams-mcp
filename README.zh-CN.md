@@ -59,6 +59,9 @@ curl http://127.0.0.1:9100/health
 - `tmux_pane_id`: 直接把文本注入目标 tmux pane
 - `delivery.kind='codex-appserver'`: 通过 websocket 恢复 Codex thread 并启动一轮 turn
 - `delivery.kind='claude-channel'`: 绑定 Claude channel session 并发送 channel wake 通知
+- `opencode-server`: 通过 HTTP 向 opencode session 发送 prompt
+
+`register_agent(...)` 现在要求显式传 `client`.  一等运行时使用 `codex` / `claude-code` / `opencode`.  其它 agent harness 请传 `client: "custom"`, 并且可以选填 `client_name` 方便排查。
 
 ## Codex App-Server Delivery
 

@@ -9,6 +9,7 @@ import { AgentsRepo } from '../storage/agents-repo.js'
 export interface RegisterInput {
   connection_id: string
   client?: ClientKind
+  client_name?: string
   model: string
   name: string
   role?: string
@@ -47,6 +48,7 @@ export class RegisterAgentService {
     this.connections.set(key, input.connection_id)
     return this.repo.register({
       client: input.client,
+      client_name: input.client_name,
       model: input.model,
       name: input.name,
       role,

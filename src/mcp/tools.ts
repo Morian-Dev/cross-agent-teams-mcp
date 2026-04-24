@@ -43,7 +43,7 @@ const deliverySchema = z.object({
   kind: z.string(),
 }).passthrough()
 
-const clientSchema = z.enum(['codex', 'claude-code', 'opencode'])
+const clientSchema = z.enum(['codex', 'claude-code', 'opencode', 'custom'])
 
 const detectTmuxPaneSchema = z.object({
   agent: z.enum(['codex', 'claude-code', 'opencode', 'custom']),
@@ -188,6 +188,7 @@ function inferRuntimeAgentKind(
   args: { client?: ClientKind; delivery?: { kind?: string }; model: string },
   clientInfo: SessionClientInfo | undefined
 ): DetectAgentKind | undefined {
+  if (args.client === 'custom') return undefined
   if (args.client) return args.client
   if (args.delivery?.kind === 'codex-appserver') return 'codex'
 
@@ -297,7 +298,8 @@ export function registerBusinessTools(
     name: z.string().min(1).refine(v => v.trim().length > 0, { message: 'name must not be empty' }),
     role: z.string().optional(),
     team: z.string().optional(),
-    client: clientSchema.optional(),
+    client: clientSchema,
+    client_name: z.string().min(1).optional(),
     ui_pid: z.number().int().positive().optional(),
     channel_session_id: z.string().min(1).optional(),
     base_url: z.string().min(1).optional(),
@@ -343,6 +345,13 @@ export function registerBusinessTools(
         message: 'base_url and session_id must be provided together',
       })
     }
+    if (value.client_name !== undefined && value.client !== 'custom') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['client_name'],
+        message: 'client_name is only allowed when client=custom',
+      })
+    }
   })
 
   const registerClaudeSelfInputSchema = z.object({
@@ -357,6 +366,7 @@ export function registerBusinessTools(
   async function executeRegister(
     args: {
       client?: ClientKind
+      client_name?: string
       model: string
       name: string
       role?: string
@@ -378,8 +388,14 @@ export function registerBusinessTools(
     const bindOpencodeSvc = new BindOpencodeSessionService(db)
     const connectionId = getSessionId?.() ?? caller()
     if (!connectionId) return { error: 'unknown_agent' }
+    const hasCodexTransportFields =
+      args.thread_id !== undefined ||
+      args.ws_url !== undefined ||
+      args.auth_token_ref !== undefined
     const res =
-      args.client === 'codex' && args.delivery === undefined
+      args.client === 'codex' &&
+      args.delivery === undefined &&
+      hasCodexTransportFields
         ? await registerCodexSelfSvc.register({
             connection_id: connectionId,
             name: args.name,
@@ -393,6 +409,7 @@ export function registerBusinessTools(
         : registerSvc.register({
             connection_id: connectionId,
             client: args.client,
+            client_name: args.client_name,
             model: args.model,
             name: args.name,
             role: args.role,
@@ -504,7 +521,8 @@ export function registerBusinessTools(
         'This is the unified registration entry point.',
         'Calling this tool again with the same `(team, name, role)` identity reuses the existing',
         '`agent_id` and refreshes `tmux_pane_id` and `model`; no duplicate row is created.',
-        'Callers may pass `client` to declare the runtime explicitly instead of relying on local-client inference.',
+        'Callers MUST pass `client` explicitly.',
+        'Use `client="custom"` for unsupported agent harnesses; optionally provide `client_name` for observability.',
         'Claude Code sessions can pass `client="claude-code"` together with `channel_session_id` to bind channel delivery through this same tool.',
         'Opencode sessions can pass `client="opencode"` together with `base_url` and `session_id` to bind server delivery through this same tool.',
         'Codex sessions can pass `client="codex"` together with `thread_id` to register Codex app-server delivery through this same tool.',
@@ -517,7 +535,8 @@ export function registerBusinessTools(
       inputSchema: registerAgentInputSchema
     },
     async (args: {
-      client?: ClientKind
+      client: ClientKind
+      client_name?: string
       model: string; name: string; role?: string; team?: string;
       ui_pid?: number;
       channel_session_id?: string
@@ -528,7 +547,7 @@ export function registerBusinessTools(
       auth_token_ref?: string
       delivery?: { kind: string; [key: string]: unknown }
     }) => {
-      return run(async () => executeRegister(args))
+      return run(async () => executeRegister(registerAgentArgsSchema.parse(args)))
     }
   )
 

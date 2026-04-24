@@ -51,9 +51,9 @@ describe('end-to-end SSE contract_event push', () => {
     await clientC.connect(transportC)
 
     try {
-      await clientA.callTool({ name: 'register_agent', arguments: { name: 'tester-11', model: 'm', role: 'r' } })
-      await clientB.callTool({ name: 'register_agent', arguments: { name: 'tester-12', model: 'm', role: 'r' } })
-      await clientC.callTool({ name: 'register_agent', arguments: { name: 'tester-13', model: 'm', role: 'r' } })
+      await clientA.callTool({ name: 'register_agent', arguments: { client: 'custom', name: 'tester-11', model: 'm', role: 'r' } })
+      await clientB.callTool({ name: 'register_agent', arguments: { client: 'custom', name: 'tester-12', model: 'm', role: 'r' } })
+      await clientC.callTool({ name: 'register_agent', arguments: { client: 'custom', name: 'tester-13', model: 'm', role: 'r' } })
 
       // A subscribes; C does not
       const subA = parseTool(await clientA.callTool({ name: 'subscribe_contract', arguments: { name: 'X' } }))

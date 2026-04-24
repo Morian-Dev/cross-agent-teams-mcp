@@ -35,7 +35,7 @@ describe('last_seen_at bumped on every tool invocation', () => {
     const client = new Client({ name: 'probe', version: '0.0.0' }, { capabilities: {} })
     await client.connect(transport)
     try {
-      const regResp = await client.callTool({ name: 'register_agent', arguments: { name: 'tester-4', model: 'm', role: 'r' } })
+      const regResp = await client.callTool({ name: 'register_agent', arguments: { client: 'custom', name: 'tester-4', model: 'm', role: 'r' } })
       const reg = JSON.parse((regResp.content as Array<{ text: string }>)[0].text) as { agent_id: string }
       const agentId = reg.agent_id
       const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()

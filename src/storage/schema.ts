@@ -15,6 +15,7 @@ const DDL = [
   `CREATE TABLE IF NOT EXISTS agents (
     agent_id TEXT PRIMARY KEY,
     client TEXT,
+    client_name TEXT,
     team TEXT NOT NULL,
     role TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -88,6 +89,7 @@ function migrateAgentsDeliveryColumns(db: Database.Database): void {
   const cols = db.pragma('table_info(agents)') as Array<{ name: string }>
   const existing = new Set(cols.map(c => c.name))
   const needClient = !existing.has('client')
+  const needClientName = !existing.has('client_name')
   const needKind = !existing.has('delivery_kind')
   const needPayload = !existing.has('delivery_payload')
   const needRuntimeUiPid = !existing.has('runtime_ui_pid')
@@ -98,6 +100,7 @@ function migrateAgentsDeliveryColumns(db: Database.Database): void {
   const needOpencodeSessionId = !existing.has('opencode_session_id')
   if (
     !needClient &&
+    !needClientName &&
     !needKind &&
     !needPayload &&
     !needRuntimeUiPid &&
@@ -110,6 +113,9 @@ function migrateAgentsDeliveryColumns(db: Database.Database): void {
   const tx = db.transaction(() => {
     if (needClient) {
       db.exec(`ALTER TABLE agents ADD COLUMN client TEXT`)
+    }
+    if (needClientName) {
+      db.exec(`ALTER TABLE agents ADD COLUMN client_name TEXT`)
     }
     if (needKind) {
       db.exec(`ALTER TABLE agents ADD COLUMN delivery_kind TEXT NOT NULL DEFAULT 'none'`)

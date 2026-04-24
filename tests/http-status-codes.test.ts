@@ -35,12 +35,12 @@ describe('HTTP status codes for identity errors', () => {
     await c.connect(t)
     const sid = t.sessionId!
     try {
-      await c.callTool({ name: 'register_agent', arguments: { name: 'tester-1', model: 'm', role: 'r' } })
+      await c.callTool({ name: 'register_agent', arguments: { client: 'custom', name: 'tester-1', model: 'm', role: 'r' } })
       const res = await postMcp(url, sid, {
         jsonrpc: '2.0',
         id: 999,
         method: 'tools/call',
-        params: { name: 'register_agent', arguments: { name: 'tester-2', model: 'm', role: 'r' } }
+        params: { name: 'register_agent', arguments: { client: 'custom', name: 'tester-2', model: 'm', role: 'r' } }
       }, 'Bearer tokenY')
       expect(res.status).toBe(409)
       const body = await res.json()
@@ -62,7 +62,7 @@ describe('HTTP status codes for identity errors', () => {
     await c.connect(t)
     const sid = t.sessionId!
     try {
-      await c.callTool({ name: 'register_agent', arguments: { name: 'tester-3', model: 'm', role: 'r' } })
+      await c.callTool({ name: 'register_agent', arguments: { client: 'custom', name: 'tester-3', model: 'm', role: 'r' } })
       const res = await postMcp(url, sid, {
         jsonrpc: '2.0',
         id: 1000,

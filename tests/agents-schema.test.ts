@@ -18,7 +18,7 @@ describe('agents schema', () => {
     const cols = db.pragma('table_info(agents)') as Array<{ name: string; type: string; notnull: number; pk: number }>
     const names = cols.map(c => c.name).sort()
     expect(names).toEqual([
-      'agent_id','channel_session_id','client','delivery_kind','delivery_payload','last_processed_event_id','last_seen_at','model','name','opencode_base_url','opencode_session_id','registered_at','role','runtime_bound_at','runtime_tty','runtime_ui_pid','runtime_verification_mode','team','tmux_pane_id'
+      'agent_id','channel_session_id','client','client_name','delivery_kind','delivery_payload','last_processed_event_id','last_seen_at','model','name','opencode_base_url','opencode_session_id','registered_at','role','runtime_bound_at','runtime_tty','runtime_ui_pid','runtime_verification_mode','team','tmux_pane_id'
     ])
     const pk = cols.find(c => c.name === 'agent_id')
     expect(pk?.pk).toBe(1)

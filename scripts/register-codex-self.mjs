@@ -189,6 +189,7 @@ async function main() {
       params: {
         name: "register_agent",
         arguments: {
+          client: "codex",
           name: args.name,
           team: args.team,
           role: args.role,

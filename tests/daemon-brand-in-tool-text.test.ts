@@ -22,7 +22,7 @@ describe('daemon brand in tool text', () => {
         }
         const resp = await client.callTool({
           name: 'register_agent',
-          arguments: { model: 'test', role: 'tester', name: 'hint-probe', team: 'default' }
+          arguments: { client: 'custom', model: 'test', role: 'tester', name: 'hint-probe', team: 'default' }
         })
         const text = (resp as { content: Array<{ text: string }> }).content[0].text
         expect(text).not.toContain('ts-agent-teams')

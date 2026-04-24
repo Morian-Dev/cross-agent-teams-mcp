@@ -30,7 +30,7 @@ describe('register_agent tmux_pane_id hint', () => {
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
     const { c, t } = await connectClient(host, port)
 
-    const resp = await c.callTool({ name: 'register_agent', arguments: { model: 'opus-4-7', role: 'frontend', name: 'alice' } })
+    const resp = await c.callTool({ name: 'register_agent', arguments: { client: 'custom', model: 'opus-4-7', role: 'frontend', name: 'alice' } })
     const obj = await parseTool(resp)
 
     expect(obj.agent_id).toBeDefined()
@@ -55,6 +55,7 @@ describe('register_agent tmux_pane_id hint', () => {
         model: 'opus-4-7',
         role: 'frontend',
         name: 'alice',
+        client: 'codex',
         delivery: {
           kind: 'codex-appserver',
           thread_id: '11111111-1111-4111-8111-111111111111',
@@ -77,7 +78,7 @@ describe('register_agent tmux_pane_id hint', () => {
 
     const resp = await c.callTool({
       name: 'register_agent',
-      arguments: { model: 'opus-4-7', role: 'frontend', name: 'alice', tmux_pane_id: '%42' }
+      arguments: { client: 'custom', model: 'opus-4-7', role: 'frontend', name: 'alice', tmux_pane_id: '%42' }
     })
     const errResp = resp as { isError?: boolean; content: Array<{ text: string }> }
     expect(errResp.isError).toBe(true)
@@ -101,7 +102,7 @@ describe('register_agent tmux_pane_id hint', () => {
     // a tool before register; unknown_agent is how register itself reports no sid.
     // We verify here indirectly by confirming the successful branch is the only
     // one that attaches the hint.
-    const resp = await c.callTool({ name: 'register_agent', arguments: { model: 'opus-4-7', role: 'frontend', name: 'alice' } })
+    const resp = await c.callTool({ name: 'register_agent', arguments: { client: 'custom', model: 'opus-4-7', role: 'frontend', name: 'alice' } })
     const obj = await parseTool(resp)
     // on the happy path, hint IS present; on any error envelope, hint MUST NOT be present
     if (obj.error !== undefined) expect(obj.hint).toBeUndefined()
@@ -116,7 +117,7 @@ describe('register_agent tmux_pane_id hint', () => {
 
     const first = await parseTool(await c.callTool({
       name: 'register_agent',
-      arguments: { model: 'opus-4-7', role: 'frontend', name: 'alice' }
+      arguments: { client: 'custom', model: 'opus-4-7', role: 'frontend', name: 'alice' }
     }))
     expect(first.hint).toBeDefined()
 
@@ -126,6 +127,7 @@ describe('register_agent tmux_pane_id hint', () => {
         model: 'opus-4-7',
         role: 'frontend',
         name: 'alice',
+        client: 'codex',
         delivery: {
           kind: 'codex-appserver',
           thread_id: '11111111-1111-4111-8111-111111111111',

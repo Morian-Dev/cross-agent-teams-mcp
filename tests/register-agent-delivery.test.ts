@@ -63,7 +63,7 @@ describe('register_agent delivery integration', () => {
     const { dbPath, db, server, client, transport } = await setup()
     const result = await parseTool(await client.callTool({
       name: 'register_agent',
-      arguments: { model: 'opus', role: 'backend', name: 'alice' },
+      arguments: { client: 'custom', model: 'opus', role: 'backend', name: 'alice' },
     }))
     const row = db.prepare(
       `SELECT delivery_kind, delivery_payload FROM agents WHERE agent_id=?`
@@ -84,6 +84,7 @@ describe('register_agent delivery integration', () => {
     const result = await parseTool(await client.callTool({
       name: 'register_agent',
       arguments: {
+        client: 'claude-code',
         model: 'opus',
         role: 'backend',
         name: 'alice',
@@ -115,6 +116,7 @@ describe('register_agent delivery integration', () => {
     const result = await parseTool(await client.callTool({
       name: 'register_agent',
       arguments: {
+        client: 'claude-code',
         model: 'opus',
         role: 'backend',
         name: 'alice',
@@ -140,6 +142,7 @@ describe('register_agent delivery integration', () => {
     const result = await parseTool(await client.callTool({
       name: 'register_agent',
       arguments: {
+        client: 'codex',
         model: 'opus',
         role: 'backend',
         name: 'alice',
@@ -175,6 +178,7 @@ describe('register_agent delivery integration', () => {
     const result = await parseTool(await client.callTool({
       name: 'register_agent',
       arguments: {
+        client: 'codex',
         model: 'opus',
         role: 'backend',
         name: 'alice',
@@ -269,6 +273,7 @@ describe('register_agent delivery integration', () => {
     const first = await parseTool(await client.callTool({
       name: 'register_agent',
       arguments: {
+        client: 'claude-code',
         model: 'opus',
         role: 'backend',
         name: 'alice',
@@ -278,6 +283,7 @@ describe('register_agent delivery integration', () => {
     const second = await parseTool(await client.callTool({
       name: 'register_agent',
       arguments: {
+        client: 'custom',
         model: 'sonnet',
         role: 'backend',
         name: 'alice',

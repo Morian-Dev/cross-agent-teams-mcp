@@ -58,6 +58,8 @@ export async function runRegistrationSequence(
   const registerResp = await client.callTool({
     name: 'register_agent',
     arguments: {
+      client: 'custom',
+      client_name: 'cross-agent-teams-channel',
       model: 'proxy',
       role: '__channel_proxy__',
       name: `channel-proxy-${process.pid}`,
