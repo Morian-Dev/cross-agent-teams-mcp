@@ -12,13 +12,13 @@ For same-team writes (`broadcast`, `broadcast_to_role`, same-team `send_message`
 
 #### Scenario: Sending a same-team message creates paired rows with equal team fields
 
-- **WHEN** `send_message({to_agent_id:'sess-B', body:'hi'})` succeeds with sender in team `alpha`
+- **WHEN** `send_message_by_id({to_agent_id:'uuid-B', body:'hi'})` succeeds with sender in team `alpha` (or equivalently `send_message({to_agent_name:'bob', body:'hi'})` resolving to the same UUID)
 - **THEN** one new row appears in `messages` with `from_team='alpha'` and `to_team='alpha'`
 - **AND** exactly one new row in `events` with matching `event_id` and `from_team='alpha'`, `to_team='alpha'`
 
 #### Scenario: Sending a cross-team message records distinct team fields
 
-- **WHEN** `send_message({to_agent_id:'sess-B', to_team:'beta', body:'hi'})` succeeds with sender in team `alpha` and recipient `sess-B` genuinely in team `beta`
+- **WHEN** `send_message({to_agent_name:'bob', to_team:'beta', body:'hi'})` succeeds with sender in team `alpha` and recipient `bob` genuinely in team `beta`
 - **THEN** the new `messages` row has `from_team='alpha'`, `to_team='beta'`
 - **AND** the paired `events` row has `from_team='alpha'`, `to_team='beta'`
 
@@ -29,17 +29,17 @@ For same-team writes (`broadcast`, `broadcast_to_role`, same-team `send_message`
 - **AND** the column is `NOT NULL`
 - **AND** the column default is `1`
 
-### Requirement: send_message to unknown recipient
+### Requirement: send_message and send_message_by_id return unknown_recipient on unresolvable target
 
 When the supplied recipient cannot be resolved, the daemon SHALL return `{ error: 'unknown_recipient' }` without writing any event. "Cannot be resolved" means:
 
-- If the caller provided `to_agent_id`: no row in `agents` has that `agent_id`, OR the row's `team` field does not equal the resolved `to_team` (caller's team if `to_team` omitted, or the explicit `to_team` if provided).
-- If the caller provided `to_agent_name`: `AgentsRepo.findByIdentity({ team: resolved_to_team, name: to_agent_name })` returns `undefined` — i.e. no row in `agents` has the matching `(team, name)` pair for the resolved team.
+- For `send_message_by_id({to_agent_id})`: no row in `agents` has that `agent_id`, OR the row's `team` field does not equal the caller's team (cross-team is not supported by this tool).
+- For `send_message({to_agent_name, to_team?})`: `AgentsRepo.findByIdentity({ team: resolved_to_team, name: to_agent_name })` returns `undefined` — i.e. no row in `agents` has the matching `(team, name)` pair for the resolved team (`to_team ?? caller.team`).
 
-#### Scenario: to_agent_id does not exist
+#### Scenario: send_message_by_id with non-existent id
 
 - **GIVEN** no agent with id `uuid-Z` exists
-- **WHEN** caller in team 'default' calls `send_message({to_agent_id:'uuid-Z', body:'hi'})`
+- **WHEN** caller in team 'default' calls `send_message_by_id({to_agent_id:'uuid-Z', body:'hi'})`
 - **THEN** response is `{ error: 'unknown_recipient' }`
 - **AND** no new event row is created
 
@@ -57,10 +57,10 @@ When the supplied recipient cannot be resolved, the daemon SHALL return `{ error
 - **THEN** response is `{ error: 'unknown_recipient' }` (resolved_to_team='beta' has no `bob`)
 - **AND** no new event row is created
 
-#### Scenario: to_agent_id exists but resolved to_team does not match
+#### Scenario: send_message_by_id pointing at a cross-team agent returns unknown_recipient
 
-- **GIVEN** agent `sess-B` is in team `beta`, caller is in team `alpha`, call omits `to_team` (so resolved `to_team='alpha'`)
-- **WHEN** caller calls `send_message({to_agent_id:'sess-B', body:'hi'})`
+- **GIVEN** agent `sess-B` with `agent_id='uuid-B'` is in team `beta`, caller is in team `alpha`
+- **WHEN** caller calls `send_message_by_id({to_agent_id:'uuid-B', body:'hi'})`
 - **THEN** response is `{ error: 'unknown_recipient' }`
 - **AND** no new event row is created
 
@@ -100,14 +100,14 @@ Cross-team messages are delivered to the recipient's inbox normally, because the
 
 #### Scenario: Cross-team messages appear in recipient's inbox
 
-- **GIVEN** caller `sess-B` is in team `beta`
-- **AND** agent `sess-A` in team `alpha` sends `send_message({to_agent_id:'sess-B', to_team:'beta', body:'cross-team'})`, producing event id 42
-- **WHEN** `sess-B` calls `get_inbox({since_event_id: 41})`
+- **GIVEN** caller `bob` is in team `beta` with `agent_id='uuid-B'`
+- **AND** agent `sess-A` in team `alpha` sends `send_message({to_agent_name:'bob', to_team:'beta', body:'cross-team'})`, producing event id 42
+- **WHEN** `bob` calls `get_inbox({since_event_id: 41})`
 - **THEN** the response includes the message with `from_agent_id='sess-A'`, `from_team='alpha'`, `to_team='beta'`
 
 #### Scenario: Inbox exposes reply expectation
 
-- **GIVEN** agent `sess-A` sends `send_message({to_agent_id:'sess-B', body:'FYI', need_reply:false, auto_poke:false})`
+- **GIVEN** agent `sess-A` sends `send_message_by_id({to_agent_id:'sess-B', body:'FYI', need_reply:false, auto_poke:false})`
 - **WHEN** `sess-B` calls `get_inbox({since_event_id: 0})`
 - **THEN** the returned message has `need_reply=false`
 
@@ -133,10 +133,10 @@ This contract applies to same-team and cross-team messages alike.
 
 This Requirement applies to `send_message` only. `broadcast` and `broadcast_to_role` are governed by their own "auto-poke default with parallel fan-out" Requirements, which mandate auto-poke as default rather than fire-and-forget.
 
-#### Scenario: send_message with auto_poke:false is pure fire-and-forget
+#### Scenario: send_message_by_id with auto_poke:false is pure fire-and-forget
 
 - **GIVEN** recipient `sess-B` has a valid `tmux_pane_id` registered in caller's team
-- **WHEN** caller `sess-A` calls `send_message({to_agent_id:'sess-B', body:'any', auto_poke:false})`
+- **WHEN** caller `sess-A` calls `send_message_by_id({to_agent_id:'sess-B', body:'any', auto_poke:false})`
 - **THEN** no `poke` entry, no tmux-injection event, no side effect beyond mailbox persistence occurs
 
 ### Requirement: Auto-poke retry with backoff on guard_failed
@@ -162,7 +162,7 @@ The daemon MUST clear all pending retry timers on shutdown (e.g. Fastify `onClos
 #### Scenario: Guard_failed recipient schedules 3 retries
 
 - **GIVEN** A and B registered with `tmux_pane_id`, same team, B's pane active, `POKE_QUIET_MS=50`
-- **WHEN** A calls `send_message({ to_agent_id: B, body: "hi" })`
+- **WHEN** A calls `send_message_by_id({ to_agent_id: B, body: "hi" })`
 - **THEN** response has `poked: false`, `poke_skip_reasons: [{ agent_id: B, reason: 'guard_failed' }]`
 - **AND** response has `retry_scheduled: true`, `retry_delays_s: [30, 180, 600]`
 - **AND** the daemon's internal retry map has exactly one entry keyed by `${message_id}:${B}`
@@ -228,38 +228,38 @@ Cross-team auto-poke is identical: the recipient's `tmux_pane_id` is looked up b
 
 - **GIVEN** agent A and agent B are registered with `tmux_pane_id` values on the same team
 - **AND** agent B's tmux pane has been idle, `POKE_QUIET_MS=100` for test speed
-- **WHEN** agent A calls `send_message({ to_agent_id: B, body: "hi" })` (auto_poke omitted)
+- **WHEN** agent A calls `send_message_by_id({ to_agent_id: B, body: "hi" })` (auto_poke omitted)
 - **THEN** the message is persisted in B's mailbox with `from_team=to_team`
 - **AND** the response has `poked: true`
 - **AND** B's tmux pane has received the poke injection
 
 #### Scenario: Cross-team auto-poke fires when recipient pane idle
 
-- **GIVEN** agent A in team `alpha` and agent B in team `beta`, both with `tmux_pane_id`
-- **AND** B's pane idle, `POKE_QUIET_MS=100`
-- **WHEN** A calls `send_message({to_agent_id: B, to_team: 'beta', body: "hi"})` (auto_poke omitted)
+- **GIVEN** agent `alice` in team `alpha` and agent `bob` (`agent_id=B`) in team `beta`, both with `tmux_pane_id`
+- **AND** bob's pane idle, `POKE_QUIET_MS=100`
+- **WHEN** alice calls `send_message({to_agent_name: 'bob', to_team: 'beta', body: "hi"})` (auto_poke omitted)
 - **THEN** the message is persisted with `from_team='alpha', to_team='beta'`
 - **AND** the response has `poked: true`
-- **AND** B's pane received the poke injection
+- **AND** bob's pane received the poke injection
 
 #### Scenario: Recipient's pane is active, guard fails, falls back to mailbox
 
 - **GIVEN** agent A and B same team, both with `tmux_pane_id`, B's pane actively outputting, `POKE_QUIET_MS=100`
-- **WHEN** A calls `send_message({to_agent_id: B, body:"hi"})`
+- **WHEN** A calls `send_message_by_id({to_agent_id: B, body:"hi"})`
 - **THEN** the message is persisted
 - **AND** response `poked: false` with `poke_skip_reasons` containing `{agent_id: B, reason: 'guard_failed'}`
 
 #### Scenario: Recipient has no transport
 
 - **GIVEN** B registered without `tmux_pane_id` and without any configured non-tmux transport (same or cross team)
-- **WHEN** A calls `send_message({to_agent_id: B, ...})`
+- **WHEN** A calls `send_message_by_id({to_agent_id: B, body: "hi"})`
 - **THEN** response `poked: false` with `poke_skip_reasons` containing `{agent_id: B, reason: 'no_pane'}`
 
 #### Scenario: Recipient with claude-channel delivery does not require tmux pane
 
 - **GIVEN** B is registered with `delivery={kind:'claude-channel', channel_session_id:'csid-b'}` and no `tmux_pane_id`
 - **AND** the channel proxy subscribing to `csid-b` is online
-- **WHEN** A calls `send_message({to_agent_id: B, body: "hi"})` (auto_poke omitted)
+- **WHEN** A calls `send_message_by_id({to_agent_id: B, body: "hi"})` (auto_poke omitted)
 - **THEN** the daemon invokes the internal poke primitive without running the tmux quiet-guard
 - **AND** the response has `poked: true`
 - **AND** `poke_skip_reasons` is absent or empty
@@ -268,7 +268,7 @@ Cross-team auto-poke is identical: the recipient's `tmux_pane_id` is looked up b
 
 - **GIVEN** B is registered with `opencode_base_url='http://127.0.0.1:4096'`, `opencode_session_id='sess-b'`, and no `tmux_pane_id`
 - **AND** the opencode server accepts the wake prompt for `sess-b`
-- **WHEN** A calls `send_message({to_agent_id: B, body: "hi"})` (auto_poke omitted)
+- **WHEN** A calls `send_message_by_id({to_agent_id: B, body: "hi"})` (auto_poke omitted)
 - **THEN** the daemon invokes the internal poke primitive without running the tmux quiet-guard
 - **AND** the response has `poked: true`
 - **AND** `poke_skip_reasons` is absent or empty
@@ -276,7 +276,7 @@ Cross-team auto-poke is identical: the recipient's `tmux_pane_id` is looked up b
 #### Scenario: auto_poke:false disables the behavior entirely
 
 - **GIVEN** A and B both registered with tmux pane ids, idle pane
-- **WHEN** A calls `send_message({to_agent_id: B, body: "hi", auto_poke: false})`
+- **WHEN** A calls `send_message_by_id({to_agent_id: B, body: "hi", auto_poke: false})`
 - **THEN** the message persists, response `poked: false`, `poke_skip_reasons` absent, B's pane NOT injected
 
 #### Scenario: Invalid POKE_QUIET_MS env falls back to default
@@ -388,16 +388,16 @@ The rule does NOT constrain the `poke` MCP tool itself when callers invoke it di
 
 - **GIVEN** agents A (display_name="lead-opus") and B (display_name="worker-kimi") are registered in the same team, both with `tmux_pane_id`
 - **AND** B's pane is idle, `POKE_QUIET_MS=100`
-- **WHEN** A calls `send_message({to_agent_id: B, body: "please investigate bug #42 in the auth module"})` with default auto_poke
+- **WHEN** A calls `send_message_by_id({to_agent_id: B, body: "please investigate bug #42 in the auth module"})` with default auto_poke
 - **THEN** the message is persisted to B's mailbox with the full body
 - **AND** the poke prompt injected into B's pane equals `"新邮件 from lead-opus (<A's agent_id>), 请调 get_inbox 查看"`
 - **AND** the injected prompt does NOT contain `"bug #42"` or any other substring of the body
 
 #### Scenario: Cross-team send_message auto-poke uses same hint format (no team prefix)
 
-- **GIVEN** agent A (display_name="lead-alpha") in team `alpha`, agent B in team `beta` with idle pane
-- **WHEN** A calls `send_message({to_agent_id: B, to_team: 'beta', body: "secret: token=xyz"})` with default auto_poke
-- **THEN** B's pane receives exactly `"新邮件 from lead-alpha (<A's agent_id>), 请调 get_inbox 查看"`
+- **GIVEN** agent A (display_name="lead-alpha") in team `alpha`, agent with `name='bob'` in team `beta` with idle pane
+- **WHEN** A calls `send_message({to_agent_name: 'bob', to_team: 'beta', body: "secret: token=xyz"})` with default auto_poke
+- **THEN** bob's pane receives exactly `"新邮件 from lead-alpha (<A's agent_id>), 请调 get_inbox 查看"`
 - **AND** the prompt does NOT contain `"alpha"` or `"token"` or any body substring
 
 #### Scenario: broadcast_to_role auto-poke uses identical hint format per recipient
@@ -419,7 +419,7 @@ The rule does NOT constrain the `poke` MCP tool itself when callers invoke it di
 #### Scenario: Sender without display_name falls back to agent_id[:8]
 
 - **GIVEN** sender A registered with `display_name = null` and `agent_id = "abc12345-6789-..."`, recipient B idle
-- **WHEN** A calls `send_message({to_agent_id: B, body: "anything"})` with default auto_poke
+- **WHEN** A calls `send_message_by_id({to_agent_id: B, body: "anything"})` with default auto_poke
 - **THEN** the poke prompt equals `"新邮件 from abc12345, 请调 get_inbox 查看"`
 
 #### Scenario: All three tools' descriptions document the hint-only contract
@@ -492,7 +492,7 @@ This Requirement applies to the following fan-out paths ONLY:
 
 This Requirement does NOT apply to:
 
-- `send_message({ to_agent_id })` — direct single-recipient sends. They proceed exactly as before, addressing the agent by id regardless of online status. The `Offline delivery via events outbox` Requirement remains authoritative for direct sends.
+- `send_message({ to_agent_name })` and `send_message_by_id({ to_agent_id })` — direct single-recipient sends. They proceed regardless of the recipient's online status. The `Offline delivery via events outbox` Requirement remains authoritative for direct sends.
 - `list_agents` — still returns every row in the team, including offline agents, with an `online: boolean` field for diagnosis. This preserves debugging visibility into ghost accumulation.
 
 When fan-out filtering results in an empty recipient list (e.g. role exists but no agent under it is currently online; broadcast team has only offline agents besides sender), the daemon SHALL return `{ error: "unknown_recipient" }` — the same error shape already used for "no matching recipients" cases. No new error code is introduced.
@@ -516,13 +516,14 @@ The online threshold uses `last_seen_at` which is refreshed on every MCP tool ca
 - **AND** F2 has no mailbox entry for this event
 - **AND** the event_id row in `events` has `payload.recipients = [F1, F3]`
 
-#### Scenario: send_message to_agent_id unaffected by online filter
+#### Scenario: Direct sends unaffected by online filter
 
 - **GIVEN** recipient B is registered with `last_seen_at = now - 3 hours` (offline)
-- **WHEN** caller A calls `send_message({ to_agent_id: B, body: "direct ping" })`
+- **WHEN** caller A calls `send_message_by_id({ to_agent_id: B, body: "direct ping" })`
 - **THEN** the message IS persisted to B's mailbox (honoring the existing `Offline delivery via events outbox` Requirement)
 - **AND** `recipients` contains exactly `[B]`
 - **AND** auto-poke is attempted against B's pane if B has a registered `tmux_pane_id` (may skip with `no_pane` or `guard_failed` per existing rules — those skips are orthogonal to online status)
+- **AND** the same holds when caller uses `send_message({ to_agent_name: <B's name> })` instead
 
 #### Scenario: to_role with all-offline matches returns unknown_recipient
 
@@ -552,43 +553,45 @@ The online threshold uses `last_seen_at` which is refreshed on every MCP tool ca
 - **GIVEN** a client fetches the MCP tool list via `tools/list`
 - **WHEN** it reads the `description` of `send_message` or `broadcast`
 - **THEN** each description SHOULD state that role-based routing (for `send_message`) or team fan-out (for `broadcast`) skips recipients whose `last_seen_at` is more than 5 minutes old
-- **AND** the `send_message` description SHOULD note that direct `to_agent_id` sends are NOT affected by this filter
+- **AND** the `send_message` description SHOULD note that direct 1→1 sends (`send_message` or `send_message_by_id`) are NOT affected by this filter
 
 ### Requirement: send_message supports cross-team delivery when to_team is explicit
 
-`send_message({to_agent_id, to_team, body, subject?, auto_poke?})` with `to_team` explicitly set to a value different from the caller's team SHALL deliver the message to `to_agent_id` in team `to_team`, provided that agent exists there.
+`send_message({to_agent_name, to_team, body, subject?, auto_poke?})` with `to_team` explicitly set to a value different from the caller's team SHALL deliver the message to the agent named `to_agent_name` in team `to_team`, provided that agent exists there.
 
 The daemon MUST:
 
 1. Resolve `to_team` = provided `to_team` value (or caller's team if omitted).
-2. Look up the target agent row by `agent_id = to_agent_id` alone (global PK lookup).
-3. Verify the target's `team` field equals the resolved `to_team`.  If not, return `{ error: 'unknown_recipient' }`.
-4. Persist a `messages` row with `from_team = caller.team`, `to_team = resolved to_team`, `from_agent_id = caller.agent_id`, `to_agent_id = target`, `to_role = null`.
+2. Look up the target agent row via `AgentsRepo.findByIdentity({ team: resolved_to_team, name: to_agent_name })`.
+3. If no row matches, return `{ error: 'unknown_recipient' }`.
+4. Persist a `messages` row with `from_team = caller.team`, `to_team = resolved to_team`, `from_agent_id = caller.agent_id`, `to_agent_id = resolved UUID`, `to_role = null`.
 5. Persist a paired `events` row with matching `from_team` / `to_team`.
 6. Proceed with auto-poke (subject to `auto_poke` parameter) using the same quiet-guard + retry-backoff mechanism as same-team delivery.
 
 Cross-team delivery MUST NOT require any additional parameter (no `cross_team:true`, no permission token).  Explicit `to_team` is itself the signal of intent.
 
+`send_message_by_id` does NOT support cross-team delivery; it is same-team only.  Cross-team 1→1 sends MUST use `send_message` with `to_agent_name`.
+
 #### Scenario: Cross-team private message is delivered
 
-- **GIVEN** caller `sess-A` in team `alpha`, target `sess-B` genuinely in team `beta`, B idle pane
-- **WHEN** `sess-A` calls `send_message({to_agent_id:'sess-B', to_team:'beta', body:'cross-team ping'})`
-- **THEN** response has `recipients: ['sess-B']`, `poked: true`, no `error`
-- **AND** the `messages` row has `from_team='alpha', to_team='beta', from_agent_id='sess-A', to_agent_id='sess-B'`
-- **AND** the paired `events` row has `from_team='alpha', to_team='beta', actor_agent_id='sess-A'`
-- **AND** B's pane received the wake-up hint
+- **GIVEN** caller `alice` in team `alpha`, target with `name='bob'` genuinely in team `beta` with `agent_id='uuid-bob'`, bob has an idle pane
+- **WHEN** `alice` calls `send_message({to_agent_name:'bob', to_team:'beta', body:'cross-team ping'})`
+- **THEN** response has `recipients: ['uuid-bob']`, `poked: true`, no `error`
+- **AND** the `messages` row has `from_team='alpha', to_team='beta', from_agent_id=<alice.uuid>, to_agent_id='uuid-bob'`
+- **AND** the paired `events` row has `from_team='alpha', to_team='beta', actor_agent_id=<alice.uuid>`
+- **AND** bob's pane received the wake-up hint
 
 #### Scenario: Cross-team `to_team` equal to caller's team is identical to omission
 
-- **GIVEN** caller in team `alpha`, target `sess-B` in team `alpha`
-- **WHEN** the caller invokes `send_message({to_agent_id:'sess-B', to_team:'alpha', body:'hi'})`
-- **THEN** behavior is byte-identical to `send_message({to_agent_id:'sess-B', body:'hi'})`
+- **GIVEN** caller in team `alpha`, target with `name='bob'` in team `alpha`
+- **WHEN** the caller invokes `send_message({to_agent_name:'bob', to_team:'alpha', body:'hi'})`
+- **THEN** behavior is byte-identical to `send_message({to_agent_name:'bob', body:'hi'})`
 - **AND** the resulting row has `from_team=to_team='alpha'`
 
 #### Scenario: Cross-team target not found in specified team returns unknown_recipient
 
-- **GIVEN** `sess-X` exists in team `gamma`, not in team `beta`
-- **WHEN** caller in team `alpha` calls `send_message({to_agent_id:'sess-X', to_team:'beta', body:'hi'})`
+- **GIVEN** agent named `bob` exists in team `gamma`, not in team `beta`
+- **WHEN** caller in team `alpha` calls `send_message({to_agent_name:'bob', to_team:'beta', body:'hi'})`
 - **THEN** response is `{ error: 'unknown_recipient' }`
 - **AND** no `messages` or `events` row is written
 
@@ -652,64 +655,85 @@ The response shape MUST be:
 - **AND** SHOULD reference `send_message({to_team})` as the only cross-team path (and only for 1→1)
 - **AND** SHOULD describe auto-poke default, quiet-guard, and retry-backoff consistent with `broadcast`
 
-### Requirement: send_message is 1→1 private message only
+### Requirement: send_message is 1→1 private message by name
 
-`send_message({to_agent_id?, to_agent_name?, to_team?, subject?, body, auto_poke?})` MUST accept EITHER `to_agent_id` (UUID) OR `to_agent_name` (the target's `name` field in the `agents` table) as the recipient key, but NOT both and NOT neither. Requests containing a `to_role` parameter SHALL be rejected by the MCP tool schema layer (Zod validation) — the parameter is not defined on the tool at all.
+`send_message({to_agent_name, to_team?, subject?, body, auto_poke?, need_reply?})` MUST accept `to_agent_name` (the target's `name` field in the `agents` table) as the required recipient key. The MCP tool schema MUST reject any request carrying `to_agent_id`, `to_role`, or other unknown fields (Zod `.strict()`).
 
-The mutual-exclusion rule SHALL be enforced as follows:
+`send_message` MUST accept an optional `to_team` parameter. When `to_team` is omitted, the daemon SHALL default it to the caller's team. When `to_team` is provided and equals the caller's team, behavior is identical to omission. When `to_team` is provided and differs from the caller's team, the call constitutes a cross-team private message. See "send_message supports cross-team delivery when to_team is explicit".
 
-- If neither `to_agent_id` nor `to_agent_name` is provided, the daemon SHALL return `{ error: 'missing_recipient' }`.
-- If BOTH `to_agent_id` and `to_agent_name` are provided, the daemon SHALL return `{ error: 'ambiguous_recipient' }`.
-- If exactly one is provided, the daemon SHALL proceed with routing (see the "send_message resolves to_agent_name" Requirement for the lookup semantics).
+The `send_message` MCP tool description MUST state: 除非用户明确指定 `to_team`, 不要跨 team 沟通.  The description MUST also reference `broadcast_to_role` as the way to address a role, `broadcast` as the way to reach the whole team, and `send_message_by_id` as the UUID-based variant.
 
-`send_message` MUST accept an optional `to_team` parameter. When `to_team` is omitted, the daemon SHALL default it to the caller's team. When `to_team` is provided and equals the caller's team, behavior is identical to omission. When `to_team` is provided and differs from the caller's team, the call constitutes a cross-team private message. The `to_team` default-and-equality rules apply identically whether the caller used `to_agent_id` or `to_agent_name`.
+#### Scenario: send_message rejects to_agent_id at the schema layer
 
-The `send_message` MCP tool description MUST state: 除非用户明确指定 `to_team`, 不要跨 team 沟通.  The description MUST also reference `broadcast_to_role` as the way to address a role, and `broadcast` as the way to reach the whole team. The description SHOULD mention `to_agent_name` as the preferred field when the caller knows the target by `(team, name)` rather than by UUID, and SHOULD note that exactly one of `to_agent_id` / `to_agent_name` must be provided.
-
-#### Scenario: Both to_agent_id and to_agent_name given
-
-- **WHEN** caller calls `send_message({to_agent_id:'uuid-B', to_agent_name:'bob', body:'hi'})`
-- **THEN** response is `{ error: 'ambiguous_recipient' }`
+- **WHEN** caller calls `send_message({to_agent_id:'uuid-B', body:'hi'})`
+- **THEN** the MCP tool's Zod schema MUST reject the call with a validation error (unknown field `to_agent_id`)
 - **AND** no new event row is created
 - **AND** no new messages row is created
 
-#### Scenario: Neither to_agent_id nor to_agent_name given
+#### Scenario: send_message without to_agent_name is a schema error
 
 - **WHEN** caller calls `send_message({body:'hi'})`
-- **THEN** response is `{ error: 'missing_recipient' }`
+- **THEN** the MCP tool's Zod schema MUST reject the call (missing required `to_agent_name`)
 - **AND** no new event row is created
 
-#### Scenario: Only to_agent_id given proceeds via UUID path
-
-- **GIVEN** agent `sess-B` exists in the caller's team with `agent_id='uuid-B'`
-- **WHEN** caller calls `send_message({to_agent_id:'uuid-B', body:'hi'})`
-- **THEN** the message is persisted with `to_agent_id='uuid-B'`
-- **AND** response `recipients` equals `['uuid-B']`
-
-#### Scenario: Only to_agent_name given proceeds via name path
+#### Scenario: send_message with to_agent_name persists via resolved UUID
 
 - **GIVEN** agent with `name='bob'` exists in the caller's team with `agent_id='uuid-B'`
 - **WHEN** caller calls `send_message({to_agent_name:'bob', body:'hi'})`
 - **THEN** the message is persisted with `to_agent_id='uuid-B'`
 - **AND** response `recipients` equals `['uuid-B']`
 
-#### Scenario: send_message tool description mentions to_agent_name
+#### Scenario: send_message tool description mentions to_agent_name and send_message_by_id
 
 - **GIVEN** a client fetches the MCP tool list via `tools/list`
 - **WHEN** it reads the `description` of the tool named `send_message`
-- **THEN** the description string SHALL reference `to_agent_name` as the preferred routing key when the caller knows the target by `(team, name)` rather than UUID
-- **AND** SHALL indicate that exactly one of `to_agent_id` / `to_agent_name` must be provided
+- **THEN** the description string SHALL reference `to_agent_name` as the addressing key
+- **AND** SHALL reference `send_message_by_id` as the UUID-based sibling tool
 - **AND** SHALL retain the "除非用户明确指定 `to_team`, 不要跨 team 沟通" guardrail
+
+### Requirement: send_message_by_id is 1→1 private message by UUID
+
+`send_message_by_id({to_agent_id, subject?, body, auto_poke?, need_reply?})` MUST accept `to_agent_id` (the target agent's UUID) as the required recipient key. The MCP tool schema MUST reject any request carrying `to_agent_name`, `to_team`, `to_role`, or other unknown fields (Zod `.strict()`).
+
+`send_message_by_id` is same-team only: the recipient row's `team` MUST equal the caller's team. If the recipient does not exist OR the recipient's team differs from the caller's team, the daemon MUST return `{ error: 'unknown_recipient' }`. Cross-team 1→1 sends MUST use `send_message` with `to_agent_name` + explicit `to_team`.
+
+All downstream behavior — mailbox persistence, event row pairing, auto-poke default, quiet-guard, retry backoff, hint-only poke body, delivery status persistence — MUST be byte-identical to `send_message`. The success envelope (`{message_id, event_id, recipients: [<to_agent_id>], poked, poke_skip_reasons?, retry_scheduled, retry_delays_s?}`) MUST be identical.
+
+The `send_message_by_id` MCP tool description MUST state that it is same-team only and point to `send_message` + `to_team` as the cross-team path.
+
+#### Scenario: send_message_by_id rejects to_agent_name at the schema layer
+
+- **WHEN** caller calls `send_message_by_id({to_agent_id:'uuid-B', to_agent_name:'bob', body:'hi'})`
+- **THEN** the MCP tool's Zod schema MUST reject the call with a validation error (unknown field `to_agent_name`)
+
+#### Scenario: send_message_by_id rejects to_team at the schema layer
+
+- **WHEN** caller calls `send_message_by_id({to_agent_id:'uuid-B', to_team:'beta', body:'hi'})`
+- **THEN** the MCP tool's Zod schema MUST reject the call with a validation error (unknown field `to_team`)
+
+#### Scenario: send_message_by_id same-team send persists and auto-pokes
+
+- **GIVEN** agent `sess-B` exists in the caller's team with `agent_id='uuid-B'` and an idle pane
+- **WHEN** caller calls `send_message_by_id({to_agent_id:'uuid-B', body:'hi'})`
+- **THEN** the message is persisted with `to_agent_id='uuid-B'`, `from_team=to_team=caller.team`
+- **AND** response `recipients` equals `['uuid-B']`
+
+#### Scenario: send_message_by_id targeting a cross-team agent returns unknown_recipient
+
+- **GIVEN** caller in team `alpha`, agent `sess-B` with `agent_id='uuid-B'` exists in team `beta`
+- **WHEN** caller calls `send_message_by_id({to_agent_id:'uuid-B', body:'hi'})`
+- **THEN** response is `{ error: 'unknown_recipient' }`
+- **AND** no `messages` or `events` row is written
 
 ### Requirement: send_message resolves to_agent_name via (team, name) lookup
 
-When `send_message` is called with `to_agent_name` (and not `to_agent_id`), the daemon SHALL resolve the recipient UUID via `AgentsRepo.findByIdentity({ team: resolved_to_team, name: to_agent_name })`, where `resolved_to_team = to_team ?? caller.team`. The lookup is unambiguous because the `agents_identity_idx` UNIQUE INDEX on `(team, name)` guarantees at most one matching row.
+When `send_message` is called with `to_agent_name`, the daemon SHALL resolve the recipient UUID via `AgentsRepo.findByIdentity({ team: resolved_to_team, name: to_agent_name })`, where `resolved_to_team = to_team ?? caller.team`. The lookup is unambiguous because the `agents_identity_idx` UNIQUE INDEX on `(team, name)` guarantees at most one matching row.
 
-If the lookup returns a row, the daemon SHALL proceed with the existing insert + auto-poke pipeline using the resolved `agent_id`, identical to the behaviour when the caller supplied that UUID directly as `to_agent_id`.
+If the lookup returns a row, the daemon SHALL proceed with the existing insert + auto-poke pipeline using the resolved `agent_id`, identical to the behaviour of `send_message_by_id` with that UUID.
 
-The `send_message` success envelope SHALL be unchanged: `{ message_id, event_id, recipients: [<resolved_uuid>], poked, poke_skip_reasons?, retry_scheduled, retry_delays_s? }`. The `recipients[]` field SHALL always contain the resolved UUID, never the name, regardless of which input path the caller used.
+The `send_message` success envelope SHALL be unchanged: `{ message_id, event_id, recipients: [<resolved_uuid>], poked, poke_skip_reasons?, retry_scheduled, retry_delays_s? }`. The `recipients[]` field SHALL always contain the resolved UUID, never the name.
 
-Cross-team sends via `to_agent_name` SHALL behave identically to cross-team sends via `to_agent_id`: the `from_team` / `to_team` values on the persisted `messages` and `events` rows reflect the resolved teams, and auto-poke fanout is not suppressed by the cross-team distinction on its own.
+Cross-team sends via `to_agent_name` SHALL set `from_team` / `to_team` on the persisted `messages` and `events` rows to reflect the resolved teams; auto-poke fanout is not suppressed by the cross-team distinction on its own.
 
 #### Scenario: Same-team send via to_agent_name persists and auto-pokes
 
@@ -732,7 +756,7 @@ Cross-team sends via `to_agent_name` SHALL behave identically to cross-team send
 
 - **GIVEN** agent `bob` in team 'default' with `agent_id='uuid-B'` and `name='bob'`
 - **WHEN** caller A calls `send_message({to_agent_name:'bob', body:'hi'})`
-- **AND** caller A calls `send_message({to_agent_id:'uuid-B', body:'hi'})`
+- **AND** caller A calls `send_message_by_id({to_agent_id:'uuid-B', body:'hi'})`
 - **THEN** both responses have `recipients === ['uuid-B']`
 
 #### Scenario: Lookup is case-sensitive (byte-equal)
@@ -752,13 +776,13 @@ The `send_message` MCP tool description MUST document that private messages defa
 #### Scenario: send_message defaults to needing reply
 
 - **GIVEN** agents `sess-A` and `sess-B` are in the same team
-- **WHEN** `sess-A` calls `send_message({to_agent_id:'sess-B', body:'question', auto_poke:false})`
+- **WHEN** `sess-A` calls `send_message_by_id({to_agent_id:'sess-B', body:'question', auto_poke:false})`
 - **THEN** the created `messages` row has `need_reply=1`
 
 #### Scenario: send_message can opt out of reply expectation
 
 - **GIVEN** agents `sess-A` and `sess-B` are in the same team
-- **WHEN** `sess-A` calls `send_message({to_agent_id:'sess-B', body:'FYI', need_reply:false, auto_poke:false})`
+- **WHEN** `sess-A` calls `send_message_by_id({to_agent_id:'sess-B', body:'FYI', need_reply:false, auto_poke:false})`
 - **THEN** the created `messages` row has `need_reply=0`
 
 #### Scenario: send_message description documents need_reply
@@ -801,7 +825,7 @@ The status row MUST include:
 When `auto_poke:false` is used, the daemon MUST write `wake_status='skipped'` and `skip_reason='auto_poke_disabled'` for each recipient.
 
 #### Scenario: Immediate auto-poke success records delivered
-- **GIVEN** agent A sends `send_message({to_agent_id: B, body: "hi"})`
+- **GIVEN** agent A sends `send_message_by_id({to_agent_id: B, body: "hi"})`
 - **AND** B has an idle delivery transport
 - **WHEN** the send succeeds and auto-poke succeeds immediately
 - **THEN** the status row for `(message_id, B)` has `wake_status='delivered'`
@@ -809,7 +833,7 @@ When `auto_poke:false` is used, the daemon MUST write `wake_status='skipped'` an
 - **AND** `skip_reason` is null
 
 #### Scenario: auto_poke false records disabled skip
-- **GIVEN** agent A sends `send_message({to_agent_id: B, body: "hi", auto_poke:false})`
+- **GIVEN** agent A sends `send_message_by_id({to_agent_id: B, body: "hi", auto_poke:false})`
 - **WHEN** the send succeeds
 - **THEN** the status row for `(message_id, B)` has `wake_status='skipped'`
 - **AND** `skip_reason='auto_poke_disabled'`

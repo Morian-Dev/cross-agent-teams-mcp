@@ -114,14 +114,23 @@ const bindRuntimeIdentityArgsSchema = bindRuntimeIdentitySchema.superRefine((val
 })
 
 const SEND_MESSAGE_DESC = [
-  'Private 1→1 message to another agent.  By default auto-poke=true with quiet-guard (auto_poke:false opts out), and need_reply=true.',
+  'Private 1→1 message to another agent by name.  By default auto-poke=true with quiet-guard (auto_poke:false opts out), and need_reply=true.',
   'Set need_reply:false for FYI/no-response-needed messages; recipients see need_reply in get_inbox.',
-  'Provide exactly one of to_agent_id (UUID) or to_agent_name (the target\'s `name` in its team); to_agent_name is preferred when you know the target by (team, name).',
+  'to_agent_name is the target\'s `name` within its team; this is the preferred addressing form.  For UUID-based sends use send_message_by_id.',
   'For multi-recipient use broadcast (same-team) or broadcast_to_role (same-team, by role).',
   '除非用户明确指定 to_team, 不要跨 team 沟通 (explicitly set to_team only when user asks).',
   'Reports poked, poke_skip_reasons (no_pane, guard_failed, tmux_unavailable, self); on guard_failed daemon retries at 30s/180s/600s (retry_scheduled, retry_delays_s); stops early on poked.',
   'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender>, 请调 get_inbox 查看), NOT the body — read bodies via get_inbox.',
-  'to_agent_id sends are NOT filtered by online/idle — offline targets still receive the mailbox row.'
+  'Delivery is NOT filtered by online/idle (unlike broadcast\'s 5 min idle skip) — offline targets still receive the mailbox row.'
+].join(' ')
+
+const SEND_MESSAGE_BY_ID_DESC = [
+  'Private 1→1 message to another agent by agent_id (UUID).  Use this when you already hold the target\'s agent_id; prefer send_message (by name) otherwise.',
+  'Same-team only: the recipient must belong to the caller\'s team.  For cross-team sends use send_message with to_team.',
+  'By default auto-poke=true with quiet-guard (auto_poke:false opts out), and need_reply=true.  Set need_reply:false for FYI/no-response-needed messages.',
+  'Reports poked, poke_skip_reasons (no_pane, guard_failed, tmux_unavailable, self); on guard_failed daemon retries at 30s/180s/600s (retry_scheduled, retry_delays_s); stops early on poked.',
+  'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender>, 请调 get_inbox 查看), NOT the body — read bodies via get_inbox.',
+  'Delivery is NOT filtered by online/idle — offline targets still receive the mailbox row.'
 ].join(' ')
 
 const BROADCAST_DESC = [
@@ -899,15 +908,14 @@ export function registerBusinessTools(
     }
   )
 
-  // send_message
+  // send_message (by name)
   server.registerTool(
     'send_message',
     {
       title: 'Send message',
       description: SEND_MESSAGE_DESC,
       inputSchema: z.object({
-        to_agent_id: z.string().min(1).optional(),
-        to_agent_name: z.string().min(1).optional(),
+        to_agent_name: z.string().min(1),
         to_team: z.string().min(1).optional(),
         subject: z.string().optional(),
         body: z.string().min(1),
@@ -916,9 +924,35 @@ export function registerBusinessTools(
       }).strict()
     },
     async (args: {
-      to_agent_id?: string
-      to_agent_name?: string
+      to_agent_name: string
       to_team?: string
+      subject?: string
+      body: string
+      auto_poke?: boolean
+      need_reply?: boolean
+    }) => {
+      const who = requireAgent()
+      if (typeof who !== 'string') return toText(who)
+      return run(() => sendSvc.send({ from: who, ...args }))
+    }
+  )
+
+  // send_message_by_id (by UUID)
+  server.registerTool(
+    'send_message_by_id',
+    {
+      title: 'Send message by id',
+      description: SEND_MESSAGE_BY_ID_DESC,
+      inputSchema: z.object({
+        to_agent_id: z.string().min(1),
+        subject: z.string().optional(),
+        body: z.string().min(1),
+        auto_poke: z.boolean().optional(),
+        need_reply: z.boolean().optional()
+      }).strict()
+    },
+    async (args: {
+      to_agent_id: string
       subject?: string
       body: string
       auto_poke?: boolean

@@ -236,12 +236,20 @@ describe('tool descriptions: auto-poke and delivery status', () => {
     expect(d).toMatch(/client: "opencode"|client.*opencode/i)
   })
 
-  it('send_message description documents the fan-out online filter and to_agent_id exception', async () => {
+  it('send_message description documents delivery NOT filtered by online/idle', async () => {
     const tools = await listTools()
     const tool = tools.find(t => t.name === 'send_message')
     const d = tool!.description!
-    expect(d).toMatch(/offline|5 min|idle/i)
-    expect(d).toMatch(/to_agent_id/i)
+    expect(d).toMatch(/offline|5 min|idle|not filtered/i)
+  })
+
+  it('send_message_by_id is registered with id-based addressing', async () => {
+    const tools = await listTools()
+    const tool = tools.find(t => t.name === 'send_message_by_id')
+    expect(tool).toBeDefined()
+    const d = tool!.description!
+    expect(d).toMatch(/agent_id|UUID/i)
+    expect(d).toMatch(/offline|not filtered/i)
   })
 
   it('broadcast description documents the fan-out online filter', async () => {

@@ -88,11 +88,11 @@ No public MCP tool input schema may expose any parameter that controls this bypa
 #### Scenario: Cross-team send_message triggers a successful auto-poke
 
 - **GIVEN** agent `sess-A` is registered in team `alpha` with `tmux_pane_id='%pA'`
-- **AND** agent `sess-B` is registered in team `beta` with `tmux_pane_id='%pB'` and its pane is idle
+- **AND** agent with `name='bob'` is registered in team `beta` with `tmux_pane_id='%pB'` and its pane is idle
 - **AND** `POKE_QUIET_MS=50` for test speed
-- **WHEN** `sess-A` invokes `send_message({to_agent_id:'sess-B', to_team:'beta', body:'hi'})`
+- **WHEN** `sess-A` invokes `send_message({to_agent_name:'bob', to_team:'beta', body:'hi'})`
 - **THEN** the response has `poked: true`
-- **AND** `poke_skip_reasons` does NOT contain `{agent_id:'sess-B', reason:'guard_failed'}`
+- **AND** `poke_skip_reasons` does NOT contain `{agent_id:<bob.uuid>, reason:'guard_failed'}`
 - **AND** `%pB` has received a `paste-buffer` + `send-keys Enter` sequence carrying the hint `新邮件 from <A's display name or agent_id[:8]>, 请调 get_inbox 查看`
 
 #### Scenario: Direct MCP poke is not the bypass path

@@ -12,7 +12,7 @@ describe('send_message description', () => {
   const dirs: string[] = []
   afterEach(() => { dirs.forEach(d => rmSync(d, { recursive: true, force: true })); dirs.length = 0 })
 
-  it('mentions to_agent_name, one-of guard, and to_team guardrail', async () => {
+  it('mentions to_agent_name, send_message_by_id pointer, and to_team guardrail', async () => {
     const dir = tmp(); dirs.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
     const url = new URL(`http://${host}:${port}/mcp`)
@@ -24,7 +24,7 @@ describe('send_message description', () => {
     expect(sm).toBeDefined()
     const desc = sm!.description ?? ''
     expect(desc).toMatch(/to_agent_name/)
-    expect(desc).toMatch(/(exactly one|one of|任选其一|精确之一)/i)
+    expect(desc).toMatch(/send_message_by_id/)
     expect(desc).toMatch(/to_team/)
     await t.close(); await app.close()
   })

@@ -135,7 +135,7 @@ describe('e2e channel poke (self-binding)', () => {
     })
     const alice = await parseTool(aliceResp)
     const sendResp = await aliceC.callTool({
-      name: 'send_message',
+      name: 'send_message_by_id',
       arguments: { to_agent_id: bob.agent_id as string, body: 'check inbox' }
     })
     const sendObj = await parseTool(sendResp)
