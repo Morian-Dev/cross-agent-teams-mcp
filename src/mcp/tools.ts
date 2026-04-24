@@ -34,6 +34,12 @@ import { detectTmuxPane } from '../daemon/tmux-pane-detect.js'
 import { bindRuntimeIdentity } from '../daemon/runtime-identity.js'
 import type { DetectAgentKind } from '../daemon/tmux-pane-detect.js'
 import type { ClientKind } from '../lib/client-kind.js'
+import { CodexPanePreRegRepo } from './codex-pane-pre-register-repo.js'
+import {
+  PreRegisterCodexPaneService,
+  preRegisterCodexPaneInputSchema,
+} from './pre-register-codex-pane.js'
+import { autoBindCodexPane } from './auto-bind-codex-pane.js'
 
 export interface AgentIdHolder { current: string | undefined }
 
@@ -241,6 +247,8 @@ export function registerBusinessTools(
   const getContractSvc = new GetContractService(db, agents)
   const diffContractsSvc = new DiffContractsService(db, agents)
   const pendingEventsSvc = new PendingContractEventsService(db, agents)
+  const codexPanePreRegRepo = new CodexPanePreRegRepo(db)
+  const preRegisterCodexPaneSvc = new PreRegisterCodexPaneService(codexPanePreRegRepo)
 
   function caller(): string | undefined { return getCallerAgentId() }
 
@@ -285,6 +293,15 @@ export function registerBusinessTools(
         ui_pid: args.ui_pid,
       })
       return 'ok' in boundByPid && boundByPid.ok
+    }
+
+    if (inferredAgent === 'codex') {
+      const auto = await autoBindCodexPane({
+        callerAgentId,
+        repo: codexPanePreRegRepo,
+        bindRuntimeIdentitySvc,
+      })
+      if (auto) return true
     }
 
     const detected = await detectTmuxPane({ agent: inferredAgent })
@@ -562,6 +579,23 @@ export function registerBusinessTools(
       try { fanout.detach(agentId) } catch { /* best-effort */ }
     }
   }
+
+  // pre_register_codex_pane — callable by launchers before any agent row exists
+  server.registerTool(
+    'pre_register_codex_pane',
+    {
+      title: 'Pre-register codex tmux pane',
+      description: [
+        'Pre-register a pending tmux-pane claim so the launcher can claim a tmux pane before starting codex.',
+        'The launcher should call this with `$TMUX_PANE` and a freshly generated UUID, then `exec codex --remote ... -c xats.agent_id="\\"<uuid>\\""`.',
+        'When the codex agent later calls `register_agent({client:"codex"})` without `ui_pid`, the daemon uses the pending row to resolve the correct UI pid and auto-bind the pane.',
+        'Callable without a prior `register_agent` — launchers have no agent identity yet.',
+        'TTL defaults to 120 seconds and is capped at 600; pending rows are garbage-collected opportunistically.',
+      ].join(' '),
+      inputSchema: preRegisterCodexPaneInputSchema,
+    },
+    async (args: unknown) => run(async () => preRegisterCodexPaneSvc.register(args))
+  )
 
   // register_agent — bootstrap: callable before an agents row exists for this session
   server.registerTool(

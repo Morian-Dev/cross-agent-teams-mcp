@@ -91,6 +91,11 @@ const DDL = [
     contract_name TEXT NOT NULL,
     subscribed_at TEXT NOT NULL,
     PRIMARY KEY (agent_id, team, contract_name)
+  )`,
+  `CREATE TABLE IF NOT EXISTS codex_pane_pre_registrations (
+    pane_id TEXT PRIMARY KEY,
+    xats_agent_id TEXT NOT NULL,
+    expires_at TEXT NOT NULL
   )`
 ]
 
