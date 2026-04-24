@@ -27,6 +27,7 @@ import { BindOpencodeSessionService } from './bind-opencode-session.js'
 import { BindRuntimeIdentityService } from './bind-runtime-identity.js'
 import { RegisterCodexSelfService } from './register-codex-self.js'
 import { UnregisterSelfService } from './unregister-self.js'
+import { toPublicAgentRow } from './agent-public-row.js'
 import { detectTmuxPane } from '../daemon/tmux-pane-detect.js'
 import type { DetectAgentKind } from '../daemon/tmux-pane-detect.js'
 import type { ClientKind } from '../lib/client-kind.js'
@@ -636,7 +637,9 @@ export function registerBusinessTools(
       const who = requireAgent()
       if (typeof who !== 'string') return toText(who)
       const row = agents.findById(who)!
-      return run(() => ({ agents: agents.list({ team: row.team }) }))
+      return run(() => ({
+        agents: agents.list({ team: row.team }).map(toPublicAgentRow),
+      }))
     }
   )
 
