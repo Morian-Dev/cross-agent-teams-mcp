@@ -1,6 +1,9 @@
 import { defineConfig } from 'tsup'
 export default defineConfig({
-  entry: ['src/cli.ts'],
+  entry: {
+    cli: 'src/cli.ts',
+    'channel-cli': 'plugins/cross-agent-teams-channel/src/cli.ts'
+  },
   format: ['esm'],
   target: 'node20',
   clean: true,

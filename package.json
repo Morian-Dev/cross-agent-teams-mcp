@@ -1,10 +1,11 @@
 {
   "name": "cross-agent-teams-mcp",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "MCP daemon for cross-agent collaboration",
   "type": "module",
   "bin": {
-    "cross-agent-teams-mcp": "./dist/cli.js"
+    "cross-agent-teams-mcp": "./dist/cli.js",
+    "cross-agent-teams-channel": "./dist/channel-cli.js"
   },
   "files": [
     "dist",

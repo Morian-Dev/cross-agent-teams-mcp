@@ -76,6 +76,7 @@ export async function main(
   const hostServer = createProxyServer()
   const stdioTransport = new StdioServerTransport()
 
+  let registrationEverSucceeded = false
   const controller = runReconnectingProxy({
     daemonUrl: args.daemonUrl,
     channel_session_id: csid,
@@ -83,6 +84,7 @@ export async function main(
       relayChannelWake(hostServer, params as { content: string; meta: Record<string, string> })
     },
     onSequenceComplete: () => {
+      registrationEverSucceeded = true
       // Announce csid to Claude via host-facing channel notification so Claude
       // can call bind_channel({channel_session_id}) to bind its own agent row.
       const hint = buildStartupHint(csid)
@@ -96,6 +98,10 @@ export async function main(
     stopped = true
     try { await controller.stop() } catch { /* best-effort */ }
     try { await hostServer.close() } catch { /* best-effort */ }
+    if (!registrationEverSucceeded) {
+      process.stderr.write(`cross-agent-teams-proxy: daemon unreachable at ${args.daemonUrl}\n`)
+      process.exit(1)
+    }
     process.exit(0)
   }
 

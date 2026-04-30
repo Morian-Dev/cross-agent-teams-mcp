@@ -6,7 +6,7 @@ An MCP daemon for cross-agent collaboration, with local delivery transports for 
 
 ## Quick Start
 
-This package ships a single long-running HTTP daemon.  You start it once on your machine, then point Claude Code / Codex / opencode at it as an MCP server.  There is no stdio entry point and no "auto bootstrap" — start the daemon explicitly first, agents connect to it second.
+This package ships two bins on the same npm name: the long-running HTTP daemon (`cross-agent-teams-mcp`) and a stdio channel proxy (`cross-agent-teams-channel`) that lets Claude Code receive `notifications/channel_wake` from the daemon.  You start the daemon once on your machine, then point Claude Code at the proxy as an MCP server, and finally launch Claude with the experimental channel loader so it subscribes to wake notifications.  There is no auto-bootstrap — the proxy MUST NOT and WILL NOT start a daemon for you; if the daemon is unreachable the proxy fails fast.
 
 ### 1. Start the daemon
 
@@ -22,28 +22,42 @@ You can verify the service with:
 curl http://127.0.0.1:9100/health
 ```
 
-### 2. Configure your agent's MCP client
+### 2. Configure Claude Code's MCP client to use the channel proxy
 
-Point your agent at the running daemon over Streamable HTTP.  For Claude Code (`~/.claude.json` or `.mcp.json`):
+Add the channel proxy to `.mcp.json` (or `~/.claude.json`).  The MCP server name MUST match the `server:<name>` suffix passed to Claude in step 3:
 
 ```json
 {
   "mcpServers": {
-    "cross-agent-teams": {
-      "type": "http",
-      "url": "http://127.0.0.1:9100/mcp"
+    "cross-agent-teams-channel": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "cross-agent-teams-mcp@latest",
+        "cross-agent-teams-channel",
+        "--daemon-url",
+        "http://127.0.0.1:9100/mcp"
+      ]
     }
   }
 }
 ```
 
-For Codex CLI, see [docs/configs/codex-cli.md](docs/configs/codex-cli.md).  For opencode see the "Using opencode with xats (tmux)" section below.
+If you started the daemon with `--token <t>`, set `CROSS_AGENT_TEAMS_MCP_DAEMON_URL` along with the appropriate header forwarding in your daemon-side configuration; the proxy itself reads only the daemon URL.
 
-If you started the daemon with `--token <t>`, add `"headers": { "Authorization": "Bearer <t>" }` to the client configuration.
+For Codex CLI, see [docs/configs/codex-cli.md](docs/configs/codex-cli.md) — Codex talks to the daemon directly over Streamable HTTP and does not need the channel proxy.  For opencode see the "Using opencode with xats (tmux)" section below.
 
-### 3. Register from inside the agent
+### 3. Start Claude Code with the channel loader
 
-Once the agent's MCP client is connected, register from inside the agent session — see `register_claude_self`, `register_codex_self`, and `register_agent` below.
+```bash
+claude --dangerously-load-development-channels server:cross-agent-teams-channel
+```
+
+The `server:<name>` suffix MUST equal the MCP server name configured in `.mcp.json` (`cross-agent-teams-channel` above).  If the names disagree, Claude Code's experimental channel loader will not wire the proxy in and you will not see channel wake notifications.
+
+### 4. Register from inside the agent
+
+Once Claude Code is connected through the proxy, register from inside the agent session — see `register_claude_self`, `register_codex_self`, and `register_agent` below.
 
 ### Running from source
 

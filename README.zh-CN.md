@@ -6,7 +6,7 @@
 
 ## 快速开始
 
-这个包只发一个常驻的 HTTP daemon.  你在本机起一次, 然后让 Claude Code / Codex / opencode 当作 MCP server 接进来.  没有 stdio 入口, 也没有"自动拉起 daemon", 顺序就是: 先显式起 daemon, 再让 agent 连过来.
+这个包在同一个 npm 名字下发布两个 bin: 长驻的 HTTP daemon (`cross-agent-teams-mcp`) 以及一个 stdio channel proxy (`cross-agent-teams-channel`), 后者让 Claude Code 能从 daemon 收到 `notifications/channel_wake`.  你先在本机起一次 daemon, 然后让 Claude Code 把 proxy 当作 MCP server 接进来, 最后用 channel loader 启动 Claude 让它订阅 wake 通知.  没有"自动拉起 daemon" 这种行为 — proxy 不会, 也禁止替你启动 daemon; daemon 不可达时 proxy 直接 fail-fast 退出非零.
 
 ### 1. 启动 daemon
 
@@ -22,28 +22,42 @@ npx -y cross-agent-teams-mcp@latest daemon --port 9100
 curl http://127.0.0.1:9100/health
 ```
 
-### 2. 在 agent 里配置 MCP client
+### 2. 让 Claude Code 通过 channel proxy 连接
 
-让 agent 通过 Streamable HTTP 连到正在运行的 daemon.  Claude Code (`~/.claude.json` 或 `.mcp.json`) 配置示例:
+在 `.mcp.json` (或 `~/.claude.json`) 里加上 channel proxy.  MCP server 的 key **必须** 等于第 3 步给 Claude 的 `server:<name>` 后缀:
 
 ```json
 {
   "mcpServers": {
-    "cross-agent-teams": {
-      "type": "http",
-      "url": "http://127.0.0.1:9100/mcp"
+    "cross-agent-teams-channel": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "cross-agent-teams-mcp@latest",
+        "cross-agent-teams-channel",
+        "--daemon-url",
+        "http://127.0.0.1:9100/mcp"
+      ]
     }
   }
 }
 ```
 
-Codex CLI 的配置见 [docs/configs/codex-cli.md](docs/configs/codex-cli.md).  opencode 见下面的 "Using opencode with xats (tmux)" 章节.
+如果你在启动 daemon 时带了 `--token <t>`, 走环境变量 `CROSS_AGENT_TEAMS_MCP_DAEMON_URL` 配合 daemon 侧的 header 配置; proxy 自身只读取 daemon URL.
 
-如果你启动 daemon 时带了 `--token <t>`, 在 client 配置中加上 `"headers": { "Authorization": "Bearer <t>" }` 即可.
+Codex CLI 的配置见 [docs/configs/codex-cli.md](docs/configs/codex-cli.md) — Codex 直接用 Streamable HTTP 连 daemon, 不需要 channel proxy.  opencode 见下面的 "在 tmux 里使用 opencode" 章节.
 
-### 3. 在 agent 里完成注册
+### 3. 用 channel loader 启动 Claude Code
 
-agent 连上 MCP 后, 在 agent 会话里调用 `register_claude_self` / `register_codex_self` / `register_agent` 完成注册, 详见后续章节.
+```bash
+claude --dangerously-load-development-channels server:cross-agent-teams-channel
+```
+
+`server:<name>` 后缀 **必须** 与 `.mcp.json` 里 MCP server 的 key (上例中是 `cross-agent-teams-channel`) 完全一致.  名字不一致, Claude Code 的 experimental channel loader 不会把 proxy 接进来, 你也就收不到 channel wake 通知.
+
+### 4. 在 agent 里完成注册
+
+Claude Code 经由 proxy 连上之后, 在 agent 会话里调用 `register_claude_self` / `register_codex_self` / `register_agent` 完成注册, 详见后续章节.
 
 ### 从源码运行
 
