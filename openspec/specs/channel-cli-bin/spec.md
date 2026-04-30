@@ -53,8 +53,8 @@ This boundary is intentional: the abandoned 0.2.x line collapsed daemon and prox
 
 #### Scenario: source contains no daemon-spawning primitives
 
-- **WHEN** the channel proxy source tree (the entry compiled into `dist/channel-cli.js` and its imports) is searched for `child_process`, `spawn`, `fork`, `execFile`, or any import of the daemon's `startServer` / port-acquire helpers
-- **THEN** no such reference exists
+- **WHEN** the channel proxy source tree (the entry compiled into `dist/channel-cli.js` and its imports) is searched for the long-lived child-process primitives `spawn(`, `fork(`, `spawnSync(`, `forkSync(`, or for any import of the daemon's `startServer` / port-acquire helpers
+- **THEN** no such reference exists.  Synchronous system queries via `execFileSync` (e.g. invoking `ps` to walk ancestor pids) are permitted because they cannot host a daemon's lifecycle.
 
 ### Requirement: Build pipeline emits both bins from a single tsup invocation
 

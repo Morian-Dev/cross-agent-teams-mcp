@@ -1,5 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { findClaudeUiPid } from './find-claude-pid.js'
 
 export interface RegistrationConfig {
   daemonUrl: string
@@ -64,7 +65,7 @@ export async function runRegistrationSequence(
       role: '__channel_proxy__',
       name: `channel-proxy-${process.pid}`,
       team: 'default',
-      claude_ui_pid: process.ppid,
+      claude_ui_pid: findClaudeUiPid(),
       delivery: {
         kind: 'claude-channel',
         channel_session_id: config.channel_session_id,

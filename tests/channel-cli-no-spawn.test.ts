@@ -4,7 +4,14 @@ import { join, resolve } from 'node:path'
 
 const PROXY_SRC_DIR = resolve(__dirname, '..', 'plugins', 'cross-agent-teams-channel', 'src')
 
-const FORBIDDEN_PATTERN = /\b(child_process|spawn|fork|execFile)\b/
+// The point of this guard is to catch a re-introduction of the 0.2.x
+// auto-bootstrap path (the channel proxy spawning a daemon child).  The 0.3.x
+// proxy is allowed to make synchronous, short-lived system queries (e.g.
+// `execFileSync('ps', ...)` to walk ancestor pids when figuring out which
+// claude CLI launched it through an npx wrapper).  We therefore ban the
+// long-running primitives `spawn` / `fork` (and their *Sync siblings) but
+// permit `execFile` / `exec` style synchronous invocations.
+const FORBIDDEN_PATTERN = /\b(spawn|fork)(Sync)?\s*\(/
 
 function listSourceFiles(dir: string): string[] {
   const out: string[] = []
