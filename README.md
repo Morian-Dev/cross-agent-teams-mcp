@@ -29,10 +29,11 @@ Add the channel proxy to `.mcp.json` (or `~/.claude.json`).  The MCP server name
 ```json
 {
   "mcpServers": {
-    "cross-agent-teams-channel": {
+    "cross-agent-teams": {
       "command": "npx",
       "args": [
         "-y",
+        "-p",
         "cross-agent-teams-mcp@latest",
         "cross-agent-teams-channel",
         "--daemon-url",
@@ -50,10 +51,10 @@ For Codex CLI, see [docs/configs/codex-cli.md](docs/configs/codex-cli.md) — Co
 ### 3. Start Claude Code with the channel loader
 
 ```bash
-claude --dangerously-load-development-channels server:cross-agent-teams-channel
+claude --dangerously-load-development-channels server:cross-agent-teams
 ```
 
-The `server:<name>` suffix MUST equal the MCP server name configured in `.mcp.json` (`cross-agent-teams-channel` above).  If the names disagree, Claude Code's experimental channel loader will not wire the proxy in and you will not see channel wake notifications.
+The `server:<name>` suffix MUST equal the MCP server name configured in `.mcp.json` (`cross-agent-teams` above).  Note this is **the MCP server key in `.mcp.json`**, not the npm bin name — the bin name happens to be `cross-agent-teams-channel`, but the MCP server key is yours to choose.  If the names disagree, Claude Code's experimental channel loader will not wire the proxy in and you will not see channel wake notifications.
 
 ### 4. Register from inside the agent
 

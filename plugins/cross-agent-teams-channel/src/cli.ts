@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto'
+import { realpathSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createProxyServer, relayChannelWake } from './proxy.js'
 import { runReconnectingProxy } from './daemon-client.js'
@@ -113,7 +115,21 @@ export async function main(
   process.on('SIGINT', () => { void shutdown() })
 }
 
+// Entry-point check.  The naive `import.meta.url === \`file://${process.argv[1]}\``
+// breaks when launched via an npm `.bin` symlink (npx, `npm install -g`):
+// process.argv[1] is the symlink path, while import.meta.url is already
+// resolved.  Compare realpath-resolved file paths instead.
+function isEntry(): boolean {
+  try {
+    const metaPath = fileURLToPath(import.meta.url)
+    const argvPath = realpathSync(process.argv[1])
+    return metaPath === argvPath
+  } catch {
+    return false
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-misused-promises
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isEntry()) {
   void main()
 }

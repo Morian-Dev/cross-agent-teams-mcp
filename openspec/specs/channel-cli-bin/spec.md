@@ -24,12 +24,12 @@ The `cross-agent-teams-mcp` npm package SHALL declare a second bin entry named `
 
 ### Requirement: Channel proxy CLI is invokable via npx without a local clone
 
-A user with no checkout SHALL be able to start the channel proxy by running `npx -y cross-agent-teams-mcp@<version> cross-agent-teams-channel --daemon-url <url>` (or, after at least one prior `npx`, the shorter `npx cross-agent-teams-channel --daemon-url <url>`).  The published CLI MUST accept `--daemon-url <url>` and `CROSS_AGENT_TEAMS_MCP_DAEMON_URL` as the daemon address inputs, matching the existing `plugins/cross-agent-teams-channel` CLI surface.
+A user with no checkout SHALL be able to start the channel proxy by running `npx -y -p cross-agent-teams-mcp@<version> cross-agent-teams-channel --daemon-url <url>`.  The `-p` (`--package`) flag is required because `cross-agent-teams-channel` is a non-default bin in the `cross-agent-teams-mcp` package; without it, npx invokes the package's same-named default bin (the daemon) and treats `cross-agent-teams-channel` as a positional argument.  The published CLI MUST accept `--daemon-url <url>` and `CROSS_AGENT_TEAMS_MCP_DAEMON_URL` as the daemon address inputs, matching the existing `plugins/cross-agent-teams-channel` CLI surface.
 
 #### Scenario: --daemon-url flag is honoured by the published bin
 
 - **GIVEN** the package has been published and a daemon is reachable at `http://127.0.0.1:9100/mcp`
-- **WHEN** a fresh shell runs `npx -y cross-agent-teams-mcp@latest cross-agent-teams-channel --daemon-url http://127.0.0.1:9100/mcp` and an MCP client speaks `initialize` over its stdio
+- **WHEN** a fresh shell runs `npx -y -p cross-agent-teams-mcp@latest cross-agent-teams-channel --daemon-url http://127.0.0.1:9100/mcp` and an MCP client speaks `initialize` over its stdio
 - **THEN** the CLI completes the handshake and reports the channel proxy is ready, without any other configuration
 
 #### Scenario: env var fallback when --daemon-url omitted

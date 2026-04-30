@@ -29,10 +29,11 @@ curl http://127.0.0.1:9100/health
 ```json
 {
   "mcpServers": {
-    "cross-agent-teams-channel": {
+    "cross-agent-teams": {
       "command": "npx",
       "args": [
         "-y",
+        "-p",
         "cross-agent-teams-mcp@latest",
         "cross-agent-teams-channel",
         "--daemon-url",
@@ -50,10 +51,10 @@ Codex CLI 的配置见 [docs/configs/codex-cli.md](docs/configs/codex-cli.md) �
 ### 3. 用 channel loader 启动 Claude Code
 
 ```bash
-claude --dangerously-load-development-channels server:cross-agent-teams-channel
+claude --dangerously-load-development-channels server:cross-agent-teams
 ```
 
-`server:<name>` 后缀 **必须** 与 `.mcp.json` 里 MCP server 的 key (上例中是 `cross-agent-teams-channel`) 完全一致.  名字不一致, Claude Code 的 experimental channel loader 不会把 proxy 接进来, 你也就收不到 channel wake 通知.
+`server:<name>` 后缀 **必须** 与 `.mcp.json` 里 MCP server 的 key (上例中是 `cross-agent-teams`) 完全一致.  注意这里说的是 **`.mcp.json` 里的 MCP server key**, 不是 npm bin 名 — bin 名碰巧叫 `cross-agent-teams-channel`, 但 MCP server key 你想叫什么都行.  名字不一致, Claude Code 的 experimental channel loader 不会把 proxy 接进来, 你也就收不到 channel wake 通知.
 
 ### 4. 在 agent 里完成注册
 
