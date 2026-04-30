@@ -2,7 +2,7 @@
 
 [中文说明](./README.zh-CN.md)
 
-A local MCP daemon that lets multiple AI coding agents (Claude Code, Codex, opencode) running on the same machine talk to each other.  Agents register, send 1-to-1 messages, broadcast to a team or role, queue shared tasks, and wake each other up — all over a single daemon, no external services.
+A local MCP daemon that lets multiple AI coding agents (Claude Code, Codex, opencode) running on the same machine talk to each other.  Agents register, send 1-to-1 messages, broadcast to a team or role, and wake each other up — all over a single daemon, no external services.
 
 ## What's in the npm package
 
@@ -89,82 +89,52 @@ Without an app-server, `send_message` to this Codex still queues a mailbox row, 
 
 Detailed config (auth headers, tmux fallback, lower-level `register_agent` form): [docs/configs/codex-cli.md](docs/configs/codex-cli.md).
 
-### opencode
+### Other coding agents (opencode, cursor, ...)
 
-opencode connects directly over Streamable HTTP for tools.  It has no dedicated wake-up transport in this daemon (the previous `opencode-server` transport was removed); cross-agent pokes are delivered to opencode by injecting text into its tmux pane.  Run opencode inside a tmux window and the daemon will resolve `pid → tty → pane` automatically when you register.  See [docs/configs/opencode.md](docs/configs/opencode.md).
+Anything that is not Claude Code or Codex — opencode, cursor, an editor extension, your own harness — connects over plain Streamable HTTP and registers as `agent_type="custom"` (the agent figures this out for you).  There is no dedicated wake-up transport for these; cross-agent pokes are delivered by injecting text into the agent's tmux pane, so run the agent inside a tmux window and the daemon will resolve `pid → tty → pane` automatically when you register.
 
-## 3. Register and communicate from inside the agent
+Per-tool config snippets live in [docs/configs/opencode.md](docs/configs/opencode.md) (and `docs/configs/` for the rest).
 
-Once your agent's MCP client is connected, run the registration helpers from inside the agent session — never from `curl` or another external HTTP client (that creates a different MCP session and breaks delivery).
+## 3. Use it from your agent
 
-### Register
+Once your agent is connected to the daemon, you don't have to memorize tool names.  Just talk to the agent in plain language and it will pick the right tool — the README below shows the *kinds of things you say*, not the underlying API.
 
-`register_agent` is the single registration entry point.  Decide `agent_type=` mechanically before calling, in order — first match wins:
+> Note: always run these from inside the agent session.  Don't try to register or send messages with `curl` or any other external HTTP client — that opens a different MCP session and the messages won't reach you.
 
-1. `printenv CODEX_THREAD_ID` non-empty → `agent_type="codex"`; pass that value as `thread_id` (REQUIRED).  Do NOT pass `ui_pid` (the launcher's `pre_register_codex_pane` flow handles tmux pane binding).
-2. `printenv CLAUDECODE` non-empty OR `printenv CLAUDE_CODE_ENTRYPOINT` non-empty → `agent_type="claude-code"`; pass `$PPID` as `ui_pid`.
-3. None of the above → `agent_type="custom"` with `agent_type_name="<your harness name, e.g. cursor, opencode, ...>"`.  Detect the harness name from your runtime environment when you can — for example, `printenv CURSOR_TRACE_ID` non-empty is a cursor signal — but do NOT guess from system-wide signals like "binary X exists on PATH": those reflect what the user has installed, not what runtime you are inside, and produce wrong agent types.  When unsure, prefer `agent_type_name="unknown"` over a wrong guess.
+### Register the session
 
-Codex:
+The first time an agent connects to xats it stays unregistered until you tell it to register.  Just say:
 
-```text
-register_agent({
-  agent_type: "codex",
-  name: "<agent-name>",
-  thread_id: "<value of $CODEX_THREAD_ID>",
-  project_dir: "<your project's absolute path>"
-})
-```
+> Register me to xats as alice.
 
-Claude Code:
+Or with an explicit team:
 
-```text
-register_agent({
-  agent_type: "claude-code",
-  name: "<agent-name>",
-  ui_pid: <Claude Code CLI pid; in a Bash tool call this is $PPID>,
-  project_dir: "<your project's absolute path>"
-})
-```
+> Register me to xats as alice on team backend.
 
-Other harnesses (cursor, opencode, an editor extension, an unknown caller):
+If you don't give a team, the agent uses your current working directory's basename — so you typically don't need to think about it.
 
-```text
-register_agent({
-  agent_type: "custom",
-  agent_type_name: "<your harness name>",  // required when agent_type="custom"
-  name: "<agent-name>",
-  project_dir: "<your project's absolute path>",
-  ui_pid: <runtime pid>          // strongly recommended for tmux poke delivery
-})
-```
+### Talk to other agents
 
-`model` is OPTIONAL for any `agent_type`; omit it when you do not have an authoritative model identifier (the daemon stores NULL).  `team` defaults to the basename of `project_dir`; pass it explicitly only when you want a different team.  On success Claude Code registrations include `channel_session_id` in the response — that means wake delivery is wired up automatically.
+Address by name, by team, or by role:
 
-`agent_type="opencode"` is still accepted as an explicit value for opencode-aware launchers, but no detection probe promotes it: opencode being installed does NOT mean the LLM you are running is inside opencode.
+> Send a message to bob: how is the migration going?
+>
+> Tell my team I'm starting the deploy.
+>
+> Send the frontend role a heads-up that the API will change.
+>
+> What's in my inbox?
 
-### Send messages and inspect inbox
+The agent picks the right tool (`send_message`, `broadcast`, `broadcast_to_role`, `get_inbox`).  Outgoing messages also wake the recipient automatically — you don't need a separate poke.
 
-```text
-send_message({ to_agent_name: "<other-agent>", subject: "...", body: "..." })
-broadcast({ subject: "...", body: "..." })            // same team
-broadcast_to_role({ role: "<role>", subject, body })  // same team, same role
-get_inbox()                                            // your own messages
-```
+### See who else is around
 
-`send_message` auto-pokes the recipient with a short wake-up hint; bodies are read via `get_inbox`.  Reply expectations are signalled by `need_reply` (default `true`).  Address by UUID with `send_message_by_id` if you have the `agent_id` instead of the name.
-
-### Shared task list (per team)
-
-```text
-task_add({ title, description? })
-task_list({ status?: "open" | "claimed" | "done" })
-task_claim({ task_id })
-task_complete({ task_id, result? })
-```
+> Who else is registered on xats?
+>
+> List agents on team backend.
 
 ## More
 
 - Full tool reference and schema: launch the daemon and call `tools/list` on the MCP endpoint.
-- Codex / opencode setup details: `docs/configs/`.
+- Per-agent config details: `docs/configs/`.
 - Source: [github.com/jtianling/cross-agent-teams-mcp](https://github.com/jtianling/cross-agent-teams-mcp).

@@ -20,7 +20,8 @@ export class CliArgError extends Error {
 export function buildStartupHint(csid: string): { content: string; meta: { source: string; kind: string } } {
   const content = [
     `cross-agent-teams-mcp: your channel_session_id is ${csid}.`,
-    `Preferred in Claude Code: call register_agent({agent_type: "claude-code", name: "<agent-name>", ui_pid: $PPID}) from this session — do NOT pass channel_session_id here; the daemon auto-binds via ui_pid.`,
+    `Do NOT register automatically. First ask the user (in English) to register this session so it can talk to other agents — use exactly this wording: 'To join cross-agent-teams (xats) and message other agents, reply with: Register to xats — name: your-agent-name, team: your-team-name (optional; defaults to the current working directory basename).'`,
+    `Once the user provides a name (and optionally a team), call register_agent({agent_type: "claude-code", name: "<name from user>", team: "<team from user, omit if not provided>", ui_pid: $PPID, project_dir: "<current working directory>"}) — do NOT pass channel_session_id here; the daemon auto-binds via ui_pid.`,
     `bind_channel({channel_session_id: "${csid}"}) is the low-level rebind tool for an already-registered Claude host that needs to switch to a fresh csid; it is NOT the primary registration path.`,
     `Do not use curl or another external HTTP client for Claude registration here — that would create a different MCP session, and follow-up tools in Claude Code could still see unknown_agent.`
   ].join(' ')

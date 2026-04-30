@@ -36,6 +36,18 @@ describe('proxy startup channel notification', () => {
     expect(params.content).toContain('register_agent')
     expect(params.content).toContain('agent_type: "claude-code"')
     expect(params.content).toContain('curl')
+    // Must instruct Claude Code to ask the user (in English) before registering,
+    // and use placeholder names that survive markdown rendering (no <angle-brackets>
+    // in the user-facing wording — Claude Code's renderer strips them).
+    expect(params.content).toMatch(/ask the user/i)
+    expect(params.content).toContain('Register to xats')
+    expect(params.content).toContain('your-agent-name')
+    expect(params.content).toContain('your-team-name')
+    expect(params.content).toMatch(/Do NOT register automatically/)
+    // Lead-in must explain why (talk to other agents), not just bark "Register".
+    expect(params.content).toMatch(/(message|talk to|communicate with) other agents/i)
+    // No trailing '?' on the user-facing wording — it ends in a period.
+    expect(params.content).not.toMatch(/basename\)\?/)
     expect(params.meta.kind).toBe('startup_bind_hint')
     // Brand-contract assertions
     expect(params.content).toContain('cross-agent-teams-mcp')
