@@ -106,6 +106,7 @@ coverage/
 .codex/
 .gemini/
 .mcp.json
+skillsmgr-deploy.json
 
 # Debug reports (transient per-session artifacts)
 .ff-debug-report.md
