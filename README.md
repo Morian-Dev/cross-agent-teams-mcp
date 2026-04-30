@@ -2,34 +2,46 @@
 
 [中文说明](./README.zh-CN.md)
 
-An MCP daemon for cross-agent collaboration, with local delivery transports for tmux, Codex app-server, and Claude channel wake integration.
+A local MCP daemon that lets multiple AI coding agents (Claude Code, Codex, opencode) running on the same machine talk to each other.  Agents register, send 1-to-1 messages, broadcast to a team or role, queue shared tasks, and wake each other up — all over a single daemon, no external services.
 
-## Quick Start
+## What's in the npm package
 
-This package ships two bins on the same npm name: the long-running HTTP daemon (`cross-agent-teams-mcp`) and a stdio channel proxy (`cross-agent-teams-channel`) that lets Claude Code receive `notifications/channel_wake` from the daemon.  You start the daemon once on your machine, then point Claude Code at the proxy as an MCP server, and finally launch Claude with the experimental channel loader so it subscribes to wake notifications.  There is no auto-bootstrap — the proxy MUST NOT and WILL NOT start a daemon for you; if the daemon is unreachable the proxy fails fast.
+`cross-agent-teams-mcp` ships two bins from the same package:
 
-### 1. Start the daemon
+- **`cross-agent-teams-mcp daemon`** — the long-running HTTP daemon.  Stores agents, mailboxes, and the task list in a local SQLite file, exposes its tools at `http://127.0.0.1:9100/mcp`.
+- **`cross-agent-teams-channel`** — a stdio MCP shim that lets Claude Code receive `notifications/channel_wake` from the daemon (Claude Code's experimental channel capability).  Required for Claude Code wake-ups; not needed for Codex (which uses its own app-server transport) or opencode (which falls back to tmux-pane injection).
+
+## 1. Start the daemon
+
+Run this once on your machine and keep the process alive (dedicated terminal, `tmux`, `screen`, `launchd` — your call):
 
 ```bash
 npx -y cross-agent-teams-mcp@latest daemon --port 9100
 ```
 
-Keep this process running (a dedicated terminal, `tmux`, `screen`, or your favourite supervisor).  The daemon listens on `127.0.0.1:9100` by default.  The MCP endpoint is `http://127.0.0.1:9100/mcp` and the health check endpoint is `http://127.0.0.1:9100/health`.
+The daemon listens on `127.0.0.1:9100`.  MCP endpoint is `http://127.0.0.1:9100/mcp`, health endpoint is `http://127.0.0.1:9100/health`.
 
-You can verify the service with:
+Common flags:
 
-```bash
-curl http://127.0.0.1:9100/health
-```
+- `--port <n>` (default `9100`)
+- `--token <t>` (Bearer auth)
+- `--db <path>` (default `~/.cross-agent-teams-mcp/data.db`)
+- `--pid-file <path>` (default `~/.cross-agent-teams-mcp/daemon.pid`)
 
-### 2. Configure Claude Code's MCP client to use the channel proxy
+## 2. Configure your agent's MCP client
 
-Add the channel proxy to `.mcp.json` (or `~/.claude.json`).  The MCP server name MUST match the `server:<name>` suffix passed to Claude in step 3:
+### Claude Code (needs both entries — HTTP for tools, stdio for channel wake)
+
+`.mcp.json` (or `~/.claude.json`):
 
 ```json
 {
   "mcpServers": {
     "cross-agent-teams": {
+      "type": "http",
+      "url": "http://127.0.0.1:9100/mcp"
+    },
+    "cross-agent-teams-channel": {
       "command": "npx",
       "args": [
         "-y",
@@ -44,252 +56,84 @@ Add the channel proxy to `.mcp.json` (or `~/.claude.json`).  The MCP server name
 }
 ```
 
-If you started the daemon with `--token <t>`, set `CROSS_AGENT_TEAMS_MCP_DAEMON_URL` along with the appropriate header forwarding in your daemon-side configuration; the proxy itself reads only the daemon URL.
-
-For Codex CLI, see [docs/configs/codex-cli.md](docs/configs/codex-cli.md) — Codex talks to the daemon directly over Streamable HTTP and does not need the channel proxy.  For opencode see the "Using opencode with xats (tmux)" section below.
-
-### 3. Start Claude Code with the channel loader
+Then start Claude Code with the experimental channel loader so it subscribes to the proxy's wake notifications:
 
 ```bash
-claude --dangerously-load-development-channels server:cross-agent-teams
+claude --dangerously-load-development-channels server:cross-agent-teams-channel
 ```
 
-The `server:<name>` suffix MUST equal the MCP server name configured in `.mcp.json` (`cross-agent-teams` above).  Note this is **the MCP server key in `.mcp.json`**, not the npm bin name — the bin name happens to be `cross-agent-teams-channel`, but the MCP server key is yours to choose.  If the names disagree, Claude Code's experimental channel loader will not wire the proxy in and you will not see channel wake notifications.
+The `server:<name>` suffix MUST equal the MCP server key in `.mcp.json` (`cross-agent-teams-channel` above).  If your daemon uses `--token <t>`, add `"headers": { "Authorization": "Bearer <t>" }` to the HTTP entry.
 
-### 4. Register from inside the agent
+### Codex CLI
 
-Once Claude Code is connected through the proxy, register from inside the agent session — see `register_claude_self`, `register_codex_self`, and `register_agent` below.
+Codex talks to the daemon directly over Streamable HTTP — no channel proxy needed; wake-ups go through Codex's own app-server transport.  See [docs/configs/codex-cli.md](docs/configs/codex-cli.md) for the config snippet.
 
-### Running from source
+### opencode
 
-If you cloned this repo and want to run the daemon from source:
+opencode connects directly over Streamable HTTP for tools.  It has no dedicated wake-up transport in this daemon (the previous `opencode-server` transport was removed); cross-agent pokes are delivered to opencode by injecting text into its tmux pane.  Run opencode inside a tmux window and the daemon will resolve `pid → tty → pane` automatically when you register.  See [docs/configs/opencode.md](docs/configs/opencode.md).
 
-```bash
-pnpm install
-pnpm build
-node dist/cli.js daemon --port 9100
-# or, without a build step:
-npx tsx src/cli.ts daemon --port 9100
-```
+## 3. Register and communicate from inside the agent
 
-`./start-server.sh` / `./stop-server.sh` are local-development convenience scripts that also bring up a Codex app-server alongside the daemon; they are not needed when consuming this package via `npx`.
+Once your agent's MCP client is connected, run the registration helpers from inside the agent session — never from `curl` or another external HTTP client (that creates a different MCP session and breaks delivery).
 
-## Common Flags
+### Register
 
-- `--port <port>`: listening port, default `9100`
-- `--token <token>`: enable Bearer token authentication
-- `--db <path>`: SQLite database path
-- `--pid-file <path>`: pid file path
-
-The default data directory is `~/.cross-agent-teams-mcp/`.  The default database file is `~/.cross-agent-teams-mcp/data.db`, and the default pid file is `~/.cross-agent-teams-mcp/daemon.pid`.
-
-If another instance is already running, startup returns `daemon already running pid=...`.
-
-## Delivery Transports
-
-The daemon currently supports these wake-up paths:
-
-- `tmux_pane_id`: inject text directly into a target tmux pane
-- `delivery.kind='codex-appserver'`: resume a Codex thread over websocket and start a turn
-- `delivery.kind='claude-channel'`: bind a Claude channel session and deliver channel wake notifications
-
-`register_agent(...)` now requires an explicit `client`.  Use one of `codex`, `claude-code`, or `opencode` for first-class runtimes.  For other agent harnesses, pass `client: "custom"` and optionally `client_name` for observability.
-
-When you do not explicitly choose a `team`, pass `project_dir` as the caller's current working directory.  The daemon derives the default team from that directory's basename, and still falls back to `"default"` when both fields are omitted.
-
-## Codex App-Server Delivery
-
-For daily Codex usage, the recommended entry point is `register_agent({ client: "codex", ... })`.  It registers a caller-supplied `thread_id` as a `codex-appserver` delivery target through the unified registration API.  It does not auto-bind a tmux pane.  If you want tmux fallback delivery, call `bind_runtime_identity(...)` after registration.
-
-`register_agent({ client: "codex", ... })` no longer guesses the caller's current thread from `thread/loaded/list`.  The daemon cannot safely infer "which loaded thread is mine" from the MCP session alone.  If `thread_id` is omitted, the tool returns `thread_id_required` with resumable thread ids for debugging instead of registering the wrong thread.
-
-Minimal example:
-
-```text
-register_agent({
-  client: "codex",
-  model: "gpt-5",
-  name: "lead",
-  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
-  role: "worker",
-  thread_id: "11111111-1111-4111-8111-111111111111"
-})
-```
-
-If you also want tmux fallback routing, bind runtime identity explicitly after registration:
-
-```text
-bind_runtime_identity({
-  agent: "codex",
-  ui_pid: 81979
-})
-```
-
-If you do not have the UI pid, you can fall back to `ui_tty + tmux_pane_id`:
-
-```text
-bind_runtime_identity({
-  agent: "codex",
-  ui_tty: "/dev/ttys026",
-  tmux_pane_id: "%1902"
-})
-```
-
-Override the websocket URL when needed:
-
-```text
-register_agent({
-  client: "codex",
-  model: "gpt-5",
-  name: "lead",
-  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
-  role: "worker",
-  thread_id: "11111111-1111-4111-8111-111111111111",
-  ws_url: "ws://127.0.0.1:8799"
-})
-```
-
-If the app-server requires a Bearer token, pass `auth_token_ref` as an environment variable name visible to the daemon:
-
-```text
-register_agent({
-  client: "codex",
-  model: "gpt-5",
-  name: "lead",
-  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
-  role: "worker",
-  thread_id: "11111111-1111-4111-8111-111111111111",
-  auth_token_ref: "CODEX_REMOTE_TOKEN"
-})
-```
-
-Behavior notes:
-
-- `register_agent({ client: "codex", ... })` is the recommended entry point
-- Default `ws_url` is `ws://127.0.0.1:8799`
-- `thread_id` is required for successful registration
-- tmux pane binding is handled separately by `bind_runtime_identity`
-- `detect_tmux_pane(...)` remains available for debugging, but does not write registry state
-- No loaded thread returns `no_loaded_threads`
-- Omitted `thread_id` returns `thread_id_required` with resumable thread ids for debugging
-- Success returns `{ agent_id, team, thread_id, ws_url }`
-
-Minimal Codex app-server startup:
-
-```bash
-codex app-server --listen ws://127.0.0.1:8799
-codex --remote ws://127.0.0.1:8799
-```
-
-You can also register a target manually with `register_agent`:
-
-```text
-register_agent({
-  model: "...",
-  name: "...",
-  role: "...",
-  team: "...",
-  delivery: {
-    kind: "codex-appserver",
-    thread_id: "11111111-1111-4111-8111-111111111111",
-    ws_url: "ws://127.0.0.1:8799"
-  }
-})
-```
-
-If the app-server requires a Bearer token:
-
-```text
-register_agent({
-  model: "...",
-  name: "...",
-  role: "...",
-  team: "...",
-  delivery: {
-    kind: "codex-appserver",
-    thread_id: "11111111-1111-4111-8111-111111111111",
-    ws_url: "ws://127.0.0.1:8799",
-    auth_token_ref: "CODEX_REMOTE_TOKEN"
-  }
-})
-```
-
-Behavior notes:
-
-- `thread_id` must be a UUID
-- `ws_url` must use `ws://` or `wss://`
-- `auth_token_ref` is interpreted only as an environment variable name
-- On success, `poke()` returns `{ ok: true, transport_used: 'codex-appserver', thread_id }`
-- On failure, `poke()` returns machine-readable errors such as `codex_connect_failed`, `codex_initialize_failed`, `codex_resume_failed`, `codex_turn_start_failed`, or `missing_auth_token`
-- When a target is explicitly registered as `codex-appserver`, the daemon does not fall back to tmux
-
-For a more complete Codex CLI setup example, see [docs/configs/codex-cli.md](docs/configs/codex-cli.md).
-
-## Claude Code Channel Delivery
-
-For Claude Code sessions, prefer registering from the active MCP session with `register_claude_self(...)`.  If you do not explicitly choose a `team`, pass `project_dir` as the current working directory so the daemon derives the project team from its basename.
+Claude Code:
 
 ```text
 register_claude_self({
-  name: "lead",
-  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
-  role: "worker",
-  channel_session_id: "csid-abc"
+  name: "<agent-name>",
+  ui_pid: <Claude Code CLI pid; in a Bash tool call this is $PPID>,
+  project_dir: "<your project's absolute path>"
 })
 ```
 
-You can also use the unified entry point:
+Codex (when `CODEX_THREAD_ID` is exported by the harness):
+
+```text
+register_codex_self({
+  name: "<agent-name>",
+  thread_id: "<value of $CODEX_THREAD_ID>",
+  project_dir: "<your project's absolute path>"
+})
+```
+
+Unified entry point (any client):
 
 ```text
 register_agent({
-  client: "claude-code",
-  model: "opus-4-7",
-  name: "lead",
-  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
-  role: "worker",
-  channel_session_id: "csid-abc"
+  client: "claude-code" | "codex" | "opencode" | "custom",
+  name: "<agent-name>",
+  model: "<model-name>",
+  project_dir: "<your project's absolute path>",
+  ui_pid: <runtime pid>          // optional but strongly recommended for non-codex
 })
 ```
 
-For a more complete Claude Code setup example, see [docs/configs/claude-code.md](docs/configs/claude-code.md).
+`team` defaults to the basename of `project_dir`; pass it explicitly only when you want a different team.  On success Claude Code registrations include `channel_session_id` in the response — that means wake delivery is wired up automatically.
 
-## Using opencode with xats (tmux)
-
-opencode integrates with xats as a plain tmux-hosted TUI.  There is no dedicated launcher and no HTTP transport — pokes are delivered by pasting into the opencode pane via tmux, exactly the same path used for `client: "custom"`.
-
-Start opencode inside a tmux window, then register from within opencode's MCP session:
-
-```bash
-tmux new-window opencode
-```
+### Send messages and inspect inbox
 
 ```text
-register_agent({
-  client: "opencode",
-  model: "opencode-default",
-  name: "my-opencode-agent",
-  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
-  role: "worker",
-  ui_pid: <opencode pid>
-})
+send_message({ to_agent_name: "<other-agent>", subject: "...", body: "..." })
+broadcast({ subject: "...", body: "..." })            // same team
+broadcast_to_role({ role: "<role>", subject, body })  // same team, same role
+get_inbox()                                            // your own messages
 ```
 
-Pass the opencode process pid as `ui_pid`.  The daemon resolves `pid → tty → tmux pane` and populates `tmux_pane_id` in the same registration call.  After registration, pokes from other agents route to the opencode pane as `transport_used: "tmux-poke"`.
+`send_message` auto-pokes the recipient with a short wake-up hint; bodies are read via `get_inbox`.  Reply expectations are signalled by `need_reply` (default `true`).  Address by UUID with `send_message_by_id` if you have the `agent_id` instead of the name.
 
-### Transport selection
+### Shared task list (per team)
 
-Transport selection is client-aware:
+```text
+task_add({ title, description? })
+task_list({ status?: "open" | "claimed" | "done" })
+task_claim({ task_id })
+task_complete({ task_id, result? })
+```
 
-- `client="claude-code"`: `claude-channel` first, then `tmux-poke`
-- `client="opencode"`: `tmux-poke`
-- `client="codex"`: `codex-appserver` first, then `tmux-poke`
+## More
 
-### Operator cutover
-
-If you are upgrading from a version that shipped the `opencode-server` transport:
-
-1. Stop the daemon with `./stop-server.sh` (this wipes `data.db` on purpose — the dropped `opencode_base_url` / `opencode_session_id` columns and the `opencode_pane_pre_registrations` table are not migrated).
-2. Rebuild: `pnpm build`.
-3. Restart with `./start-server.sh`.
-4. Remove any shell alias that pointed at `launch-opencode.sh` (the script no longer exists).
-5. Re-register opencode agents using the `register_agent({ client: "opencode", ui_pid, ... })` flow shown above.
+- Full tool reference and schema: launch the daemon and call `tools/list` on the MCP endpoint.
+- Codex / opencode setup details: `docs/configs/`.
+- Source: [github.com/jtianling/cross-agent-teams-mcp](https://github.com/jtianling/cross-agent-teams-mcp).

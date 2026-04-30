@@ -18,6 +18,34 @@ url = "http://127.0.0.1:9100/mcp"
 Authorization = "Bearer YOUR_TOKEN"
 ```
 
+## 推荐: `register_codex_self`
+
+Codex 0.124.0+ 在调用 MCP 工具时会向工具进程的环境变量里 export `CODEX_THREAD_ID`.  从 Codex agent 会话内, 直接调 codex 专用的注册 helper 即可:
+
+```text
+register_codex_self({
+  name: "<agent-name>",
+  thread_id: "<value of $CODEX_THREAD_ID>",
+  project_dir: "<your project's absolute path>"
+})
+```
+
+它在 `register_agent({ client: "codex", ... })` 之上做了 codex-specific 的封装:
+
+- 把 thread_id 注册成 `codex-appserver` delivery, app-server `ws_url` 默认 `ws://127.0.0.1:8799` (需要时用 `ws_url` 覆盖)
+- **不要传 `ui_pid`** — codex 的 launcher 通过 `pre_register_codex_pane` 走另一条 pre-reg 流程做 tmux pane 自动绑定, 显式传 `ui_pid` 反而会关掉那条路径
+- `team` 默认从 `project_dir` 的 basename 派生, 想要不同 team 才显式传
+
+成功响应:
+
+```json
+{ "agent_id": "...", "team": "...", "thread_id": "...", "ws_url": "ws://127.0.0.1:8799" }
+```
+
+后续 `poke` 走 `codex-appserver` transport (websocket 直接进对方 thread 里 start a turn).
+
+后面"方案 1 / 方案 2"是更底层的入口和历史用法, 一般不需要. 上面这条 `register_codex_self` 覆盖大多数日常场景.
+
 ## 方案 1, 使用 tmux 作为兜底 delivery
 
 `register_agent` 现在会在 identity 注册成功后, 对已识别的本地客户端 best-effort 自动尝试 runtime 绑定, 这样 tmux poke 通常不需要再多调一次工具。  调用方也不再向 `register_agent` 传 `tmux_pane_id`.

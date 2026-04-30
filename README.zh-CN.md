@@ -2,34 +2,46 @@
 
 [English README](./README.md)
 
-用于跨 agent 协作的 MCP daemon, 支持 tmux, Codex app-server 和 Claude channel wake 等本地投递方式.
+一个本地 MCP daemon, 让同一台机器上的多个 AI 编码 agent (Claude Code, Codex, opencode) 互相通信.  agent 注册到 daemon, 互发 1-to-1 消息, 在 team 或 role 内广播, 共享任务列表, 互相唤醒 — 全部通过一个本地 daemon 完成, 不依赖任何外部服务.
 
-## 快速开始
+## npm 包内容
 
-这个包在同一个 npm 名字下发布两个 bin: 长驻的 HTTP daemon (`cross-agent-teams-mcp`) 以及一个 stdio channel proxy (`cross-agent-teams-channel`), 后者让 Claude Code 能从 daemon 收到 `notifications/channel_wake`.  你先在本机起一次 daemon, 然后让 Claude Code 把 proxy 当作 MCP server 接进来, 最后用 channel loader 启动 Claude 让它订阅 wake 通知.  没有"自动拉起 daemon" 这种行为 — proxy 不会, 也禁止替你启动 daemon; daemon 不可达时 proxy 直接 fail-fast 退出非零.
+`cross-agent-teams-mcp` 在同一个包里发两个 bin:
 
-### 1. 启动 daemon
+- **`cross-agent-teams-mcp daemon`** — 长驻 HTTP daemon.  把 agent 注册表, 邮箱, 任务列表存在本地 SQLite 文件里, MCP endpoint 在 `http://127.0.0.1:9100/mcp`.
+- **`cross-agent-teams-channel`** — stdio MCP shim, 让 Claude Code 通过 `notifications/channel_wake` 接收唤醒通知 (Claude Code 的 experimental channel capability).  Claude Code 需要它接收 wake; Codex 用自己的 app-server 通道, opencode 走 tmux-pane 文本注入, 都不需要 channel proxy.
+
+## 1. 启动 daemon
+
+在本机起一次, 让进程保持运行 (单独终端 / `tmux` / `screen` / `launchd` 都行):
 
 ```bash
 npx -y cross-agent-teams-mcp@latest daemon --port 9100
 ```
 
-让这个进程保持运行 (单开一个终端 / `tmux` / `screen` / 你常用的进程守护工具均可).  daemon 默认监听 `127.0.0.1:9100`.  MCP endpoint 是 `http://127.0.0.1:9100/mcp`, 健康检查是 `http://127.0.0.1:9100/health`.
+daemon 默认监听 `127.0.0.1:9100`.  MCP endpoint: `http://127.0.0.1:9100/mcp`, 健康检查: `http://127.0.0.1:9100/health`.
 
-启动后可以用下面命令确认服务正常:
+常用参数:
 
-```bash
-curl http://127.0.0.1:9100/health
-```
+- `--port <n>` (默认 `9100`)
+- `--token <t>` (Bearer 鉴权)
+- `--db <path>` (默认 `~/.cross-agent-teams-mcp/data.db`)
+- `--pid-file <path>` (默认 `~/.cross-agent-teams-mcp/daemon.pid`)
 
-### 2. 让 Claude Code 通过 channel proxy 连接
+## 2. 在 agent 端配置 MCP client
 
-在 `.mcp.json` (或 `~/.claude.json`) 里加上 channel proxy.  MCP server 的 key **必须** 等于第 3 步给 Claude 的 `server:<name>` 后缀:
+### Claude Code (两个条目都需要 — HTTP 用于工具, stdio 用于 channel 唤醒)
+
+`.mcp.json` (或 `~/.claude.json`):
 
 ```json
 {
   "mcpServers": {
     "cross-agent-teams": {
+      "type": "http",
+      "url": "http://127.0.0.1:9100/mcp"
+    },
+    "cross-agent-teams-channel": {
       "command": "npx",
       "args": [
         "-y",
@@ -44,262 +56,84 @@ curl http://127.0.0.1:9100/health
 }
 ```
 
-如果你在启动 daemon 时带了 `--token <t>`, 走环境变量 `CROSS_AGENT_TEAMS_MCP_DAEMON_URL` 配合 daemon 侧的 header 配置; proxy 自身只读取 daemon URL.
-
-Codex CLI 的配置见 [docs/configs/codex-cli.md](docs/configs/codex-cli.md) — Codex 直接用 Streamable HTTP 连 daemon, 不需要 channel proxy.  opencode 见下面的 "在 tmux 里使用 opencode" 章节.
-
-### 3. 用 channel loader 启动 Claude Code
+启动 Claude Code 时加上 channel loader, 让它订阅 channel proxy 推过来的唤醒通知:
 
 ```bash
-claude --dangerously-load-development-channels server:cross-agent-teams
+claude --dangerously-load-development-channels server:cross-agent-teams-channel
 ```
 
-`server:<name>` 后缀 **必须** 与 `.mcp.json` 里 MCP server 的 key (上例中是 `cross-agent-teams`) 完全一致.  注意这里说的是 **`.mcp.json` 里的 MCP server key**, 不是 npm bin 名 — bin 名碰巧叫 `cross-agent-teams-channel`, 但 MCP server key 你想叫什么都行.  名字不一致, Claude Code 的 experimental channel loader 不会把 proxy 接进来, 你也就收不到 channel wake 通知.
+`server:<name>` 后缀 **必须** 等于 `.mcp.json` 里的 MCP server key (上例中是 `cross-agent-teams-channel`).  如果 daemon 启动带了 `--token <t>`, 在 HTTP 条目里加 `"headers": { "Authorization": "Bearer <t>" }`.
 
-### 4. 在 agent 里完成注册
+### Codex CLI
 
-Claude Code 经由 proxy 连上之后, 在 agent 会话里调用 `register_claude_self` / `register_codex_self` / `register_agent` 完成注册, 详见后续章节.
+Codex 直接通过 Streamable HTTP 跟 daemon 通信, 不需要 channel proxy; 唤醒走 Codex 自己的 app-server 通道.  配置示例见 [docs/configs/codex-cli.md](docs/configs/codex-cli.md).
 
-### 从源码运行
+### opencode
 
-如果你 clone 了仓库想直接跑源码:
+opencode 直接通过 Streamable HTTP 连 daemon 调工具.  这个 daemon 里没有专门的 opencode 唤醒通道 (之前的 `opencode-server` transport 已删除); 跨 agent poke 通过把文本注入到 opencode 所在的 tmux pane 实现.  把 opencode 跑在 tmux 窗口里, 注册时 daemon 会自动解析 `pid → tty → pane`.  详见 [docs/configs/opencode.md](docs/configs/opencode.md).
 
-```bash
-pnpm install
-pnpm build
-node dist/cli.js daemon --port 9100
-# 或者跳过 build:
-npx tsx src/cli.ts daemon --port 9100
-```
+## 3. 在 agent 内完成注册和通信
 
-`./start-server.sh` / `./stop-server.sh` 是本地开发用的便捷脚本, 会顺手把 Codex app-server 一起拉起来; 通过 `npx` 使用本包时不需要它们.
+agent 的 MCP client 连上后, 在 agent 会话内调用注册 helper — 不要用 `curl` 或其它外部 HTTP client (那会创建另一个 MCP session, 后续工具就找不到注册身份了).
 
-## 常用参数
+### 注册
 
-- `--port <port>`: 指定监听端口, 默认 `9100`
-- `--token <token>`: 开启 Bearer token 鉴权
-- `--db <path>`: 指定 SQLite 数据库路径
-- `--pid-file <path>`: 指定 pid 文件路径
-
-默认数据目录是 `~/.cross-agent-teams-mcp/`.  默认数据库文件是 `~/.cross-agent-teams-mcp/data.db`, 默认 pid 文件是 `~/.cross-agent-teams-mcp/daemon.pid`.
-
-如果已有实例在运行, 启动时会返回 `daemon already running pid=...`.
-
-## 投递方式
-
-当前 daemon 支持这些唤醒路径:
-
-- `tmux_pane_id`: 直接把文本注入目标 tmux pane
-- `delivery.kind='codex-appserver'`: 通过 websocket 恢复 Codex thread 并启动一轮 turn
-- `delivery.kind='claude-channel'`: 绑定 Claude channel session 并发送 channel wake 通知
-
-`register_agent(...)` 现在要求显式传 `client`.  一等运行时使用 `codex` / `claude-code` / `opencode`.  其它 agent harness 请传 `client: "custom"`, 并且可以选填 `client_name` 方便排查。
-
-如果同时传了 `ui_pid`, `client` 必须描述这个 `ui_pid` 背后的真实 runtime, 不是当前发起 MCP 调用的宿主。  例如, 在 Claude Code 里替 opencode pane 做注册时, 也要传 `client: "opencode"`。
-
-当用户没有显式指定 `team` 时, 调用方推荐传 `project_dir` 为当前工作目录.  daemon 会用该目录 basename 派生默认 team, 两者都不传时仍回落到 `"default"`.
-
-## Codex App-Server Delivery
-
-如果你平时主要在 Codex 里使用, 更推荐直接调用 `register_agent({ client: "codex", ... })`.  它会用调用者显式提供的 `thread_id` 把当前会话注册成 `codex-appserver` delivery, 同时保持统一入口.  它不会自动绑定 tmux pane.  如果你还需要 tmux 作为兜底唤醒路径, 请在注册成功后单独调用 `bind_runtime_identity(...)`.
-
-`register_agent({ client: "codex", ... })` 不再根据 `thread/loaded/list` 去猜“当前调用者自己的 thread”.  daemon 仅凭 MCP session 无法安全判断 loaded threads 里哪一个属于当前调用者.  如果省略 `thread_id`, 工具会返回 `thread_id_required`, 并附带可恢复的 thread id 列表供排查, 但不会继续注册.
-
-最简用法:
-
-```text
-register_agent({
-  client: "codex",
-  model: "gpt-5",
-  name: "lead",
-  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
-  role: "worker",
-  thread_id: "11111111-1111-4111-8111-111111111111"
-})
-```
-
-如果你还需要 tmux fallback delivery, 在注册后显式绑定 runtime identity:
-
-```text
-bind_runtime_identity({
-  agent: "codex",
-  ui_pid: 81979
-})
-```
-
-如果拿不到 UI pid, 可以退化到 `ui_tty + tmux_pane_id`:
-
-```text
-bind_runtime_identity({
-  agent: "codex",
-  ui_tty: "/dev/ttys026",
-  tmux_pane_id: "%1902"
-})
-```
-
-如果本地不是默认地址, 可以显式覆盖 `ws_url`:
-
-```text
-register_agent({
-  client: "codex",
-  model: "gpt-5",
-  name: "lead",
-  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
-  role: "worker",
-  thread_id: "11111111-1111-4111-8111-111111111111",
-  ws_url: "ws://127.0.0.1:8799"
-})
-```
-
-如果 app-server 开启了 Bearer token, 可以传 `auth_token_ref`, 它的值是 daemon 进程可见的环境变量名:
-
-```text
-register_agent({
-  client: "codex",
-  model: "gpt-5",
-  name: "lead",
-  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
-  role: "worker",
-  thread_id: "11111111-1111-4111-8111-111111111111",
-  auth_token_ref: "CODEX_REMOTE_TOKEN"
-})
-```
-
-行为说明:
-
-- `register_agent({ client: "codex", ... })` 是新的推荐入口
-- 默认 `ws_url` 是 `ws://127.0.0.1:8799`
-- 成功注册必须显式提供 `thread_id`
-- tmux pane 绑定需要单独调用 `bind_runtime_identity(...)`
-- `bind_runtime_identity(...)` 的 `agent` 参数是必填, 用于选择内置进程匹配器
-- 优先使用 `ui_pid`, 也支持 `ui_tty + tmux_pane_id` 的降级校验路径
-- 没有 loaded thread 时返回 `no_loaded_threads`
-- 省略 `thread_id` 时返回 `thread_id_required`, 并附带可恢复 thread id 列表供排查
-- 成功时返回 `{ agent_id, team, thread_id, ws_url }`
-
-Codex app-server 的最小启动方式:
-
-```bash
-codex app-server --listen ws://127.0.0.1:8799
-codex --remote ws://127.0.0.1:8799
-```
-
-你也可以手动通过 `register_agent` 注册目标:
-
-```text
-register_agent({
-  model: "...",
-  name: "...",
-  role: "...",
-  team: "...",
-  delivery: {
-    kind: "codex-appserver",
-    thread_id: "11111111-1111-4111-8111-111111111111",
-    ws_url: "ws://127.0.0.1:8799"
-  }
-})
-```
-
-如果 app-server 开启了 Bearer token:
-
-```text
-register_agent({
-  model: "...",
-  name: "...",
-  role: "...",
-  team: "...",
-  delivery: {
-    kind: "codex-appserver",
-    thread_id: "11111111-1111-4111-8111-111111111111",
-    ws_url: "ws://127.0.0.1:8799",
-    auth_token_ref: "CODEX_REMOTE_TOKEN"
-  }
-})
-```
-
-行为说明:
-
-- `thread_id` 必须是 UUID
-- `ws_url` 只能使用 `ws://` 或 `wss://`
-- `auth_token_ref` 只会被解释为环境变量名
-- 成功时, `poke()` 返回 `{ ok: true, transport_used: 'codex-appserver', thread_id }`
-- 失败时, `poke()` 返回 machine-readable 错误, 例如 `codex_connect_failed`, `codex_initialize_failed`, `codex_resume_failed`, `codex_turn_start_failed`, `missing_auth_token`
-- 当目标显式注册为 `codex-appserver` 时, daemon 不会自动 fallback 到 tmux
-
-更完整的 Codex CLI 配置和启动示例见 [docs/configs/codex-cli.md](docs/configs/codex-cli.md).
-
-## Claude Code Channel Delivery
-
-如果你平时主要在 Claude Code 里使用, 更推荐直接在当前 Claude 会话里调用 `register_claude_self(...)`.  这条 helper 会把注册写到当前 host session 上, 可以直接避免外部 `curl` 注册带来的 session 错位。  如果当前 host 已经知道 channel proxy 宣告的 `channel_session_id`, 可以这样完成自注册和 channel 绑定:
+Claude Code:
 
 ```text
 register_claude_self({
-  name: "lead",
-  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
-  role: "worker",
-  channel_session_id: "csid-abc"
+  name: "<agent-name>",
+  ui_pid: <Claude Code CLI 的 pid; 在 Bash 工具里就是 $PPID>,
+  project_dir: "<项目的绝对路径>"
 })
 ```
 
-如果你更想走统一入口, 也可以在当前 Claude 会话里直接调用 `register_agent({ client: "claude-code", ... })`:
+Codex (harness 已 export `CODEX_THREAD_ID` 时):
+
+```text
+register_codex_self({
+  name: "<agent-name>",
+  thread_id: "<$CODEX_THREAD_ID 的值>",
+  project_dir: "<项目的绝对路径>"
+})
+```
+
+统一入口 (任意 client):
 
 ```text
 register_agent({
-  client: "claude-code",
-  model: "opus-4-7",
-  name: "lead",
-  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
-  role: "worker",
-  channel_session_id: "csid-abc"
+  client: "claude-code" | "codex" | "opencode" | "custom",
+  name: "<agent-name>",
+  model: "<model-name>",
+  project_dir: "<项目的绝对路径>",
+  ui_pid: <runtime pid>          // 可选, 但非 codex 强烈建议传
 })
 ```
 
-行为说明:
+`team` 默认派生自 `project_dir` 的 basename; 想用不同 team 才显式传.  Claude Code 注册成功时, 响应里会带 `channel_session_id`, 表示唤醒通道已经自动接好了.
 
-- Claude Code 的 proxy session 不是 owner Claude session。  不要用外部 `curl` 代替当前 Claude 会话做注册, 否则后续工具调用仍然可能看到 `unknown_agent`
-- `register_claude_self(...)` 是 Claude Code 的首选路径, 因为它天然运行在当前 session 上
-- `client="claude-code"` 时, `poke` 会优先走 `claude-channel`, 失败后再回退到 `tmux`
-- 如果注册响应里仍然带 `hint`, 说明 tmux fallback 还没有完成绑定, 这时调用 `bind_runtime_identity(...)`
-- `bind_channel(...)` 仍然保留, 但它只是低层重绑工具, 适合已注册 row 在 proxy 切换到新 `channel_session_id` 后补绑
-
-更完整的 Claude Code 配置见 [docs/configs/claude-code.md](docs/configs/claude-code.md).
-
-## 在 tmux 里使用 opencode
-
-opencode 以普通 tmux TUI 的形式接入 xats, 不再提供专用 launcher, 也不再走 HTTP 专用 transport.  投递方式和 `client: "custom"` 完全一致: 由 daemon 将文本粘贴到 opencode 所在 tmux pane.
-
-在 tmux 窗口里启动 opencode, 然后在 opencode 自己的 MCP session 里注册:
-
-```bash
-tmux new-window opencode
-```
+### 发消息和查收件箱
 
 ```text
-register_agent({
-  client: "opencode",
-  model: "opencode-default",
-  name: "my-opencode-agent",
-  project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
-  role: "worker",
-  ui_pid: <opencode 进程 pid>
-})
+send_message({ to_agent_name: "<对方名字>", subject: "...", body: "..." })
+broadcast({ subject: "...", body: "..." })            // 同 team 广播
+broadcast_to_role({ role: "<role>", subject, body })  // 同 team 同 role
+get_inbox()                                            // 看自己的收件箱
 ```
 
-把 opencode 进程 pid 作为 `ui_pid` 传入, daemon 会在这次注册里走 `pid → tty → tmux pane` 的链路完成 `tmux_pane_id` 绑定.  其它 agent 对此 agent 的 `poke` 统一走 `transport_used: "tmux-poke"`.
+`send_message` 默认会 auto-poke 收件人, 推一条短的 wake-up hint, 邮件正文要 `get_inbox` 拉.  `need_reply` 默认 `true`, FYI 类消息设 `false`.  按 agent_id 发用 `send_message_by_id`.
 
-行为说明:
+### 共享任务列表 (每个 team 一份)
 
-- `client="opencode"` 时, `poke` 走 `tmux-poke`
-- 如果注册响应里仍然带 `hint`, 说明 tmux fallback 还没有完成绑定, 这时调用 `bind_runtime_identity(...)`
+```text
+task_add({ title, description? })
+task_list({ status?: "open" | "claimed" | "done" })
+task_claim({ task_id })
+task_complete({ task_id, result? })
+```
 
-### 运维 cutover
+## 更多
 
-如果你从带 `opencode-server` 专用 transport 的旧版本升级:
-
-1. 用 `./stop-server.sh` 停掉 daemon (会顺便清空 `data.db`; 被删除的 `opencode_base_url` / `opencode_session_id` 列和 `opencode_pane_pre_registrations` 表并不做迁移)
-2. `pnpm build` 重新构建
-3. `./start-server.sh` 启动新版 daemon
-4. 删掉任何指向 `launch-opencode.sh` 的 shell alias (脚本已经不存在)
-5. 按上面的 `register_agent({ client: "opencode", ui_pid, ... })` 重新注册 opencode agent
-
-更完整的 opencode 配置见 [docs/configs/opencode.md](docs/configs/opencode.md).
+- 完整工具列表和参数: 启动 daemon 后调 MCP endpoint 的 `tools/list`.
+- Codex / opencode 详细配置: `docs/configs/`.
+- 源码: [github.com/jtianling/cross-agent-teams-mcp](https://github.com/jtianling/cross-agent-teams-mcp).
