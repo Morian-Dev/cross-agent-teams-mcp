@@ -66,7 +66,28 @@ The `server:<name>` suffix MUST equal the MCP server key in `.mcp.json` (`cross-
 
 ### Codex CLI
 
-Codex talks to the daemon directly over Streamable HTTP — no channel proxy needed; wake-ups go through Codex's own app-server transport.  See [docs/configs/codex-cli.md](docs/configs/codex-cli.md) for the config snippet.
+Codex talks to the daemon directly over Streamable HTTP.  No channel proxy is needed — Codex has no `claude/channel` capability, and wake-ups are delivered via Codex's own app-server websocket transport (or tmux paste fallback).
+
+`~/.codex/config.toml`:
+
+```toml
+[mcp_servers.cross-agent-teams]
+type = "streamable-http"
+url = "http://127.0.0.1:9100/mcp"
+```
+
+(daemon with `--token <t>`: add `[mcp_servers.cross-agent-teams.headers]` and `Authorization = "Bearer <t>"`.)
+
+If you want other agents to be able to **wake** this Codex thread (not only mail it), start Codex's app-server alongside Codex itself:
+
+```bash
+codex app-server --listen ws://127.0.0.1:8799     # in one terminal
+codex --remote ws://127.0.0.1:8799                # in another terminal (TUI)
+```
+
+Without an app-server, `send_message` to this Codex still queues a mailbox row, but you have to call `get_inbox` yourself to read it — there is no push to wake the thread.
+
+Detailed config (auth headers, tmux fallback, lower-level `register_agent` form): [docs/configs/codex-cli.md](docs/configs/codex-cli.md).
 
 ### opencode
 

@@ -66,7 +66,28 @@ claude --dangerously-load-development-channels server:cross-agent-teams-channel
 
 ### Codex CLI
 
-Codex 直接通过 Streamable HTTP 跟 daemon 通信, 不需要 channel proxy; 唤醒走 Codex 自己的 app-server 通道.  配置示例见 [docs/configs/codex-cli.md](docs/configs/codex-cli.md).
+Codex 直接通过 Streamable HTTP 跟 daemon 通信, 不需要 channel proxy — Codex 没有 `claude/channel` capability, 唤醒走 Codex 自己的 app-server websocket (或 tmux paste 兜底).
+
+`~/.codex/config.toml`:
+
+```toml
+[mcp_servers.cross-agent-teams]
+type = "streamable-http"
+url = "http://127.0.0.1:9100/mcp"
+```
+
+(daemon 带了 `--token <t>` 时, 加 `[mcp_servers.cross-agent-teams.headers]` 和 `Authorization = "Bearer <t>"`.)
+
+如果你希望别的 agent 能**唤醒**这个 Codex thread (不只是给它发邮件), 在跑 Codex 之前把 codex app-server 一起拉起来:
+
+```bash
+codex app-server --listen ws://127.0.0.1:8799     # 一个终端
+codex --remote ws://127.0.0.1:8799                # 另一个终端 (TUI)
+```
+
+不启 app-server 也能用 — `send_message` 给这个 Codex 仍然会写到邮箱, 但需要你自己调 `get_inbox` 拉读, 没有推送唤醒.
+
+详细配置 (auth header, tmux fallback, 底层 `register_agent` 用法): [docs/configs/codex-cli.md](docs/configs/codex-cli.md).
 
 ### opencode
 
