@@ -32,7 +32,7 @@ describe('register_agent tool hint rule (tmux only)', () => {
 
     const resp = await c.callTool({
       name: 'register_agent',
-      arguments: { client: 'custom', model: 'opus-4-7', role: 'frontend', name: 'alice' }
+      arguments: { agent_type: 'custom', model: 'opus-4-7', role: 'frontend', name: 'alice' }
     })
     const obj = await parseTool(resp)
 
@@ -52,7 +52,7 @@ describe('register_agent tool hint rule (tmux only)', () => {
 
     const resp = await c.callTool({
       name: 'register_agent',
-      arguments: { client: 'custom', model: 'opus-4-7', role: 'frontend', name: 'alice', tmux_pane_id: '%42' }
+      arguments: { agent_type: 'custom', model: 'opus-4-7', role: 'frontend', name: 'alice', tmux_pane_id: '%42' }
     })
     const errResp = resp as { isError?: boolean; content: Array<{ text: string }> }
     expect(errResp.isError).toBe(true)
@@ -68,7 +68,7 @@ describe('register_agent tool hint rule (tmux only)', () => {
     const resp = await c.callTool({
       name: 'register_agent',
       arguments: {
-        client: 'codex',
+        agent_type: 'codex',
         model: 'opus-4-7',
         role: 'frontend',
         name: 'alice',
@@ -86,7 +86,7 @@ describe('register_agent tool hint rule (tmux only)', () => {
     await t.close(); await app.close()
   })
 
-  it('register_agent rejects channel_session_id without client=claude-code', async () => {
+  it('register_agent rejects channel_session_id without agent_type=claude-code', async () => {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
     const { c, t } = await connectClient(host, port)
@@ -94,19 +94,19 @@ describe('register_agent tool hint rule (tmux only)', () => {
     const resp = await c.callTool({
       name: 'register_agent',
       arguments: {
-        client: 'custom',
+        agent_type: 'custom',
         model: 'opus-4-7', role: 'frontend', name: 'alice',
         channel_session_id: 'csid-should-not-be-written'
       }
     })
     const errResp = resp as { isError?: boolean; content: Array<{ text: string }> }
     expect(errResp.isError).toBe(true)
-    expect(errResp.content[0].text).toMatch(/client=claude-code/i)
+    expect(errResp.content[0].text).toMatch(/agent_type=claude-code/i)
 
     await t.close(); await app.close()
   })
 
-  it('register_agent rejects top-level codex thread arguments without client=codex', async () => {
+  it('register_agent rejects top-level codex thread arguments without agent_type=codex', async () => {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
     const { c, t } = await connectClient(host, port)
@@ -114,7 +114,7 @@ describe('register_agent tool hint rule (tmux only)', () => {
     const resp = await c.callTool({
       name: 'register_agent',
       arguments: {
-        client: 'custom',
+        agent_type: 'custom',
         model: 'gpt-5',
         role: 'frontend',
         name: 'alice',
@@ -123,7 +123,7 @@ describe('register_agent tool hint rule (tmux only)', () => {
     })
     const errResp = resp as { isError?: boolean; content: Array<{ text: string }> }
     expect(errResp.isError).toBe(true)
-    expect(errResp.content[0].text).toMatch(/client=codex/i)
+    expect(errResp.content[0].text).toMatch(/agent_type=codex/i)
 
     await t.close(); await app.close()
   })

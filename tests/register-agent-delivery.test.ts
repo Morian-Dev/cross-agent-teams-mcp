@@ -63,7 +63,7 @@ describe('register_agent delivery integration', () => {
     const { db, server, client, transport } = await setup()
     const result = await parseTool(await client.callTool({
       name: 'register_agent',
-      arguments: { client: 'custom', model: 'opus', role: 'backend', name: 'alice' },
+      arguments: { agent_type: 'custom', model: 'opus', role: 'backend', name: 'alice' },
     }))
     const row = db.prepare(
       `SELECT delivery_kind, delivery_payload FROM agents WHERE agent_id=?`
@@ -84,7 +84,7 @@ describe('register_agent delivery integration', () => {
     const result = await parseTool(await client.callTool({
       name: 'register_agent',
       arguments: {
-        client: 'claude-code',
+        agent_type: 'claude-code',
         model: 'opus',
         role: 'backend',
         name: 'alice',
@@ -116,7 +116,7 @@ describe('register_agent delivery integration', () => {
     const result = await parseTool(await client.callTool({
       name: 'register_agent',
       arguments: {
-        client: 'claude-code',
+        agent_type: 'claude-code',
         model: 'opus',
         role: 'backend',
         name: 'alice',
@@ -142,7 +142,7 @@ describe('register_agent delivery integration', () => {
     const result = await parseTool(await client.callTool({
       name: 'register_agent',
       arguments: {
-        client: 'codex',
+        agent_type: 'codex',
         model: 'opus',
         role: 'backend',
         name: 'alice',
@@ -178,7 +178,7 @@ describe('register_agent delivery integration', () => {
     const result = await parseTool(await client.callTool({
       name: 'register_agent',
       arguments: {
-        client: 'codex',
+        agent_type: 'codex',
         model: 'opus',
         role: 'backend',
         name: 'alice',
@@ -203,14 +203,14 @@ describe('register_agent delivery integration', () => {
     await server.close()
   })
 
-  it('register with client=claude-code and channel_session_id binds channel delivery', async () => {
+  it('register with agent_type=claude-code and channel_session_id binds channel delivery', async () => {
     const channelWakeFanout = new ChannelWakeFanout()
     channelWakeFanout.attach('csid-abc', () => { /* sink */ }, 'sess-proxy')
     const { db, server, client, transport } = await setup(channelWakeFanout)
     const result = await parseTool(await client.callTool({
       name: 'register_agent',
       arguments: {
-        client: 'claude-code',
+        agent_type: 'claude-code',
         model: 'opus',
         role: 'backend',
         name: 'alice',
@@ -219,13 +219,13 @@ describe('register_agent delivery integration', () => {
     }))
     expect(result.agent_id).toBeDefined()
     const row = db.prepare(
-      `SELECT client, delivery_kind, delivery_payload FROM agents WHERE team='default' AND name='alice'`
+      `SELECT agent_type, delivery_kind, delivery_payload FROM agents WHERE team='default' AND name='alice'`
     ).get() as {
-      client: string | null
+      agent_type: string | null
       delivery_kind: string
       delivery_payload: string | null
     }
-    expect(row.client).toBe('claude-code')
+    expect(row.agent_type).toBe('claude-code')
     expect(row.delivery_kind).toBe('claude-channel')
     expect(JSON.parse(row.delivery_payload as string)).toEqual({
       channel_session_id: 'csid-abc',
@@ -241,7 +241,7 @@ describe('register_agent delivery integration', () => {
     const first = await parseTool(await client.callTool({
       name: 'register_agent',
       arguments: {
-        client: 'claude-code',
+        agent_type: 'claude-code',
         model: 'opus',
         role: 'backend',
         name: 'alice',
@@ -251,7 +251,7 @@ describe('register_agent delivery integration', () => {
     const second = await parseTool(await client.callTool({
       name: 'register_agent',
       arguments: {
-        client: 'custom',
+        agent_type: 'custom',
         model: 'sonnet',
         role: 'backend',
         name: 'alice',

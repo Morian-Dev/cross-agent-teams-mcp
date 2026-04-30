@@ -50,7 +50,7 @@ export type PokeResult =
 
 interface TargetRow {
   agent_id: string
-  client: import('../lib/client-kind.js').ClientKind | null
+  agent_type: import('../lib/agent-type.js').AgentType | null
   team: string
   tmux_pane_id: string | null
   delivery_kind: string
@@ -132,7 +132,7 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
     .prepare(
       `SELECT
          agent_id,
-         client,
+         agent_type,
          team,
          tmux_pane_id,
          delivery_kind,
@@ -162,7 +162,7 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
     if (delivery.kind === 'codex-appserver') {
       return dispatchPoke(
         { tmuxPoke: tmuxPokeImpl },
-        { client: target.client, delivery, tmux_pane_id: target.tmux_pane_id },
+        { agent_type: target.agent_type, delivery, tmux_pane_id: target.tmux_pane_id },
         { content: input.prompt, meta: {} }
       )
     }
@@ -184,7 +184,7 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
 
   return dispatchPoke(
     { channelWakeFanout: fanout, tmuxPoke: tmuxPokeImpl },
-    { client: target.client, delivery, tmux_pane_id: target.tmux_pane_id },
+    { agent_type: target.agent_type, delivery, tmux_pane_id: target.tmux_pane_id },
     { content: input.prompt, meta: {} }
   )
 }

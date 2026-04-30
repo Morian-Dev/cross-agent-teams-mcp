@@ -35,7 +35,7 @@ describe('mcp heartbeat end-to-end', () => {
     let received = 0
     client.setNotificationHandler(HeartbeatNotification as any, async () => { received += 1 })
     await client.connect(transport)
-    await client.callTool({ name: 'register_agent', arguments: { client: 'custom', name: 'tester-5', model: 'opus-4-7', role: 'test' } })
+    await client.callTool({ name: 'register_agent', arguments: { agent_type: 'custom', name: 'tester-5', model: 'opus-4-7', role: 'test' } })
 
     await new Promise(r => setTimeout(r, 400))
     expect(received).toBeGreaterThanOrEqual(1)

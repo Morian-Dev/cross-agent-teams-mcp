@@ -29,10 +29,12 @@ describe('proxy startup channel notification', () => {
     expect(hit, `got ${JSON.stringify(received)}`).toBeDefined()
     const params = hit!.params as { content: string; meta: Record<string, string> }
     expect(params.content).toContain(csid)
-    expect(params.content).toContain('register_claude_self')
+    expect(params.content).not.toContain('register_claude_self')
+    expect(params.content).not.toContain('register_codex_self')
     expect(params.content).toContain('ui_pid')
     expect(params.content).toContain('bind_channel')
     expect(params.content).toContain('register_agent')
+    expect(params.content).toContain('agent_type: "claude-code"')
     expect(params.content).toContain('curl')
     expect(params.meta.kind).toBe('startup_bind_hint')
     // Brand-contract assertions

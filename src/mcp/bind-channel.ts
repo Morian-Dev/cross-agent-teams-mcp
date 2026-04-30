@@ -29,7 +29,7 @@ export class BindChannelService {
     if (!caller) return { error: 'unknown_agent' }
     if (caller.role === CHANNEL_PROXY_ROLE) return { error: 'forbidden_role' }
     if (!this.fanout.has(csid)) return { error: 'unknown_channel_session' }
-    this.repo.setClient(input.callerAgentId, 'claude-code')
+    this.repo.setAgentType(input.callerAgentId, 'claude-code')
     this.repo.setDelivery(input.callerAgentId, {
       kind: 'claude-channel',
       channel_session_id: csid,

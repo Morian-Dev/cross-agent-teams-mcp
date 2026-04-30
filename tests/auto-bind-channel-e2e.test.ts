@@ -33,8 +33,8 @@ describe('auto-bind-channel-on-register e2e', () => {
     const hostClient = new Client({ name: 'fake-claude-code', version: '0.0.0' })
     await hostClient.connect(hostTransport)
     const resp1 = await parseTool(await hostClient.callTool({
-      name: 'register_claude_self',
-      arguments: { name: 'alice', team: 'default', ui_pid: uiPid },
+      name: 'register_agent',
+      arguments: { agent_type: 'claude-code', model: 'opus-4-7', name: 'alice', team: 'default', ui_pid: uiPid },
     }))
     expect(resp1.agent_id).toBeDefined()
     expect(resp1.channel_session_id).toBeUndefined()
@@ -49,8 +49,8 @@ describe('auto-bind-channel-on-register e2e', () => {
     const proxyResp = await parseTool(await proxyClient.callTool({
       name: 'register_agent',
       arguments: {
-        client: 'custom',
-        client_name: 'cross-agent-teams-channel',
+        agent_type: 'custom',
+        agent_type_name: 'cross-agent-teams-channel',
         model: 'proxy',
         role: '__channel_proxy__',
         name: `channel-proxy-${uiPid}`,
@@ -92,8 +92,8 @@ describe('auto-bind-channel-on-register e2e', () => {
     const hostClient = new Client({ name: 'fake-claude-code', version: '0.0.0' })
     await hostClient.connect(hostTransport)
     await parseTool(await hostClient.callTool({
-      name: 'register_claude_self',
-      arguments: { name: 'alice', team: 'default', ui_pid: uiPid },
+      name: 'register_agent',
+      arguments: { agent_type: 'claude-code', model: 'opus-4-7', name: 'alice', team: 'default', ui_pid: uiPid },
     }))
 
     // proxy run 1
@@ -131,8 +131,8 @@ async function proxyRegister(
   const resp = await client.callTool({
     name: 'register_agent',
     arguments: {
-      client: 'custom',
-      client_name: 'cross-agent-teams-channel',
+      agent_type: 'custom',
+      agent_type_name: 'cross-agent-teams-channel',
       model: 'proxy',
       role: '__channel_proxy__',
       name: `channel-proxy-${claudeUiPid}`,

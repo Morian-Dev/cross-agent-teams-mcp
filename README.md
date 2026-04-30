@@ -99,39 +99,49 @@ Once your agent's MCP client is connected, run the registration helpers from ins
 
 ### Register
 
-Claude Code:
+`register_agent` is the single registration entry point.  Decide `agent_type=` mechanically before calling, in order — first match wins:
+
+1. `printenv CODEX_THREAD_ID` non-empty → `agent_type="codex"`; pass that value as `thread_id` (REQUIRED).  Do NOT pass `ui_pid` (the launcher's `pre_register_codex_pane` flow handles tmux pane binding).
+2. `printenv CLAUDECODE` non-empty OR `printenv CLAUDE_CODE_ENTRYPOINT` non-empty → `agent_type="claude-code"`; pass `$PPID` as `ui_pid`.
+3. None of the above → `agent_type="custom"` with `agent_type_name="<your harness name, e.g. cursor, opencode, ...>"`.  Detect the harness name from your runtime environment when you can — for example, `printenv CURSOR_TRACE_ID` non-empty is a cursor signal — but do NOT guess from system-wide signals like "binary X exists on PATH": those reflect what the user has installed, not what runtime you are inside, and produce wrong agent types.  When unsure, prefer `agent_type_name="unknown"` over a wrong guess.
+
+Codex:
 
 ```text
-register_claude_self({
-  name: "<agent-name>",
-  ui_pid: <Claude Code CLI pid; in a Bash tool call this is $PPID>,
-  project_dir: "<your project's absolute path>"
-})
-```
-
-Codex (when `CODEX_THREAD_ID` is exported by the harness):
-
-```text
-register_codex_self({
+register_agent({
+  agent_type: "codex",
   name: "<agent-name>",
   thread_id: "<value of $CODEX_THREAD_ID>",
   project_dir: "<your project's absolute path>"
 })
 ```
 
-Unified entry point (any client):
+Claude Code:
 
 ```text
 register_agent({
-  client: "claude-code" | "codex" | "opencode" | "custom",
+  agent_type: "claude-code",
   name: "<agent-name>",
-  model: "<model-name>",
-  project_dir: "<your project's absolute path>",
-  ui_pid: <runtime pid>          // optional but strongly recommended for non-codex
+  ui_pid: <Claude Code CLI pid; in a Bash tool call this is $PPID>,
+  project_dir: "<your project's absolute path>"
 })
 ```
 
-`team` defaults to the basename of `project_dir`; pass it explicitly only when you want a different team.  On success Claude Code registrations include `channel_session_id` in the response — that means wake delivery is wired up automatically.
+Other harnesses (cursor, opencode, an editor extension, an unknown caller):
+
+```text
+register_agent({
+  agent_type: "custom",
+  agent_type_name: "<your harness name>",  // required when agent_type="custom"
+  name: "<agent-name>",
+  project_dir: "<your project's absolute path>",
+  ui_pid: <runtime pid>          // strongly recommended for tmux poke delivery
+})
+```
+
+`model` is OPTIONAL for any `agent_type`; omit it when you do not have an authoritative model identifier (the daemon stores NULL).  `team` defaults to the basename of `project_dir`; pass it explicitly only when you want a different team.  On success Claude Code registrations include `channel_session_id` in the response — that means wake delivery is wired up automatically.
+
+`agent_type="opencode"` is still accepted as an explicit value for opencode-aware launchers, but no detection probe promotes it: opencode being installed does NOT mean the LLM you are running is inside opencode.
 
 ### Send messages and inspect inbox
 

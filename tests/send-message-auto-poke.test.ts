@@ -99,7 +99,7 @@ describe('send_message auto_poke integration', () => {
     insertAgent(db, { agent_id: 'A', model: 'm', role: 'caller', tmux_pane_id: '%1', name: 'A' })
     insertAgent(db, {
       agent_id: 'B',
-      client: 'claude-code',
+      agent_type: 'claude-code',
       model: 'opus',
       role: 'worker',
       name: 'B',

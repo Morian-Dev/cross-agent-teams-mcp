@@ -3,7 +3,7 @@ import {
   validateDeliveryForWrite,
   type DeliveryValidationReason,
 } from '../lib/delivery-spec.js'
-import type { ClientKind } from '../lib/client-kind.js'
+import type { AgentType } from '../lib/agent-type.js'
 import { deriveDefaultTeam } from '../lib/default-team.js'
 import { AgentsRepo } from '../storage/agents-repo.js'
 
@@ -11,9 +11,9 @@ export { deriveDefaultTeam } from '../lib/default-team.js'
 
 export interface RegisterInput {
   connection_id: string
-  client?: ClientKind
-  client_name?: string
-  model: string
+  agent_type?: AgentType
+  agent_type_name?: string
+  model?: string
   name: string
   role?: string
   team?: string
@@ -61,8 +61,8 @@ export class RegisterAgentService {
     if (bound && bound !== input.connection_id) return { error: 'agent_id_collision' }
     this.connections.set(key, input.connection_id)
     return this.repo.register({
-      client: input.client,
-      client_name: input.client_name,
+      agent_type: input.agent_type,
+      agent_type_name: input.agent_type_name,
       model: input.model,
       name: input.name,
       role,

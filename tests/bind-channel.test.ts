@@ -37,16 +37,16 @@ describe('bind_channel service (self-binding)', () => {
     })
     expect(res).toEqual({ ok: true })
     const row = db.prepare(
-      `SELECT client, delivery_kind, delivery_payload, channel_session_id
+      `SELECT agent_type, delivery_kind, delivery_payload, channel_session_id
        FROM agents
        WHERE agent_id=?`
     ).get(alice.agent_id) as {
-      client: string | null
+      agent_type: string | null
       delivery_kind: string
       delivery_payload: string | null
       channel_session_id: string | null
     }
-    expect(row.client).toBe('claude-code')
+    expect(row.agent_type).toBe('claude-code')
     expect(row.delivery_kind).toBe('claude-channel')
     expect(JSON.parse(row.delivery_payload as string)).toEqual({
       channel_session_id: 'csid-abc',

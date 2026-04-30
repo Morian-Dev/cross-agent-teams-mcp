@@ -171,33 +171,27 @@ describe('tool descriptions: auto-poke and delivery status', () => {
     expect(d).toMatch(/client/)
     expect(d).toMatch(/codex/i)
     expect(d).toMatch(/thread_id/)
-    expect(d).toMatch(/same tool|through this same tool/i)
+    expect(d).toMatch(/CODEX_THREAD_ID/)
   })
 
-  it('register tools describe project_dir team derivation', async () => {
+  it('register_agent describes project_dir team derivation', async () => {
     const tools = await listTools()
     const registerAgent = tools.find(t => t.name === 'register_agent')!.description!
-    const registerClaudeSelf = tools.find(t => t.name === 'register_claude_self')!.description!
-    for (const description of [registerAgent, registerClaudeSelf]) {
-      expect(description).toMatch(/project_dir/)
-      expect(description).toMatch(/current working directory/)
-      expect(description).toMatch(/team/)
-      expect(description).toMatch(/basename/)
-    }
+    expect(registerAgent).toMatch(/project_dir/)
+    expect(registerAgent).toMatch(/current working directory/)
+    expect(registerAgent).toMatch(/team/)
+    expect(registerAgent).toMatch(/basename/)
   })
 
-  it('register tools say xats is the service context, not a team name', async () => {
+  it('register_agent says xats is the service context, not a team name', async () => {
     const tools = await listTools()
     const registerAgent = tools.find(t => t.name === 'register_agent')!.description!
-    const registerClaudeSelf = tools.find(t => t.name === 'register_claude_self')!.description!
-    for (const description of [registerAgent, registerClaudeSelf]) {
-      expect(description).toMatch(/register to xats/i)
-      expect(description).toMatch(/register to cross-agent-teams/i)
-      expect(description).toMatch(/not to the `team` field/i)
-      expect(description).toMatch(/do not set `team` to `xats`/i)
-      expect(description).toMatch(/bare word "register"/i)
-      expect(description).toMatch(/already about cross-agent-teams registration/i)
-    }
+    expect(registerAgent).toMatch(/register to xats/i)
+    expect(registerAgent).toMatch(/register to cross-agent-teams/i)
+    expect(registerAgent).toMatch(/not to the `team` field/i)
+    expect(registerAgent).toMatch(/do not set `team` to `xats`/i)
+    expect(registerAgent).toMatch(/bare word "register"/i)
+    expect(registerAgent).toMatch(/already about cross-agent-teams registration/i)
   })
 
   it('bind_runtime_identity description documents pid-first verification', async () => {
@@ -216,7 +210,7 @@ describe('tool descriptions: auto-poke and delivery status', () => {
     const d = tools.find(t => t.name === 'bind_channel')!.description!
     expect(d).toMatch(/low-level rebind tool/i)
     expect(d).toMatch(/register_agent/)
-    expect(d).toMatch(/client: "claude-code"|client.*claude-code/i)
+    expect(d).toMatch(/agent_type: "claude-code"|client.*claude-code/i)
   })
 
   it('unregister_self description makes the self-only teardown semantics discoverable', async () => {

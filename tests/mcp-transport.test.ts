@@ -55,7 +55,9 @@ describe('mcp transport', () => {
     expect(body.result.instructions).toContain('不要把单独的常用词"注册"默认劫持为本工具')
     // Codex guidance is appended alongside the preserved xats block.
     expect(body.result.instructions).toContain('CODEX_THREAD_ID')
-    expect(body.result.instructions).toContain('register_codex_self')
+    expect(body.result.instructions).toContain('register_agent')
+    expect(body.result.instructions).not.toContain('register_codex_self')
+    expect(body.result.instructions).not.toContain('register_claude_self')
     expect(res.headers.get('Mcp-Session-Id')).toMatch(/[a-f0-9-]{10,}/i)
     await app.close()
   })

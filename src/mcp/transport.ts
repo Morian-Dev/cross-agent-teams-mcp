@@ -35,8 +35,12 @@ export function mountMcp(
       { name: 'cross-agent-teams-mcp', version: '0.1.0' },
       {
         instructions:
-          'xats 是 cross-agent-teams 的缩写. 当用户或其他 agent 提到 xats 时, 指的是本 MCP server (cross-agent-teams-mcp) 及其跨 agent 协作工具 (register_agent, send_message, task_* 等). 用户说"注册到 xats"或"注册到 cross-agent-teams"时, 表示注册到本 MCP 服务, xats 和 cross-agent-teams 不是 team 名, 不要把它们传给 team. 不要把单独的常用词"注册"默认劫持为本工具; 只有当前上下文已经在讨论 cross-agent-teams 注册时才可续接. 注册时 (register_agent / register_claude_self) 如果用户未显式指定 team, 默认传 project_dir=当前工作目录 (cwd), daemon 会用它的 basename 作为 team 默认值; 都不传时回落 default.'
-          + ' Codex clients: if your tool shell env has CODEX_THREAD_ID set (codex 0.124.0+ exports it), pass its value as `thread_id` and prefer `register_codex_self` over `register_agent`. Do NOT attempt to discover or pass `ui_pid` from codex — the launcher\'s `pre_register_codex_pane` pre-reg flow handles tmux pane binding automatically; supplying `ui_pid` manually disables that auto-bind path.'
+          'xats 是 cross-agent-teams 的缩写. 当用户或其他 agent 提到 xats 时, 指的是本 MCP server (cross-agent-teams-mcp) 及其跨 agent 协作工具 (register_agent, send_message, task_* 等). 用户说"注册到 xats"或"注册到 cross-agent-teams"时, 表示注册到本 MCP 服务, xats 和 cross-agent-teams 不是 team 名, 不要把它们传给 team. 不要把单独的常用词"注册"默认劫持为本工具; 只有当前上下文已经在讨论 cross-agent-teams 注册时才可续接. 注册时 (register_agent) 如果用户未显式指定 team, 默认传 project_dir=当前工作目录 (cwd), daemon 会用它的 basename 作为 team 默认值; 都不传时回落 default.'
+          + ' register_agent is the single registration entry point; pass `agent_type` explicitly.'
+          + ' For `agent_type="codex"`: read `$CODEX_THREAD_ID` (codex 0.124.0+ exports it) and pass it as `thread_id` (REQUIRED). Do NOT pass `ui_pid` from codex — the launcher\'s `pre_register_codex_pane` flow handles tmux pane binding automatically; supplying `ui_pid` manually disables that auto-bind path.'
+          + ' For `agent_type="claude-code"`: pass `$PPID` as `ui_pid` so channel delivery auto-binds.'
+          + ' For ANY other harness (cursor, opencode, an editor extension, an unknown caller, etc.): use `agent_type="custom"` together with `agent_type_name=<your harness name>`. Do NOT guess from system-wide signals like "binary X is on PATH" — those reflect what the user has installed, not what runtime you are inside.'
+          + ' `model` is OPTIONAL for any agent_type; omit it when you do not have an authoritative model identifier.'
       }
     )
     const agentIdHolder: AgentIdHolder = { current: undefined }

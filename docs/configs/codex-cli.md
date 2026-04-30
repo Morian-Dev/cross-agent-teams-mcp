@@ -18,21 +18,24 @@ url = "http://127.0.0.1:9100/mcp"
 Authorization = "Bearer YOUR_TOKEN"
 ```
 
-## 推荐: `register_codex_self`
+## 推荐: `register_agent({ agent_type: "codex", thread_id, ... })`
 
-Codex 0.124.0+ 在调用 MCP 工具时会向工具进程的环境变量里 export `CODEX_THREAD_ID`.  从 Codex agent 会话内, 直接调 codex 专用的注册 helper 即可:
+Codex 0.124.0+ 在调用 MCP 工具时会向工具进程的环境变量里 export `CODEX_THREAD_ID`.  从 Codex agent 会话内, 直接调统一注册入口即可:
 
 ```text
-register_codex_self({
+register_agent({
+  agent_type: "codex",
   name: "<agent-name>",
   thread_id: "<value of $CODEX_THREAD_ID>",
   project_dir: "<your project's absolute path>"
 })
 ```
 
-它在 `register_agent({ client: "codex", ... })` 之上做了 codex-specific 的封装:
+注意点:
 
+- `thread_id` 是 codex 注册的必填项 (schema 层强制); 缺失或空字符串会被 Zod 拒绝
 - 把 thread_id 注册成 `codex-appserver` delivery, app-server `ws_url` 默认 `ws://127.0.0.1:8799` (需要时用 `ws_url` 覆盖)
+- `model` 可省略, 默认 `gpt`
 - **不要传 `ui_pid`** — codex 的 launcher 通过 `pre_register_codex_pane` 走另一条 pre-reg 流程做 tmux pane 自动绑定, 显式传 `ui_pid` 反而会关掉那条路径
 - `team` 默认从 `project_dir` 的 basename 派生, 想要不同 team 才显式传
 
@@ -44,7 +47,7 @@ register_codex_self({
 
 后续 `poke` 走 `codex-appserver` transport (websocket 直接进对方 thread 里 start a turn).
 
-后面"方案 1 / 方案 2"是更底层的入口和历史用法, 一般不需要. 上面这条 `register_codex_self` 覆盖大多数日常场景.
+下面"方案 1 / 方案 2"是更底层的入口和历史用法, 一般不需要.
 
 ## 方案 1, 使用 tmux 作为兜底 delivery
 
@@ -64,9 +67,9 @@ node scripts/register-codex-self.mjs --name gpt --team default --role default --
 
 如果你希望 daemon 通过 Codex 自带的 websocket app-server 唤醒一个正在运行的 Codex thread, 可以在 agent 侧启动 app-server, 然后把 `delivery.kind='codex-appserver'` 注册到 daemon.
 
-优先推荐直接用统一入口 `register_agent`, 并显式带上 `client: "codex"` 和 `thread_id`.  它会把你显式提供的 `thread_id` 注册成 `codex-appserver` delivery, 但不会自动绑定 tmux pane.  如果你还需要 tmux fallback delivery, 再单独调用 `bind_runtime_identity(...)`.
+优先推荐直接用统一入口 `register_agent`, 并显式带上 `agent_type: "codex"` 和 `thread_id`.  它会把你显式提供的 `thread_id` 注册成 `codex-appserver` delivery, 但不会自动绑定 tmux pane.  如果你还需要 tmux fallback delivery, 再单独调用 `bind_runtime_identity(...)`.
 
-`register_agent({ client: "codex", ... })` 不会再根据 loaded threads 自动猜“当前调用者自己的 thread”.  daemon 没有协议级信号把当前 MCP 调用者和某个 Codex loaded thread 强绑定.  如果你省略 `thread_id`, 工具会返回 `thread_id_required`, 并把当前可恢复的 thread ids 放在 detail 里供排查, 但不会继续注册.
+`register_agent({ agent_type: "codex", ... })` 不会再根据 loaded threads 自动猜“当前调用者自己的 thread”.  daemon 没有协议级信号把当前 MCP 调用者和某个 Codex loaded thread 强绑定.  如果你省略 `thread_id`, 工具会返回 `thread_id_required`, 并把当前可恢复的 thread ids 放在 detail 里供排查, 但不会继续注册.
 
 ### 1. 启动 app-server
 
@@ -105,7 +108,7 @@ codex --remote ws://127.0.0.1:8799 --remote-auth-token-env CODEX_REMOTE_TOKEN
 
 ```text
 register_agent({
-  client: "codex",
+  agent_type: "codex",
   model: "gpt-5",
   name: "lead",
   project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
@@ -118,7 +121,7 @@ register_agent({
 
 ```text
 register_agent({
-  client: "codex",
+  agent_type: "codex",
   model: "gpt-5",
   name: "lead",
   project_dir: "/Users/me/workspace/cross-agent-teams-mcp",
@@ -142,7 +145,7 @@ register_agent({
 
 补充说明:
 
-- `register_agent({ client: "codex", ... })` 是新的推荐入口
+- `register_agent({ agent_type: "codex", ... })` 是新的推荐入口
 - 未显式指定 `team` 时, 推荐传 `project_dir` 为当前工作目录, daemon 会用目录名派生默认 team
 - `bind_runtime_identity` 才是写入 `tmux_pane_id` 的路径
 - `detect_tmux_pane(...)` 仅用于调试

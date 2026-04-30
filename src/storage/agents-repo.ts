@@ -6,12 +6,12 @@ import {
   type DeliverySpec,
   type DeliveryRow,
 } from '../lib/delivery-spec.js'
-import type { ClientKind } from '../lib/client-kind.js'
+import type { AgentType } from '../lib/agent-type.js'
 
 export interface RegisterInput {
-  client?: ClientKind
-  client_name?: string
-  model: string
+  agent_type?: AgentType
+  agent_type_name?: string
+  model?: string
   name: string
   role?: string
   team?: string
@@ -23,8 +23,8 @@ export interface RegisterInput {
 
 export interface AgentRow {
   agent_id: string
-  client: ClientKind | null
-  client_name: string | null
+  agent_type: AgentType | null
+  agent_type_name: string | null
   team: string
   role: string
   name: string
@@ -43,8 +43,8 @@ export const ONLINE_MS = 5 * 60 * 1000
 
 type DbAgentRow = {
   agent_id: string
-  client: ClientKind | null
-  client_name: string | null
+  agent_type: AgentType | null
+  agent_type_name: string | null
   team: string
   role: string
   name: string
@@ -57,8 +57,8 @@ function toAgentRow(row: DbAgentRow): AgentRow {
   const delivery = parseDeliveryRow(row)
   return {
     agent_id: row.agent_id,
-    client: row.client,
-    client_name: row.client_name,
+    agent_type: row.agent_type,
+    agent_type_name: row.agent_type_name,
     team: row.team,
     role: row.role,
     name: row.name,
@@ -135,13 +135,13 @@ export class AgentsRepo {
     const { newId, input, team, role, name, now, serialized, preserveExistingDelivery } = args
     this.db.prepare(
       `INSERT INTO agents (
-         agent_id, client, client_name, team, role, name, model, registered_at, last_seen_at,
+         agent_id, agent_type, agent_type_name, team, role, name, model, registered_at, last_seen_at,
          tmux_pane_id, claude_ui_pid, runtime_ui_pid, delivery_kind, delivery_payload
        )
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (team, name) DO UPDATE SET
-         client = excluded.client,
-         client_name = excluded.client_name,
+         agent_type = excluded.agent_type,
+         agent_type_name = excluded.agent_type_name,
          role = excluded.role,
          model = excluded.model,
          last_seen_at = excluded.last_seen_at,
@@ -158,12 +158,12 @@ export class AgentsRepo {
          END`
     ).run(
       newId,
-      input.client ?? null,
-      input.client_name ?? null,
+      input.agent_type ?? null,
+      input.agent_type_name ?? null,
       team,
       role,
       name,
-      input.model,
+      input.model ?? null,
       now,
       now,
       input.tmux_pane_id ?? null,
@@ -206,13 +206,13 @@ export class AgentsRepo {
     ).run(serialized.delivery_kind, serialized.delivery_payload, agent_id)
   }
 
-  setClient(agent_id: string, client: ClientKind, client_name?: string | null): void {
+  setAgentType(agent_id: string, agent_type: AgentType, agent_type_name?: string | null): void {
     this.db.prepare(
       `UPDATE agents
-       SET client=?,
-           client_name=?
+       SET agent_type=?,
+           agent_type_name=?
        WHERE agent_id=?`
-    ).run(client, client_name ?? null, agent_id)
+    ).run(agent_type, agent_type_name ?? null, agent_id)
   }
 
   setRuntimeBinding(
@@ -247,8 +247,8 @@ export class AgentsRepo {
     const rows = this.db.prepare(
       `SELECT
          agent_id,
-         client,
-         client_name,
+         agent_type,
+         agent_type_name,
          team,
          role,
          name,
@@ -305,8 +305,8 @@ export class AgentsRepo {
     const row = this.db.prepare(
       `SELECT
          agent_id,
-         client,
-         client_name,
+         agent_type,
+         agent_type_name,
          team,
          role,
          name,

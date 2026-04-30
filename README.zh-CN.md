@@ -99,39 +99,49 @@ agent 的 MCP client 连上后, 在 agent 会话内调用注册 helper — 不�
 
 ### 注册
 
-Claude Code:
+`register_agent` 是唯一注册入口.  调用前按顺序机械判断 `agent_type=`, 第一条命中即停:
+
+1. `printenv CODEX_THREAD_ID` 非空 → `agent_type="codex"`; 把该值作为 `thread_id` 传入 (必填).  不要传 `ui_pid` (launcher 的 `pre_register_codex_pane` 已处理 tmux pane 绑定).
+2. `printenv CLAUDECODE` 非空 或 `printenv CLAUDE_CODE_ENTRYPOINT` 非空 → `agent_type="claude-code"`; 把 `$PPID` 传为 `ui_pid`.
+3. 以上都不满足 → `agent_type="custom"`, `agent_type_name="<你的 harness 名字, e.g. cursor, opencode, ...>"`.  能从 runtime 环境检测出 harness 名就传 — 例如 `printenv CURSOR_TRACE_ID` 非空就是 cursor — 但**不要**用"PATH 上有某个二进制"这类系统级信号去猜: 那只反映用户装了什么, 不代表 LLM 跑在那个 runtime 里, 会选错 agent_type.  没把握时 `agent_type_name="unknown"` 比猜错好.
+
+Codex:
 
 ```text
-register_claude_self({
-  name: "<agent-name>",
-  ui_pid: <Claude Code CLI 的 pid; 在 Bash 工具里就是 $PPID>,
-  project_dir: "<项目的绝对路径>"
-})
-```
-
-Codex (harness 已 export `CODEX_THREAD_ID` 时):
-
-```text
-register_codex_self({
+register_agent({
+  agent_type: "codex",
   name: "<agent-name>",
   thread_id: "<$CODEX_THREAD_ID 的值>",
   project_dir: "<项目的绝对路径>"
 })
 ```
 
-统一入口 (任意 client):
+Claude Code:
 
 ```text
 register_agent({
-  client: "claude-code" | "codex" | "opencode" | "custom",
+  agent_type: "claude-code",
   name: "<agent-name>",
-  model: "<model-name>",
-  project_dir: "<项目的绝对路径>",
-  ui_pid: <runtime pid>          // 可选, 但非 codex 强烈建议传
+  ui_pid: <Claude Code CLI 的 pid; 在 Bash 工具里就是 $PPID>,
+  project_dir: "<项目的绝对路径>"
 })
 ```
 
-`team` 默认派生自 `project_dir` 的 basename; 想用不同 team 才显式传.  Claude Code 注册成功时, 响应里会带 `channel_session_id`, 表示唤醒通道已经自动接好了.
+其它 harness (cursor, opencode, 编辑器扩展, 未知 harness):
+
+```text
+register_agent({
+  agent_type: "custom",
+  agent_type_name: "<你的 harness 名字>",  // agent_type="custom" 时必填
+  name: "<agent-name>",
+  project_dir: "<项目的绝对路径>",
+  ui_pid: <runtime pid>          // tmux poke 通道强烈建议传
+})
+```
+
+`model` 对所有 `agent_type` 都是**可选**的; 没有权威 model 标识就不传 (daemon 存 NULL).  `team` 默认派生自 `project_dir` 的 basename; 想用不同 team 才显式传.  Claude Code 注册成功时, 响应里会带 `channel_session_id`, 表示唤醒通道已经自动接好了.
+
+`agent_type="opencode"` 仍作为 enum 值保留, 给 opencode-aware launcher 显式使用; 但不再有 detection probe 主动推荐它 — 因为"用户装了 opencode"不等于"LLM 现在跑在 opencode 里".
 
 ### 发消息和查收件箱
 

@@ -32,8 +32,8 @@ describe('AutoBindChannelService', () => {
     const { dir, db, repo, fanout, svc } = setup(); cleanups.push(dir)
     // Write two proxy rows sharing claude_ui_pid=1234, same team
     repo.register({
-      client: 'custom',
-      client_name: 'cross-agent-teams-channel',
+      agent_type: 'custom',
+      agent_type_name: 'cross-agent-teams-channel',
       model: 'proxy',
       role: CHANNEL_PROXY_ROLE,
       name: 'proxy-older',
@@ -45,8 +45,8 @@ describe('AutoBindChannelService', () => {
     const older = new Date(Date.now() - 60_000).toISOString()
     db.prepare(`UPDATE agents SET last_seen_at=? WHERE name='proxy-older'`).run(older)
     repo.register({
-      client: 'custom',
-      client_name: 'cross-agent-teams-channel',
+      agent_type: 'custom',
+      agent_type_name: 'cross-agent-teams-channel',
       model: 'proxy',
       role: CHANNEL_PROXY_ROLE,
       name: 'proxy-newer',
@@ -58,7 +58,7 @@ describe('AutoBindChannelService', () => {
     fanout.attach('csid-old', () => { /* sink */ }, 'proxy-sess-old')
 
     const caller = repo.register({
-      client: 'claude-code',
+      agent_type: 'claude-code',
       model: 'opus',
       role: 'worker',
       name: 'host',
@@ -73,7 +73,7 @@ describe('AutoBindChannelService', () => {
   it('returns no_proxy_row when no __channel_proxy__ matches', () => {
     const { dir, db, repo, svc } = setup(); cleanups.push(dir)
     const caller = repo.register({
-      client: 'claude-code',
+      agent_type: 'claude-code',
       model: 'opus',
       role: 'worker',
       name: 'host',
@@ -88,7 +88,7 @@ describe('AutoBindChannelService', () => {
   it('returns sink_not_live when proxy row exists but fanout has no sink', () => {
     const { dir, db, repo, svc } = setup(); cleanups.push(dir)
     repo.register({
-      client: 'custom',
+      agent_type: 'custom',
       model: 'proxy',
       role: CHANNEL_PROXY_ROLE,
       name: 'proxy-1',
@@ -97,7 +97,7 @@ describe('AutoBindChannelService', () => {
       delivery: { kind: 'claude-channel', channel_session_id: 'csid-dead' },
     })
     const caller = repo.register({
-      client: 'claude-code',
+      agent_type: 'claude-code',
       model: 'opus',
       role: 'worker',
       name: 'host',
@@ -111,7 +111,7 @@ describe('AutoBindChannelService', () => {
   it('ignores team: proxy row in team A still matches caller in team B when claude_ui_pid aligns', () => {
     const { dir, db, repo, fanout, svc } = setup(); cleanups.push(dir)
     repo.register({
-      client: 'custom',
+      agent_type: 'custom',
       model: 'proxy',
       role: CHANNEL_PROXY_ROLE,
       name: 'proxy-1',
@@ -121,7 +121,7 @@ describe('AutoBindChannelService', () => {
     })
     fanout.attach('csid-alpha', () => { /* sink */ }, 'sess-p')
     const caller = repo.register({
-      client: 'claude-code',
+      agent_type: 'claude-code',
       model: 'opus',
       role: 'worker',
       name: 'host',
@@ -135,7 +135,7 @@ describe('AutoBindChannelService', () => {
   it('skips stale proxy rows older than 5 minutes', () => {
     const { dir, db, repo, fanout, svc } = setup(); cleanups.push(dir)
     repo.register({
-      client: 'custom',
+      agent_type: 'custom',
       model: 'proxy',
       role: CHANNEL_PROXY_ROLE,
       name: 'proxy-stale',
@@ -147,7 +147,7 @@ describe('AutoBindChannelService', () => {
     db.prepare(`UPDATE agents SET last_seen_at=? WHERE name='proxy-stale'`).run(oldIso)
     fanout.attach('csid-stale', () => { /* sink */ }, 'sess-stale')
     const caller = repo.register({
-      client: 'claude-code',
+      agent_type: 'claude-code',
       model: 'opus',
       role: 'worker',
       name: 'host',

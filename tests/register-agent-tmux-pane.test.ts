@@ -25,7 +25,7 @@ describe('register_agent tmux handling integration', () => {
 
     const regResp = await client.callTool({
       name: 'register_agent',
-      arguments: { client: 'custom', model: 'opus-4-7', role: 'frontend', name: 'alice', tmux_pane_id: '%42', team: 'default' }
+      arguments: { agent_type: 'custom', model: 'opus-4-7', role: 'frontend', name: 'alice', tmux_pane_id: '%42', team: 'default' }
     })
     const errResp = regResp as { isError?: boolean; content: Array<{ text: string }> }
     expect(errResp.isError).toBe(true)
@@ -52,7 +52,7 @@ describe('register_agent tmux handling integration', () => {
       return { c, t }
     }
     const A = await makeClient()
-    const regA = JSON.parse(((await A.c.callTool({ name: 'register_agent', arguments: { client: 'custom', model: 'opus-4-7', role: 'frontend', name: 'alice' } })).content as Array<{ text: string }>)[0].text) as { agent_id: string }
+    const regA = JSON.parse(((await A.c.callTool({ name: 'register_agent', arguments: { agent_type: 'custom', model: 'opus-4-7', role: 'frontend', name: 'alice' } })).content as Array<{ text: string }>)[0].text) as { agent_id: string }
     const list = JSON.parse(((await A.c.callTool({ name: 'list_agents', arguments: {} })).content as Array<{ text: string }>)[0].text) as { agents: Array<{ agent_id: string; tmux_pane_id: string | null }> }
     const a = list.agents.find(x => x.agent_id === regA.agent_id)
     expect(a?.tmux_pane_id).toBeNull()

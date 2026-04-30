@@ -77,7 +77,7 @@ async function callRegister(host: string, port: number, agent: http.Agent, sid: 
     host, port, path: '/mcp', agent, headers,
     body: JSON.stringify({
       jsonrpc: '2.0', id: Math.floor(Math.random() * 1e9), method: 'tools/call',
-      params: { name: 'register_agent', arguments: { client: 'custom', ...args } }
+      params: { name: 'register_agent', arguments: { agent_type: 'custom', ...args } }
     })
   })
 }

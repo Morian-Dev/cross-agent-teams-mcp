@@ -52,15 +52,15 @@ describe('phase 2 three-agent end-to-end', () => {
       // register_agent for each
       const regA = parseTool(await agentA.client.callTool({
         name: 'register_agent',
-        arguments: { client: 'custom', model: 'opus', role: 'backend', name: 'alice' }
+        arguments: { agent_type: 'custom', model: 'opus', role: 'backend', name: 'alice' }
       }))
       const regB = parseTool(await agentB.client.callTool({
         name: 'register_agent',
-        arguments: { client: 'custom', model: 'sonnet', role: 'frontend', name: 'bob' }
+        arguments: { agent_type: 'custom', model: 'sonnet', role: 'frontend', name: 'bob' }
       }))
       const regC = parseTool(await agentC.client.callTool({
         name: 'register_agent',
-        arguments: { client: 'custom', model: 'gpt', role: 'qa', name: 'carol' }
+        arguments: { agent_type: 'custom', model: 'gpt', role: 'qa', name: 'carol' }
       }))
       expect(typeof regA.agent_id).toBe('string')
       expect(typeof regB.agent_id).toBe('string')

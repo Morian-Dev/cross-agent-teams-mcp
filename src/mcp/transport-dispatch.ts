@@ -1,6 +1,6 @@
 import type { ChannelWakeFanout } from '../daemon/channel-wake-fanout.js'
 import { sendChannelWake } from '../daemon/channel-wake-send.js'
-import type { ClientKind } from '../lib/client-kind.js'
+import type { AgentType } from '../lib/agent-type.js'
 import type { DeliverySpec } from '../lib/delivery-spec.js'
 import {
   dispatchCodexAppserverPoke,
@@ -21,7 +21,7 @@ export type TmuxPokeResult =
   | { error: string; detail?: unknown }
 
 export interface TargetRow {
-  client: ClientKind | null
+  agent_type: AgentType | null
   delivery: DeliverySpec
   tmux_pane_id: string | null
 }
@@ -60,14 +60,14 @@ export async function dispatchPoke(
   target: TargetRow,
   input: DispatchInput
 ): Promise<DispatchResult> {
-  const client = resolveClient(target)
-  if (client === 'claude-code') return dispatchClaude(deps, target, input)
-  if (client === 'codex') return dispatchCodex(deps, target, input)
+  const agentType = resolveAgentType(target)
+  if (agentType === 'claude-code') return dispatchClaude(deps, target, input)
+  if (agentType === 'codex') return dispatchCodex(deps, target, input)
   return dispatchUnknown(deps, target, input)
 }
 
-function resolveClient(target: TargetRow): ClientKind | null {
-  if (target.client) return target.client
+function resolveAgentType(target: TargetRow): AgentType | null {
+  if (target.agent_type) return target.agent_type
   if (target.delivery.kind === 'claude-channel') return 'claude-code'
   if (target.delivery.kind === 'codex-appserver') return 'codex'
   return null

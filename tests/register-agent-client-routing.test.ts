@@ -64,7 +64,7 @@ describe('register_agent client routing', () => {
     const resp = await c.callTool({
       name: 'register_agent',
       arguments: {
-        client: 'codex',
+        agent_type: 'codex',
         model: 'gpt-5',
         role: 'worker',
         name: 'alice',
@@ -85,8 +85,9 @@ describe('register_agent client routing', () => {
       model: 'gpt-5',
       role: 'worker',
       team: undefined,
+      project_dir: undefined,
       thread_id: '11111111-1111-4111-8111-111111111111',
-      ws_url: undefined,
+      ws_url: '',
       auth_token_ref: undefined,
     })
     expect(detectTmuxPaneMock).toHaveBeenCalledWith({ agent: 'codex' })

@@ -35,7 +35,7 @@ async function parseTool(resp: unknown): Promise<Record<string, unknown>> {
   return JSON.parse(r.content[0].text)
 }
 
-describe('register_agent({client:"opencode", ui_pid}) binds tmux pane and poke uses tmux', () => {
+describe('register_agent({agent_type:"opencode", ui_pid}) binds tmux pane and poke uses tmux', () => {
   const cleanups: string[] = []
 
   afterEach(() => {
@@ -67,7 +67,7 @@ describe('register_agent({client:"opencode", ui_pid}) binds tmux pane and poke u
     const resp = await c.callTool({
       name: 'register_agent',
       arguments: {
-        client: 'opencode',
+        agent_type: 'opencode',
         model: 'opencode-default',
         role: 'worker',
         name: 'alice',
@@ -87,21 +87,21 @@ describe('register_agent({client:"opencode", ui_pid}) binds tmux pane and poke u
     const db = openDb(dbPath)
     applySchema(db)
     const row = db.prepare(
-      'SELECT client, tmux_pane_id, runtime_ui_pid FROM agents WHERE team=? AND name=?'
+      'SELECT agent_type, tmux_pane_id, runtime_ui_pid FROM agents WHERE team=? AND name=?'
     ).get('default', 'alice') as {
-      client: string | null
+      agent_type: string | null
       tmux_pane_id: string | null
       runtime_ui_pid: number | null
     }
     expect(row).toEqual({
-      client: 'opencode',
+      agent_type: 'opencode',
       tmux_pane_id: '%77',
       runtime_ui_pid: 31415,
     })
 
     const callerAgentId = insertAgent(db, {
       agent_id: 'caller-agent',
-      client: 'claude-code',
+      agent_type: 'claude-code',
       role: 'lead',
       name: 'caller',
       tmux_pane_id: '%1',

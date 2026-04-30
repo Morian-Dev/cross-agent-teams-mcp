@@ -14,8 +14,8 @@ const DDL = [
   `CREATE INDEX IF NOT EXISTS idx_events_to_team_eventid ON events(to_team, event_id)`,
   `CREATE TABLE IF NOT EXISTS agents (
     agent_id TEXT PRIMARY KEY,
-    client TEXT,
-    client_name TEXT,
+    agent_type TEXT,
+    agent_type_name TEXT,
     team TEXT NOT NULL,
     role TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -104,8 +104,29 @@ function migrateAgentsDeliveryColumns(db: Database.Database): void {
   if (!tableExists) return
   const cols = db.pragma('table_info(agents)') as Array<{ name: string }>
   const existing = new Set(cols.map(c => c.name))
-  const needClient = !existing.has('client')
-  const needClientName = !existing.has('client_name')
+  // Column-rename migration: legacy schemas have `client`/`client_name`; rename
+  // them in place to `agent_type`/`agent_type_name`. Idempotent: skip if the new
+  // names already exist.
+  const renameClient = existing.has('client') && !existing.has('agent_type')
+  const renameClientName = existing.has('client_name') && !existing.has('agent_type_name')
+  if (renameClient || renameClientName) {
+    const renameTx = db.transaction(() => {
+      if (renameClient) {
+        db.exec(`ALTER TABLE agents RENAME COLUMN client TO agent_type`)
+      }
+      if (renameClientName) {
+        db.exec(`ALTER TABLE agents RENAME COLUMN client_name TO agent_type_name`)
+      }
+    })
+    renameTx()
+    // Refresh column snapshot after the rename so downstream ADD COLUMN checks
+    // use the new column names.
+    const colsAfter = db.pragma('table_info(agents)') as Array<{ name: string }>
+    existing.clear()
+    for (const c of colsAfter) existing.add(c.name)
+  }
+  const needAgentType = !existing.has('agent_type')
+  const needAgentTypeName = !existing.has('agent_type_name')
   const needKind = !existing.has('delivery_kind')
   const needPayload = !existing.has('delivery_payload')
   const needRuntimeUiPid = !existing.has('runtime_ui_pid')
@@ -114,8 +135,8 @@ function migrateAgentsDeliveryColumns(db: Database.Database): void {
   const needRuntimeBoundAt = !existing.has('runtime_bound_at')
   const needClaudeUiPid = !existing.has('claude_ui_pid')
   if (
-    !needClient &&
-    !needClientName &&
+    !needAgentType &&
+    !needAgentTypeName &&
     !needKind &&
     !needPayload &&
     !needRuntimeUiPid &&
@@ -125,11 +146,11 @@ function migrateAgentsDeliveryColumns(db: Database.Database): void {
     !needClaudeUiPid
   ) return
   const tx = db.transaction(() => {
-    if (needClient) {
-      db.exec(`ALTER TABLE agents ADD COLUMN client TEXT`)
+    if (needAgentType) {
+      db.exec(`ALTER TABLE agents ADD COLUMN agent_type TEXT`)
     }
-    if (needClientName) {
-      db.exec(`ALTER TABLE agents ADD COLUMN client_name TEXT`)
+    if (needAgentTypeName) {
+      db.exec(`ALTER TABLE agents ADD COLUMN agent_type_name TEXT`)
     }
     if (needKind) {
       db.exec(`ALTER TABLE agents ADD COLUMN delivery_kind TEXT NOT NULL DEFAULT 'none'`)

@@ -31,7 +31,7 @@ describe('AgentsRepo reactive rebind on __channel_proxy__ register', () => {
   it('promotes pre-existing delivery=none host to claude-channel when proxy registers (6.10)', () => {
     const { dir, db, repo } = freshRepo(); cleanups.push(dir)
     repo.register({
-      client: 'claude-code',
+      agent_type: 'claude-code',
       model: 'opus',
       role: 'worker',
       name: 'alice',
@@ -41,8 +41,8 @@ describe('AgentsRepo reactive rebind on __channel_proxy__ register', () => {
     expect(deliveryOf(db, 'alice').delivery_kind).toBe('none')
 
     repo.register({
-      client: 'custom',
-      client_name: 'cross-agent-teams-channel',
+      agent_type: 'custom',
+      agent_type_name: 'cross-agent-teams-channel',
       model: 'proxy',
       role: '__channel_proxy__',
       name: 'channel-proxy-27245',
@@ -59,7 +59,7 @@ describe('AgentsRepo reactive rebind on __channel_proxy__ register', () => {
   it('rewrites stale csid on proxy restart (6.11)', () => {
     const { dir, db, repo } = freshRepo(); cleanups.push(dir)
     repo.register({
-      client: 'claude-code',
+      agent_type: 'claude-code',
       model: 'opus',
       role: 'worker',
       name: 'alice',
@@ -69,7 +69,7 @@ describe('AgentsRepo reactive rebind on __channel_proxy__ register', () => {
     })
     // Initial proxy row with csid-old
     repo.register({
-      client: 'custom',
+      agent_type: 'custom',
       model: 'proxy',
       role: '__channel_proxy__',
       name: 'channel-proxy-27245',
@@ -79,7 +79,7 @@ describe('AgentsRepo reactive rebind on __channel_proxy__ register', () => {
     })
     // Proxy restart: same identity, new csid
     repo.register({
-      client: 'custom',
+      agent_type: 'custom',
       model: 'proxy',
       role: '__channel_proxy__',
       name: 'channel-proxy-27245',
@@ -95,7 +95,7 @@ describe('AgentsRepo reactive rebind on __channel_proxy__ register', () => {
   it('skips hosts with runtime_ui_pid IS NULL (6.12)', () => {
     const { dir, db, repo } = freshRepo(); cleanups.push(dir)
     repo.register({
-      client: 'claude-code',
+      agent_type: 'claude-code',
       model: 'opus',
       role: 'worker',
       name: 'bob',
@@ -103,7 +103,7 @@ describe('AgentsRepo reactive rebind on __channel_proxy__ register', () => {
       // no runtime_ui_pid
     })
     repo.register({
-      client: 'custom',
+      agent_type: 'custom',
       model: 'proxy',
       role: '__channel_proxy__',
       name: 'channel-proxy-27245',
@@ -118,7 +118,7 @@ describe('AgentsRepo reactive rebind on __channel_proxy__ register', () => {
   it('does not overwrite codex-appserver delivery (6.13)', () => {
     const { dir, db, repo } = freshRepo(); cleanups.push(dir)
     repo.register({
-      client: 'codex',
+      agent_type: 'codex',
       model: 'gpt-5',
       role: 'worker',
       name: 'carol',
@@ -131,7 +131,7 @@ describe('AgentsRepo reactive rebind on __channel_proxy__ register', () => {
       },
     })
     repo.register({
-      client: 'custom',
+      agent_type: 'custom',
       model: 'proxy',
       role: '__channel_proxy__',
       name: 'channel-proxy-27245',
@@ -146,7 +146,7 @@ describe('AgentsRepo reactive rebind on __channel_proxy__ register', () => {
   it('is scoped to the proxy team (6.14)', () => {
     const { dir, db, repo } = freshRepo(); cleanups.push(dir)
     repo.register({
-      client: 'claude-code',
+      agent_type: 'claude-code',
       model: 'opus',
       role: 'worker',
       name: 'dave',
@@ -154,7 +154,7 @@ describe('AgentsRepo reactive rebind on __channel_proxy__ register', () => {
       runtime_ui_pid: 25424,
     })
     repo.register({
-      client: 'custom',
+      agent_type: 'custom',
       model: 'proxy',
       role: '__channel_proxy__',
       name: 'channel-proxy-27245',
@@ -169,7 +169,7 @@ describe('AgentsRepo reactive rebind on __channel_proxy__ register', () => {
   it('is a no-op when proxy registers without claude_ui_pid', () => {
     const { dir, db, repo } = freshRepo(); cleanups.push(dir)
     repo.register({
-      client: 'claude-code',
+      agent_type: 'claude-code',
       model: 'opus',
       role: 'worker',
       name: 'alice',
@@ -178,7 +178,7 @@ describe('AgentsRepo reactive rebind on __channel_proxy__ register', () => {
     })
     // Proxy row without claude_ui_pid (defensive — should not trigger rebind).
     repo.register({
-      client: 'custom',
+      agent_type: 'custom',
       model: 'proxy',
       role: '__channel_proxy__',
       name: 'proxy-1',

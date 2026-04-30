@@ -146,7 +146,7 @@ On startup, the channel proxy SHALL, in order:
 1. Parse CLI args: `--daemon-url <url>` (or env `CROSS_AGENT_TEAMS_MCP_DAEMON_URL`).  The proxy is identity-agnostic — it MUST NOT accept `--agent-team` or `--agent-name`.  If daemon-url is missing, exit with a non-zero status and a diagnostic on stderr.
 2. Generate a fresh UUID v4 as `channel_session_id` for this process lifetime.  No persistence — each proxy startup gets a new csid.  (Rationale: the proxy is shared-by-directory in `.mcp.json`, so persisting by identity would collide across multi-instance Claude Code runs; a fresh csid per startup sidesteps the issue entirely.)
 3. Open an MCP Streamable HTTP client to `<daemon-url>`.
-4. Call `register_agent({client: 'custom', client_name: 'cross-agent-teams-channel', role: '__channel_proxy__', name: 'channel-proxy-<pid>', team: 'default', model: 'proxy', claude_ui_pid: <process.ppid>, delivery: {kind: 'claude-channel', channel_session_id: <csid>}})` to establish its own MCP session identity AND persist both the parent Claude Code UI pid and the current csid on the proxy's own agents row.  The `claude_ui_pid` value SHALL be the proxy process's parent pid at startup.  The `delivery` field reuses the existing `register_agent` delivery contract to persist the csid without adding a new column.
+4. Call `register_agent({agent_type: 'custom', agent_type_name: 'cross-agent-teams-channel', role: '__channel_proxy__', name: 'channel-proxy-<pid>', team: 'default', model: 'proxy', claude_ui_pid: <process.ppid>, delivery: {kind: 'claude-channel', channel_session_id: <csid>}})` to establish its own MCP session identity AND persist both the parent Claude Code UI pid and the current csid on the proxy's own agents row.  The `claude_ui_pid` value SHALL be the proxy process's parent pid at startup.  The `delivery` field reuses the existing `register_agent` delivery contract to persist the csid without adding a new column.
 5. Call `subscribe_channel_wake({channel_session_id: <csid>})` to attach its notification sink.
 6. Emit a `notifications/claude/channel` JSON-RPC notification on its host stdio telling Claude: its `channel_session_id` is `<csid>` and it should call `bind_channel({channel_session_id: '<csid>'})` to complete binding.  This notification remains for backward compatibility — callers that already know how to parse and use it are unaffected — but it is no longer required for auto-binding to succeed (see `agent-registry`'s auto-bind requirement).
 7. Enter an idle loop receiving `notifications/channel_wake` from the daemon and relaying them to the host.
@@ -272,7 +272,7 @@ This requirement covers two scenarios transparently:
 
 - **GIVEN** agent `alice` is registered in team `default` with `role='worker'`, `runtime_ui_pid=25424`, and `delivery_kind='none'`
 - **AND** no `__channel_proxy__` row exists yet for `claude_ui_pid=25424`
-- **WHEN** the channel proxy calls `register_agent({client:'custom', role:'__channel_proxy__', name:'channel-proxy-27245', team:'default', model:'proxy', claude_ui_pid:25424, delivery:{kind:'claude-channel', channel_session_id:'csid-new'}})`
+- **WHEN** the channel proxy calls `register_agent({agent_type:'custom', role:'__channel_proxy__', name:'channel-proxy-27245', team:'default', model:'proxy', claude_ui_pid:25424, delivery:{kind:'claude-channel', channel_session_id:'csid-new'}})`
 - **THEN** the proxy row is written successfully
 - **AND** alice's `agents` row has `delivery_kind='claude-channel'` and `delivery_payload='{\"channel_session_id\":\"csid-new\"}'`
 

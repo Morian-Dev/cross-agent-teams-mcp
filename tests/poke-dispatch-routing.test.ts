@@ -23,7 +23,7 @@ describe('poke dispatch routes by delivery.kind', () => {
     const result = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
       {
-        client: 'claude-code',
+        agent_type: 'claude-code',
         delivery: { kind: 'claude-channel', channel_session_id: 'csid-abc' },
         tmux_pane_id: '%42',
       },
@@ -45,7 +45,7 @@ describe('poke dispatch routes by delivery.kind', () => {
 
     const result = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
-      { client: null, delivery: { kind: 'none' }, tmux_pane_id: '%42' },
+      { agent_type: null, delivery: { kind: 'none' }, tmux_pane_id: '%42' },
       { content: 'wake up', meta: {} }
     )
 
@@ -63,7 +63,7 @@ describe('poke dispatch routes by delivery.kind', () => {
 
     const result = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
-      { client: null, delivery: { kind: 'none' }, tmux_pane_id: null },
+      { agent_type: null, delivery: { kind: 'none' }, tmux_pane_id: null },
       { content: 'wake up', meta: {} }
     )
 
@@ -89,7 +89,7 @@ describe('poke dispatch routes by delivery.kind', () => {
         }),
       },
       {
-        client: 'codex',
+        agent_type: 'codex',
         delivery: {
           kind: 'codex-appserver',
           thread_id: '11111111-1111-4111-8111-111111111111',
@@ -123,7 +123,7 @@ describe('poke dispatch routes by delivery.kind', () => {
         }),
       },
       {
-        client: 'codex',
+        agent_type: 'codex',
         delivery: {
           kind: 'codex-appserver',
           thread_id: '11111111-1111-4111-8111-111111111111',

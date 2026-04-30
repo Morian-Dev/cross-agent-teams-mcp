@@ -60,8 +60,8 @@ function seedLiveProxy(
   args: { team?: string; csid: string; claude_ui_pid: number; name?: string }
 ): void {
   repo.register({
-    client: 'custom',
-    client_name: 'cross-agent-teams-channel',
+    agent_type: 'custom',
+    agent_type_name: 'cross-agent-teams-channel',
     model: 'proxy',
     role: '__channel_proxy__',
     name: args.name ?? `proxy-${args.claude_ui_pid}`,
@@ -74,14 +74,14 @@ function seedLiveProxy(
 
 function baseArgs(extra: Record<string, unknown>): Record<string, unknown> {
   return {
-    client: 'claude-code',
+    agent_type: 'claude-code',
     model: 'opus',
     name: 'opus',
     ...extra,
   }
 }
 
-describe('register_agent({client:"claude-code"}) csid vs ui_pid consistency check', () => {
+describe('register_agent({agent_type:"claude-code"}) csid vs ui_pid consistency check', () => {
   const cleanups: string[] = []
   afterEach(() => {
     cleanups.forEach(d => rmSync(d, { recursive: true, force: true }))
@@ -175,7 +175,7 @@ describe('register_agent({client:"claude-code"}) csid vs ui_pid consistency chec
     const { dir, db, server, client, transport, repo } = await setup(fanout)
     cleanups.push(dir)
     repo.register({
-      client: 'custom',
+      agent_type: 'custom',
       model: 'proxy',
       role: '__channel_proxy__',
       name: 'proxy-stale-ra',

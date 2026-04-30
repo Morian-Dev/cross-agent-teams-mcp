@@ -38,10 +38,10 @@ describe('SSE fanout wired into register_contract', () => {
 
     try {
       await publisherClient.callTool({
-        name: 'register_agent', arguments: { client: 'custom', name: 'tester-16', model: 'm', role: 'r' }
+        name: 'register_agent', arguments: { agent_type: 'custom', name: 'tester-16', model: 'm', role: 'r' }
       })
       await subscriberClient.callTool({
-        name: 'register_agent', arguments: { client: 'custom', name: 'tester-17', model: 'm', role: 'r' }
+        name: 'register_agent', arguments: { agent_type: 'custom', name: 'tester-17', model: 'm', role: 'r' }
       })
       const subRes = parseTool(await subscriberClient.callTool({
         name: 'subscribe_contract', arguments: { name: 'X' }

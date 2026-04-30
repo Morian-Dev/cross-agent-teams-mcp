@@ -38,8 +38,8 @@ describe('register_agent tool schema', () => {
         role: expect.anything(),
         team: expect.anything(),
         project_dir: expect.anything(),
-        client: expect.anything(),
-        client_name: expect.anything(),
+        agent_type: expect.anything(),
+        agent_type_name: expect.anything(),
         ui_pid: expect.anything(),
         channel_session_id: expect.anything(),
         thread_id: expect.anything(),
@@ -47,9 +47,64 @@ describe('register_agent tool schema', () => {
         auth_token_ref: expect.anything(),
         delivery: expect.anything(),
       }),
-      required: expect.arrayContaining(['client', 'model', 'name']),
+      required: expect.arrayContaining(['agent_type', 'name']),
       additionalProperties: false,
     })
+
+    await transport.terminateSession()
+    await client.close()
+    await app.close()
+  })
+
+  it('rejects legacy `client` key with a rename hint', async () => {
+    const dir = tmp()
+    cleanups.push(dir)
+
+    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+    const url = new URL(`http://${host}:${port}/mcp`)
+    const transport = new StreamableHTTPClientTransport(url)
+    const client = new Client({ name: 'legacy-key-check', version: '0.0.0' })
+    await client.connect(transport)
+
+    const resp = await client.callTool({
+      name: 'register_agent',
+      arguments: {
+        client: 'custom',
+        name: 'alice',
+      } as unknown as Record<string, unknown>,
+    })
+    const errResp = resp as { isError?: boolean; content: Array<{ text: string }> }
+    expect(errResp.isError).toBe(true)
+    expect(errResp.content[0].text).toMatch(/client/)
+    expect(errResp.content[0].text).toMatch(/agent_type/)
+
+    await transport.terminateSession()
+    await client.close()
+    await app.close()
+  })
+
+  it('rejects legacy `client_name` key with a rename hint', async () => {
+    const dir = tmp()
+    cleanups.push(dir)
+
+    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+    const url = new URL(`http://${host}:${port}/mcp`)
+    const transport = new StreamableHTTPClientTransport(url)
+    const client = new Client({ name: 'legacy-key-check-2', version: '0.0.0' })
+    await client.connect(transport)
+
+    const resp = await client.callTool({
+      name: 'register_agent',
+      arguments: {
+        agent_type: 'custom',
+        client_name: 'cursor',
+        name: 'alice',
+      } as unknown as Record<string, unknown>,
+    })
+    const errResp = resp as { isError?: boolean; content: Array<{ text: string }> }
+    expect(errResp.isError).toBe(true)
+    expect(errResp.content[0].text).toMatch(/client_name/)
+    expect(errResp.content[0].text).toMatch(/agent_type_name/)
 
     await transport.terminateSession()
     await client.close()

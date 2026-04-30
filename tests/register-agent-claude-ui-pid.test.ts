@@ -59,7 +59,7 @@ describe('register_agent schema: claude_ui_pid', () => {
     const { dir, db, server, client, transport } = await setup()
     cleanups.push(dir)
     const text = await expectInvalid(client, {
-      client: 'custom',
+      agent_type: 'custom',
       model: 'opus',
       role: 'worker',
       name: 'alice',
@@ -79,21 +79,21 @@ describe('register_agent schema: claude_ui_pid', () => {
     const { dir, db, server, client, transport } = await setup()
     cleanups.push(dir)
     await expectInvalid(client, {
-      client: 'custom',
+      agent_type: 'custom',
       model: 'proxy',
       role: '__channel_proxy__',
       name: 'proxy-1',
       claude_ui_pid: 0,
     })
     await expectInvalid(client, {
-      client: 'custom',
+      agent_type: 'custom',
       model: 'proxy',
       role: '__channel_proxy__',
       name: 'proxy-2',
       claude_ui_pid: -5,
     })
     await expectInvalid(client, {
-      client: 'custom',
+      agent_type: 'custom',
       model: 'proxy',
       role: '__channel_proxy__',
       name: 'proxy-3',
@@ -113,8 +113,8 @@ describe('register_agent schema: claude_ui_pid', () => {
     const resp = await client.callTool({
       name: 'register_agent',
       arguments: {
-        client: 'custom',
-        client_name: 'cross-agent-teams-channel',
+        agent_type: 'custom',
+        agent_type_name: 'cross-agent-teams-channel',
         model: 'proxy',
         role: '__channel_proxy__',
         name: 'channel-proxy-27245',
@@ -143,7 +143,7 @@ describe('register_agent schema: claude_ui_pid', () => {
     await client.callTool({
       name: 'register_agent',
       arguments: {
-        client: 'custom',
+        agent_type: 'custom',
         model: 'proxy',
         role: '__channel_proxy__',
         name: 'p1',
@@ -155,7 +155,7 @@ describe('register_agent schema: claude_ui_pid', () => {
     await client.callTool({
       name: 'register_agent',
       arguments: {
-        client: 'custom',
+        agent_type: 'custom',
         model: 'proxy',
         role: '__channel_proxy__',
         name: 'p1',

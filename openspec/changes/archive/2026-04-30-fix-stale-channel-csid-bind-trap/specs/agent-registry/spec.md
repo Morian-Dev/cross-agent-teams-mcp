@@ -2,7 +2,7 @@
 
 ### Requirement: register_claude_self and register_agent claude-code reject channel_session_id that conflicts with ui_pid's live proxy csid
 
-When `register_claude_self` OR `register_agent({client:'claude-code'})` is invoked with BOTH `ui_pid` AND `channel_session_id` supplied, the daemon SHALL perform a consistency check BEFORE any agent-row UPSERT or delivery binding:
+When `register_claude_self` OR `register_agent({agent_type:'claude-code'})` is invoked with BOTH `ui_pid` AND `channel_session_id` supplied, the daemon SHALL perform a consistency check BEFORE any agent-row UPSERT or delivery binding:
 
 1. Query `__channel_proxy__` rows where `claude_ui_pid = <caller ui_pid>` AND `last_seen_at > now() - 5 minutes`, ordered by `last_seen_at DESC` with `LIMIT 1`. The 5-minute window MUST be the same constant used by the existing `register_claude_self auto-binds channel_session_id via ui_pid match` requirement. The query MUST NOT filter by team — the proxy always registers into `team='default'` while Claude hosts typically register into a project-derived team, and `claude_ui_pid` alone uniquely identifies the caller's proxy.
 2. If no matching row exists, the consistency check is a no-op — the call MUST proceed to the existing explicit-bind path (identical semantics to `bind_channel`). The absence of a matching proxy means there is no basis to reject.
@@ -35,10 +35,10 @@ Callers with `client != 'claude-code'` are not affected.
 - **THEN** the call succeeds
 - **AND** the agents row for `(default, opus)` has `delivery_payload='{\"channel_session_id\":\"csid-abc\"}'`
 
-#### Scenario: register_agent client=claude-code rejects mismatched csid vs live proxy csid
+#### Scenario: register_agent agent_type=claude-code rejects mismatched csid vs live proxy csid
 
 - **GIVEN** a live `__channel_proxy__` row with `team='default'`, `claude_ui_pid=27341`, `delivery_payload='{\"channel_session_id\":\"csid-f256fc1a\"}'`, and `last_seen_at` less than 5 minutes ago
-- **WHEN** a caller invokes `register_agent({client:'claude-code', name:'opus', model:'sonnet', team:'default', ui_pid:27341, channel_session_id:'csid-45818c22'})`
+- **WHEN** a caller invokes `register_agent({agent_type:'claude-code', name:'opus', model:'sonnet', team:'default', ui_pid:27341, channel_session_id:'csid-45818c22'})`
 - **THEN** the response is `{error: 'channel_session_id_ui_pid_mismatch', detail: {ui_pid_matched_csid: 'csid-f256fc1a', supplied_csid: 'csid-45818c22'}}`
 - **AND** no agents row is UPSERT'd for `(default, opus)`
 

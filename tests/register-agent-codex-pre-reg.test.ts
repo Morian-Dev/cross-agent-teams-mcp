@@ -19,6 +19,52 @@ vi.mock('../src/daemon/runtime-identity.js', () => ({
   bindRuntimeIdentity: bindRuntimeIdentityMock,
 }))
 
+// RegisterCodexSelfService is wrapped: real construction with real registerSvc,
+// but its `register` method delegates straight to registerSvc.register so we
+// skip the codex-appserver WS handshake entirely. This preserves agent-row
+// writes (the tests assert on those) while avoiding a live websocket dependency.
+vi.mock('../src/mcp/register-codex-self.js', () => {
+  return {
+    RegisterCodexSelfService: class {
+      constructor(private readonly registerSvc: { register: (input: unknown) => unknown }) {}
+      register(input: {
+        connection_id: string
+        name: string
+        model?: string
+        role?: string
+        team?: string
+        project_dir?: string
+        thread_id?: string
+        ws_url?: string
+        auth_token_ref?: string
+      }) {
+        const result = this.registerSvc.register({
+          connection_id: input.connection_id,
+          agent_type: 'codex',
+          model: input.model ?? 'codex',
+          name: input.name,
+          role: input.role,
+          team: input.team,
+          project_dir: input.project_dir,
+          delivery: {
+            kind: 'codex-appserver',
+            thread_id: input.thread_id,
+            ws_url: input.ws_url || 'ws://127.0.0.1:8799',
+          },
+        }) as Record<string, unknown>
+        if ('error' in result) return result
+        return {
+          ...result,
+          thread_id: input.thread_id,
+          ws_url: input.ws_url || 'ws://127.0.0.1:8799',
+        }
+      }
+    },
+  }
+})
+
+const VALID_THREAD_ID = '11111111-1111-4111-8111-111111111111'
+
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'atm-codex-pre-reg-'))
 
 async function parseTool(resp: unknown): Promise<Record<string, unknown>> {
@@ -82,7 +128,7 @@ describe('register_agent codex pre-reg auto-bind', () => {
     // Then codex agent registers without ui_pid
     const resp = await c.callTool({
       name: 'register_agent',
-      arguments: { client: 'codex', model: 'gpt-5', role: 'worker', name: 'new-gpt' },
+      arguments: { agent_type: 'codex', model: 'gpt-5', role: 'worker', name: 'new-gpt', thread_id: VALID_THREAD_ID },
     })
     const obj = await parseTool(resp)
 
@@ -136,13 +182,13 @@ describe('register_agent codex pre-reg auto-bind', () => {
 
     const resp = await c.callTool({
       name: 'register_agent',
-      arguments: { client: 'codex', model: 'gpt-5', role: 'worker', name: 'new-gpt' },
+      arguments: { agent_type: 'codex', model: 'gpt-5', role: 'worker', name: 'new-gpt', thread_id: VALID_THREAD_ID },
     })
     const obj = await parseTool(resp)
 
     expect(obj.agent_id).toBeDefined()
-    expect(typeof obj.hint).toBe('string')
-    expect(String(obj.hint)).toMatch(/automatic runtime binding did not converge/i)
+    // codex-appserver delivery is bound natively; no tmux fallback hint expected.
+    expect(obj.hint).toBeUndefined()
     expect(bindRuntimeIdentityMock).not.toHaveBeenCalled()
 
     const db2 = openDb(dbPath)
@@ -182,13 +228,13 @@ describe('register_agent codex pre-reg auto-bind', () => {
 
     const resp = await c.callTool({
       name: 'register_agent',
-      arguments: { client: 'codex', model: 'gpt-5', role: 'worker', name: 'new-gpt' },
+      arguments: { agent_type: 'codex', model: 'gpt-5', role: 'worker', name: 'new-gpt', thread_id: VALID_THREAD_ID },
     })
     const obj = await parseTool(resp)
 
     expect(obj.agent_id).toBeDefined()
-    expect(typeof obj.hint).toBe('string')
-    expect(String(obj.hint)).toMatch(/automatic runtime binding did not converge/i)
+    // codex-appserver delivery is bound natively; no tmux fallback hint expected.
+    expect(obj.hint).toBeUndefined()
 
     const db = openDb(dbPath)
     applySchema(db)

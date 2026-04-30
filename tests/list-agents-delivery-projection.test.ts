@@ -62,7 +62,7 @@ describe('list_agents delivery public projection (W2)', () => {
     // Register caller so list_agents passes requireAgent.
     const caller = await parseTool(await client.callTool({
       name: 'register_agent',
-      arguments: { client: 'custom', model: 'opus', role: 'backend', name: 'caller' },
+      arguments: { agent_type: 'custom', model: 'opus', role: 'backend', name: 'caller' },
     }))
     holder.current = caller.agent_id as string
 
@@ -106,7 +106,7 @@ describe('list_agents delivery public projection (W2)', () => {
     const { db, server, client, transport, holder } = await setup()
     const caller = await parseTool(await client.callTool({
       name: 'register_agent',
-      arguments: { client: 'custom', model: 'opus', role: 'backend', name: 'caller' },
+      arguments: { agent_type: 'custom', model: 'opus', role: 'backend', name: 'caller' },
     }))
     holder.current = caller.agent_id as string
 
@@ -142,7 +142,7 @@ describe('list_agents delivery public projection (W2)', () => {
     const { db, server, client, transport, holder } = await setup()
     const caller = await parseTool(await client.callTool({
       name: 'register_agent',
-      arguments: { client: 'custom', model: 'opus', role: 'backend', name: 'caller' },
+      arguments: { agent_type: 'custom', model: 'opus', role: 'backend', name: 'caller' },
     }))
     holder.current = caller.agent_id as string
 

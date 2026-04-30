@@ -3,12 +3,12 @@ import {
   serializeDelivery,
   type DeliverySpec,
 } from '../../src/lib/delivery-spec.js'
-import type { ClientKind } from '../../src/lib/client-kind.js'
+import type { AgentType } from '../../src/lib/agent-type.js'
 
 export interface InsertAgentArgs {
   agent_id: string
   model?: string
-  client?: ClientKind
+  agent_type?: AgentType
   role?: string
   name?: string
   team?: string
@@ -32,17 +32,17 @@ export function insertAgent(db: Database.Database, args: InsertAgentArgs): strin
   const delivery = serializeDelivery(args.delivery ?? { kind: 'none' })
   db.prepare(
     `INSERT INTO agents (
-       agent_id, client, team, role, name, model, registered_at, last_seen_at,
+       agent_id, agent_type, team, role, name, model, registered_at, last_seen_at,
        tmux_pane_id, delivery_kind, delivery_payload
      )
      VALUES (?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(agent_id) DO UPDATE SET
-       client=excluded.client, team=excluded.team, role=excluded.role, name=excluded.name, model=excluded.model,
+       agent_type=excluded.agent_type, team=excluded.team, role=excluded.role, name=excluded.name, model=excluded.model,
        last_seen_at=excluded.last_seen_at, tmux_pane_id=excluded.tmux_pane_id,
        delivery_kind=excluded.delivery_kind, delivery_payload=excluded.delivery_payload`
   ).run(
     args.agent_id,
-    args.client ?? null,
+    args.agent_type ?? null,
     team,
     role,
     name,

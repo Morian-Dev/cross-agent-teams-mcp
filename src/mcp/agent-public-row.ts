@@ -8,8 +8,8 @@ export type PublicDelivery =
 
 export interface PublicAgentListRow {
   agent_id: string
-  client: AgentListRow['client']
-  client_name: AgentListRow['client_name']
+  agent_type: AgentListRow['agent_type']
+  agent_type_name: AgentListRow['agent_type_name']
   team: string
   role: string
   name: string
@@ -34,8 +34,8 @@ function projectDelivery(delivery: DeliverySpec): PublicDelivery {
 export function toPublicAgentRow(row: AgentListRow): PublicAgentListRow {
   return {
     agent_id: row.agent_id,
-    client: row.client,
-    client_name: row.client_name,
+    agent_type: row.agent_type,
+    agent_type_name: row.agent_type_name,
     team: row.team,
     role: row.role,
     name: row.name,

@@ -43,7 +43,7 @@ describe('unregister_self', () => {
 
     const registered = await parseTool(await client.callTool({
       name: 'register_agent',
-      arguments: { client: 'custom', model: 'opus', name: 'alice', role: 'worker' },
+      arguments: { agent_type: 'custom', model: 'opus', name: 'alice', role: 'worker' },
     }))
     const agentId = registered.agent_id as string
 
@@ -82,7 +82,7 @@ describe('unregister_self', () => {
 
     const reregistered = await parseTool(await client.callTool({
       name: 'register_agent',
-      arguments: { client: 'custom', model: 'opus', name: 'alice', role: 'worker' },
+      arguments: { agent_type: 'custom', model: 'opus', name: 'alice', role: 'worker' },
     }))
     expect(reregistered.agent_id).toBeDefined()
     expect(reregistered.agent_id).not.toBe(agentId)
@@ -106,7 +106,7 @@ describe('unregister_self', () => {
 
     const registered = await parseTool(await client.callTool({
       name: 'register_agent',
-      arguments: { client: 'custom', model: 'opus', name: 'alice', role: 'worker' },
+      arguments: { agent_type: 'custom', model: 'opus', name: 'alice', role: 'worker' },
     }))
     const agentId = registered.agent_id as string
 
