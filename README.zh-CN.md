@@ -2,13 +2,13 @@
 
 [English README](./README.md)
 
-一个本地 MCP daemon, 让同一台机器上的多个 AI 编码 agent (Claude Code, Codex, opencode) 互相通信.  agent 注册到 daemon, 互发 1-to-1 消息, 在 team 或 role 内广播, 共享任务列表, 互相唤醒 — 全部通过一个本地 daemon 完成, 不依赖任何外部服务.
+一个本地 MCP daemon, 让同一台机器上的多个 AI 编码 agent (Claude Code, Codex, opencode) 互相通信.  agent 注册到 daemon, 互发 1-to-1 消息, 在 team 或 role 内广播, 互相唤醒 — 全部通过一个本地 daemon 完成, 不依赖任何外部服务.
 
 ## npm 包内容
 
 `cross-agent-teams-mcp` 在同一个包里发两个 bin:
 
-- **`cross-agent-teams-mcp daemon`** — 长驻 HTTP daemon.  把 agent 注册表, 邮箱, 任务列表存在本地 SQLite 文件里, MCP endpoint 在 `http://127.0.0.1:9100/mcp`.
+- **`cross-agent-teams-mcp daemon`** — 长驻 HTTP daemon.  把 agent 注册表和邮箱存在本地 SQLite 文件里, MCP endpoint 在 `http://127.0.0.1:9100/mcp`.
 - **`cross-agent-teams-channel`** — stdio MCP shim, 让 Claude Code 通过 `notifications/channel_wake` 接收唤醒通知 (Claude Code 的 experimental channel capability).  Claude Code 需要它接收 wake; Codex 用自己的 app-server 通道, opencode 走 tmux-pane 文本注入, 都不需要 channel proxy.
 
 ## 1. 启动 daemon
@@ -89,82 +89,52 @@ codex --remote ws://127.0.0.1:8799                # 另一个终端 (TUI)
 
 详细配置 (auth header, tmux fallback, 底层 `register_agent` 用法): [docs/configs/codex-cli.md](docs/configs/codex-cli.md).
 
-### opencode
+### 其它编码 agent (opencode, cursor, ...)
 
-opencode 直接通过 Streamable HTTP 连 daemon 调工具.  这个 daemon 里没有专门的 opencode 唤醒通道 (之前的 `opencode-server` transport 已删除); 跨 agent poke 通过把文本注入到 opencode 所在的 tmux pane 实现.  把 opencode 跑在 tmux 窗口里, 注册时 daemon 会自动解析 `pid → tty → pane`.  详见 [docs/configs/opencode.md](docs/configs/opencode.md).
+非 Claude Code 也非 Codex 的工具 — opencode, cursor, 编辑器扩展, 自己的 harness — 直接通过 Streamable HTTP 连 daemon, 注册时用 `agent_type="custom"` (agent 自己会判断).  这些 agent 没有专用的唤醒通道; 跨 agent poke 通过把文本注入到 agent 所在的 tmux pane 实现, 所以把 agent 跑在 tmux 窗口里, 注册时 daemon 会自动解析 `pid → tty → pane`.
 
-## 3. 在 agent 内完成注册和通信
+各工具的具体配置片段在 [docs/configs/opencode.md](docs/configs/opencode.md) (其它在 `docs/configs/`).
 
-agent 的 MCP client 连上后, 在 agent 会话内调用注册 helper — 不要用 `curl` 或其它外部 HTTP client (那会创建另一个 MCP session, 后续工具就找不到注册身份了).
+## 3. 从 agent 里使用
 
-### 注册
+agent 连上 daemon 后, 你不需要去记工具名字.  直接用平时跟 agent 对话的语言告诉它你想干嘛, agent 会自己挑工具 — 下面列的是 *你说的话*, 不是底层 API.
 
-`register_agent` 是唯一注册入口.  调用前按顺序机械判断 `agent_type=`, 第一条命中即停:
+> 注意: 这些都要在 agent 会话内说.  不要用 `curl` 或其它外部 HTTP client 去注册或发消息 — 那会开一个不同的 MCP session, 消息送不到你这里.
 
-1. `printenv CODEX_THREAD_ID` 非空 → `agent_type="codex"`; 把该值作为 `thread_id` 传入 (必填).  不要传 `ui_pid` (launcher 的 `pre_register_codex_pane` 已处理 tmux pane 绑定).
-2. `printenv CLAUDECODE` 非空 或 `printenv CLAUDE_CODE_ENTRYPOINT` 非空 → `agent_type="claude-code"`; 把 `$PPID` 传为 `ui_pid`.
-3. 以上都不满足 → `agent_type="custom"`, `agent_type_name="<你的 harness 名字, e.g. cursor, opencode, ...>"`.  能从 runtime 环境检测出 harness 名就传 — 例如 `printenv CURSOR_TRACE_ID` 非空就是 cursor — 但**不要**用"PATH 上有某个二进制"这类系统级信号去猜: 那只反映用户装了什么, 不代表 LLM 跑在那个 runtime 里, 会选错 agent_type.  没把握时 `agent_type_name="unknown"` 比猜错好.
+### 注册当前会话
 
-Codex:
+agent 第一次连上 xats 时不会自动注册, 要等你开口.  直接说:
 
-```text
-register_agent({
-  agent_type: "codex",
-  name: "<agent-name>",
-  thread_id: "<$CODEX_THREAD_ID 的值>",
-  project_dir: "<项目的绝对路径>"
-})
-```
+> Register me to xats as alice.
 
-Claude Code:
+或者指定 team:
 
-```text
-register_agent({
-  agent_type: "claude-code",
-  name: "<agent-name>",
-  ui_pid: <Claude Code CLI 的 pid; 在 Bash 工具里就是 $PPID>,
-  project_dir: "<项目的绝对路径>"
-})
-```
+> Register me to xats as alice on team backend.
 
-其它 harness (cursor, opencode, 编辑器扩展, 未知 harness):
+不传 team 的话, agent 会用当前工作目录的 basename 作为默认 team — 一般情况下你不用操心.
 
-```text
-register_agent({
-  agent_type: "custom",
-  agent_type_name: "<你的 harness 名字>",  // agent_type="custom" 时必填
-  name: "<agent-name>",
-  project_dir: "<项目的绝对路径>",
-  ui_pid: <runtime pid>          // tmux poke 通道强烈建议传
-})
-```
+### 跟其它 agent 对话
 
-`model` 对所有 `agent_type` 都是**可选**的; 没有权威 model 标识就不传 (daemon 存 NULL).  `team` 默认派生自 `project_dir` 的 basename; 想用不同 team 才显式传.  Claude Code 注册成功时, 响应里会带 `channel_session_id`, 表示唤醒通道已经自动接好了.
+按名字, 按 team, 按 role 都行:
 
-`agent_type="opencode"` 仍作为 enum 值保留, 给 opencode-aware launcher 显式使用; 但不再有 detection probe 主动推荐它 — 因为"用户装了 opencode"不等于"LLM 现在跑在 opencode 里".
+> Send a message to bob: how is the migration going?
+>
+> Tell my team I'm starting the deploy.
+>
+> Send the frontend role a heads-up that the API will change.
+>
+> What's in my inbox?
 
-### 发消息和查收件箱
+agent 会自动挑对应工具 (`send_message`, `broadcast`, `broadcast_to_role`, `get_inbox`).  发消息的同时会自动唤醒收件人, 不用单独再 poke.
 
-```text
-send_message({ to_agent_name: "<对方名字>", subject: "...", body: "..." })
-broadcast({ subject: "...", body: "..." })            // 同 team 广播
-broadcast_to_role({ role: "<role>", subject, body })  // 同 team 同 role
-get_inbox()                                            // 看自己的收件箱
-```
+### 看看还有谁在线
 
-`send_message` 默认会 auto-poke 收件人, 推一条短的 wake-up hint, 邮件正文要 `get_inbox` 拉.  `need_reply` 默认 `true`, FYI 类消息设 `false`.  按 agent_id 发用 `send_message_by_id`.
-
-### 共享任务列表 (每个 team 一份)
-
-```text
-task_add({ title, description? })
-task_list({ status?: "open" | "claimed" | "done" })
-task_claim({ task_id })
-task_complete({ task_id, result? })
-```
+> Who else is registered on xats?
+>
+> List agents on team backend.
 
 ## 更多
 
 - 完整工具列表和参数: 启动 daemon 后调 MCP endpoint 的 `tools/list`.
-- Codex / opencode 详细配置: `docs/configs/`.
+- 各 agent 详细配置: `docs/configs/`.
 - 源码: [github.com/jtianling/cross-agent-teams-mcp](https://github.com/jtianling/cross-agent-teams-mcp).
