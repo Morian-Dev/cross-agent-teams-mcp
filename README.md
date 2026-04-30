@@ -6,40 +6,58 @@ An MCP daemon for cross-agent collaboration, with local delivery transports for 
 
 ## Quick Start
 
-Build and start the daemon from the repository root:
+This package ships a single long-running HTTP daemon.  You start it once on your machine, then point Claude Code / Codex / opencode at it as an MCP server.  There is no stdio entry point and no "auto bootstrap" — start the daemon explicitly first, agents connect to it second.
+
+### 1. Start the daemon
 
 ```bash
-pnpm build
-node dist/cli.js daemon --port 9100
+npx -y cross-agent-teams-mcp@latest daemon --port 9100
 ```
 
-If you want a one-command local setup for the daemon and Codex app-server, use:
-
-```bash
-./start-server.sh
-```
-
-The script runs `pnpm build` first, then starts the background services.  To stop them:
-
-```bash
-./stop-server.sh
-```
-
-Logs and pid files are written into `logs/`.
-
-To run directly from source:
-
-```bash
-npx tsx src/cli.ts daemon --port 9100
-```
-
-By default the daemon listens on `127.0.0.1:9100`.  The MCP endpoint is `http://127.0.0.1:9100/mcp`, and the health check endpoint is `http://127.0.0.1:9100/health`.
+Keep this process running (a dedicated terminal, `tmux`, `screen`, or your favourite supervisor).  The daemon listens on `127.0.0.1:9100` by default.  The MCP endpoint is `http://127.0.0.1:9100/mcp` and the health check endpoint is `http://127.0.0.1:9100/health`.
 
 You can verify the service with:
 
 ```bash
 curl http://127.0.0.1:9100/health
 ```
+
+### 2. Configure your agent's MCP client
+
+Point your agent at the running daemon over Streamable HTTP.  For Claude Code (`~/.claude.json` or `.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "cross-agent-teams": {
+      "type": "http",
+      "url": "http://127.0.0.1:9100/mcp"
+    }
+  }
+}
+```
+
+For Codex CLI, see [docs/configs/codex-cli.md](docs/configs/codex-cli.md).  For opencode see the "Using opencode with xats (tmux)" section below.
+
+If you started the daemon with `--token <t>`, add `"headers": { "Authorization": "Bearer <t>" }` to the client configuration.
+
+### 3. Register from inside the agent
+
+Once the agent's MCP client is connected, register from inside the agent session — see `register_claude_self`, `register_codex_self`, and `register_agent` below.
+
+### Running from source
+
+If you cloned this repo and want to run the daemon from source:
+
+```bash
+pnpm install
+pnpm build
+node dist/cli.js daemon --port 9100
+# or, without a build step:
+npx tsx src/cli.ts daemon --port 9100
+```
+
+`./start-server.sh` / `./stop-server.sh` are local-development convenience scripts that also bring up a Codex app-server alongside the daemon; they are not needed when consuming this package via `npx`.
 
 ## Common Flags
 

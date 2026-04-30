@@ -6,40 +6,58 @@
 
 ## 快速开始
 
-在仓库根目录执行:
+这个包只发一个常驻的 HTTP daemon.  你在本机起一次, 然后让 Claude Code / Codex / opencode 当作 MCP server 接进来.  没有 stdio 入口, 也没有"自动拉起 daemon", 顺序就是: 先显式起 daemon, 再让 agent 连过来.
+
+### 1. 启动 daemon
 
 ```bash
-pnpm build
-node dist/cli.js daemon --port 9100
+npx -y cross-agent-teams-mcp@latest daemon --port 9100
 ```
 
-如果你希望一键启动当前项目需要的 daemon 和 Codex app-server, 可以直接用:
+让这个进程保持运行 (单开一个终端 / `tmux` / `screen` / 你常用的进程守护工具均可).  daemon 默认监听 `127.0.0.1:9100`.  MCP endpoint 是 `http://127.0.0.1:9100/mcp`, 健康检查是 `http://127.0.0.1:9100/health`.
 
-```bash
-./start-server.sh
-```
-
-这个脚本会先执行 `pnpm build`, 然后再启动后台服务.  停止服务可以用:
-
-```bash
-./stop-server.sh
-```
-
-日志和 pid 文件会写到 `logs/` 目录.
-
-如果你想直接跑源码, 可以用:
-
-```bash
-npx tsx src/cli.ts daemon --port 9100
-```
-
-服务默认监听 `127.0.0.1:9100`.  MCP endpoint 是 `http://127.0.0.1:9100/mcp`, 健康检查地址是 `http://127.0.0.1:9100/health`.
-
-启动后可以用下面的命令确认服务正常:
+启动后可以用下面命令确认服务正常:
 
 ```bash
 curl http://127.0.0.1:9100/health
 ```
+
+### 2. 在 agent 里配置 MCP client
+
+让 agent 通过 Streamable HTTP 连到正在运行的 daemon.  Claude Code (`~/.claude.json` 或 `.mcp.json`) 配置示例:
+
+```json
+{
+  "mcpServers": {
+    "cross-agent-teams": {
+      "type": "http",
+      "url": "http://127.0.0.1:9100/mcp"
+    }
+  }
+}
+```
+
+Codex CLI 的配置见 [docs/configs/codex-cli.md](docs/configs/codex-cli.md).  opencode 见下面的 "Using opencode with xats (tmux)" 章节.
+
+如果你启动 daemon 时带了 `--token <t>`, 在 client 配置中加上 `"headers": { "Authorization": "Bearer <t>" }` 即可.
+
+### 3. 在 agent 里完成注册
+
+agent 连上 MCP 后, 在 agent 会话里调用 `register_claude_self` / `register_codex_self` / `register_agent` 完成注册, 详见后续章节.
+
+### 从源码运行
+
+如果你 clone 了仓库想直接跑源码:
+
+```bash
+pnpm install
+pnpm build
+node dist/cli.js daemon --port 9100
+# 或者跳过 build:
+npx tsx src/cli.ts daemon --port 9100
+```
+
+`./start-server.sh` / `./stop-server.sh` 是本地开发用的便捷脚本, 会顺手把 Codex app-server 一起拉起来; 通过 `npx` 使用本包时不需要它们.
 
 ## 常用参数
 
