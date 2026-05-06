@@ -101,27 +101,48 @@ export async function runRegistrationSequence(
   }
 }
 
+export interface WaitForDisconnectInput {
+  client: Pick<Client, 'callTool'>
+  transport: { onclose?: (() => void) | null | undefined }
+}
+
+export interface WaitForDisconnectOptions {
+  healthCheckIntervalMs?: number
+  shouldStop?: () => boolean
+}
+
+export async function waitForDisconnect(
+  seq: WaitForDisconnectInput,
+  opts: WaitForDisconnectOptions = {}
+): Promise<void> {
+  const interval = opts.healthCheckIntervalMs ?? 30_000
+  const shouldStop = opts.shouldStop ?? (() => false)
+  let disconnected = false
+  let wakeup: (() => void) | null = null
+  const closeHandler = (): void => {
+    disconnected = true
+    wakeup?.()
+  }
+  const prevOnClose = seq.transport.onclose
+  seq.transport.onclose = (): void => { prevOnClose?.(); closeHandler() }
+  while (!disconnected && !shouldStop()) {
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => { wakeup = null; resolve() }, interval)
+      wakeup = (): void => { clearTimeout(timer); wakeup = null; resolve() }
+    })
+    if (disconnected || shouldStop()) break
+    try {
+      await seq.client.callTool({ name: 'echo', arguments: { msg: 'hb' } })
+    } catch {
+      disconnected = true
+      break
+    }
+  }
+}
+
 export function runReconnectingProxy(config: ReconnectingProxyConfig): ReconnectingProxyController {
   let stopped = false
   let currentSeq: RegistrationSequenceResult | null = null
-
-  async function waitForDisconnect(seq: RegistrationSequenceResult): Promise<void> {
-    const interval = config.healthCheckIntervalMs ?? 200
-    let disconnected = false
-    const closeHandler = () => { disconnected = true }
-    const prevOnClose = seq.transport.onclose
-    seq.transport.onclose = () => { prevOnClose?.(); closeHandler() }
-    while (!disconnected && !stopped) {
-      await new Promise(r => setTimeout(r, interval))
-      if (disconnected || stopped) break
-      try {
-        await seq.client.callTool({ name: 'echo', arguments: { msg: 'hb' } })
-      } catch {
-        disconnected = true
-        break
-      }
-    }
-  }
 
   async function loop(): Promise<void> {
     while (!stopped) {
@@ -130,7 +151,10 @@ export function runReconnectingProxy(config: ReconnectingProxyConfig): Reconnect
         currentSeq = seq
         if (config.onSequenceComplete) config.onSequenceComplete([...seq.order])
 
-        await waitForDisconnect(seq)
+        await waitForDisconnect(seq, {
+          healthCheckIntervalMs: config.healthCheckIntervalMs,
+          shouldStop: () => stopped,
+        })
         if (config.onDisconnect) config.onDisconnect()
         try { await seq.close() } catch { /* best-effort */ }
         currentSeq = null

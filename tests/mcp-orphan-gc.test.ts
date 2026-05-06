@@ -1,0 +1,161 @@
+import { describe, it, expect, afterEach } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import Fastify from 'fastify'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { openDb } from '../src/storage/db.js'
+import { applySchema } from '../src/storage/schema.js'
+import { mountMcp } from '../src/mcp/transport.js'
+import { SseFanout } from '../src/daemon/sse-fanout.js'
+import { ChannelWakeFanout } from '../src/daemon/channel-wake-fanout.js'
+
+const tmp = (): string => mkdtempSync(join(tmpdir(), 'atm-orphan-gc-'))
+
+interface Harness {
+  app: Awaited<ReturnType<typeof Fastify>>
+  port: number
+  host: string
+  channelWakeFanout: ChannelWakeFanout
+  fanout: SseFanout
+  reapOrphanSessions: (now: number, graceMs?: number) => void
+  close: () => Promise<void>
+}
+
+async function bootHarness(dbPath: string): Promise<Harness> {
+  const app = Fastify({ logger: false })
+  const db = openDb(dbPath)
+  applySchema(db)
+  const fanout = new SseFanout()
+  const channelWakeFanout = new ChannelWakeFanout()
+  const mcp = mountMcp(app, db, fanout, channelWakeFanout)
+  await app.listen({ port: 0, host: '127.0.0.1' })
+  const addr = app.server.address()
+  const port = addr && typeof addr === 'object' ? addr.port : 0
+  return {
+    app,
+    port,
+    host: '127.0.0.1',
+    fanout,
+    channelWakeFanout,
+    reapOrphanSessions: mcp.reapOrphanSessions,
+    close: async () => {
+      await app.close()
+      fanout.stopAll()
+      db.close()
+    },
+  }
+}
+
+async function connectAndInit(host: string, port: number): Promise<{ c: Client; t: StreamableHTTPClientTransport }> {
+  const url = new URL(`http://${host}:${port}/mcp`)
+  const t = new StreamableHTTPClientTransport(url)
+  const c = new Client({ name: 'orphan-gc-test', version: '0.0.0' })
+  await c.connect(t)
+  return { c, t }
+}
+
+describe('mcp-transport orphan-session GC', () => {
+  const cleanups: string[] = []
+  afterEach(() => {
+    cleanups.forEach(d => rmSync(d, { recursive: true, force: true }))
+    cleanups.length = 0
+  })
+
+  it('orphan session past grace is reaped', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const h = await bootHarness(join(dir, 'data.db'))
+    const { c, t } = await connectAndInit(h.host, h.port)
+    const sid = t.sessionId!
+    expect(typeof sid).toBe('string')
+
+    // Run GC at a virtual `now` 60 001 ms after the createdAt was recorded.
+    // The session was just created (Date.now() is millisecond-fresh), so
+    // pretending `now = Date.now() + 60_001` is past the grace period.
+    h.reapOrphanSessions(Date.now() + 60_001)
+
+    // After reap, raw POST with the orphan's sid returns unknown_session.
+    await new Promise(r => setTimeout(r, 100))
+    const probe = await fetch(`http://${h.host}:${h.port}/mcp`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'accept': 'application/json, text/event-stream',
+        'mcp-session-id': sid,
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })
+    })
+    expect(probe.status).toBe(400)
+    expect(await probe.json()).toEqual({ error: 'unknown_session' })
+
+    try { await t.close() } catch { /* already gone */ }
+    await c.close().catch(() => { /* already closed */ })
+    await h.close()
+  }, 15000)
+
+  it('registered session is exempt from GC', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const h = await bootHarness(join(dir, 'data.db'))
+    const { c, t } = await connectAndInit(h.host, h.port)
+    const sid = t.sessionId!
+
+    await c.callTool({
+      name: 'register_agent',
+      arguments: { agent_type: 'custom', name: 'alice', model: 'm', role: 'r' }
+    })
+
+    // Far past any threshold.
+    h.reapOrphanSessions(Date.now() + 86_400_000)
+
+    await new Promise(r => setTimeout(r, 50))
+    // Session should still be alive.
+    const echo = await c.callTool({ name: 'echo', arguments: { msg: 'still here' } }) as { content: Array<{ text: string }> }
+    expect(echo.content[0].text).toContain('still here')
+    void sid
+    await c.close()
+    await t.close()
+    await h.close()
+  }, 15000)
+
+  it('orphan within grace is not reaped yet', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const h = await bootHarness(join(dir, 'data.db'))
+    const { c, t } = await connectAndInit(h.host, h.port)
+
+    // Only 30 seconds elapsed virtually — within 60 s grace.
+    h.reapOrphanSessions(Date.now() + 30_000)
+    await new Promise(r => setTimeout(r, 50))
+
+    // Session should still be alive — call a tool over it.
+    const echo = await c.callTool({ name: 'echo', arguments: { msg: 'hb' } }) as { content: Array<{ text: string }> }
+    expect(echo.content[0].text).toContain('hb')
+
+    await c.close()
+    await t.close()
+    await h.close()
+  }, 15000)
+
+  it('reap propagates to fanout and channel bindings', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const h = await bootHarness(join(dir, 'data.db'))
+    const { c, t } = await connectAndInit(h.host, h.port)
+    const sid = t.sessionId!
+
+    // Inject a synthetic SSE sink and channel-wake binding for this session id
+    // — simulating a half-finished registration that bound a sink before the
+    // register_agent path failed.
+    const csid = 'csid-orphan-test'
+    h.channelWakeFanout.attach(csid, () => { /* sink */ }, sid)
+    expect(h.channelWakeFanout.has(csid)).toBe(true)
+
+    h.reapOrphanSessions(Date.now() + 60_001)
+    await new Promise(r => setTimeout(r, 100))
+
+    expect(h.channelWakeFanout.has(csid)).toBe(false)
+
+    try { await c.close() } catch { /* already gone */ }
+    try { await t.close() } catch { /* already gone */ }
+    await h.close()
+  }, 15000)
+})

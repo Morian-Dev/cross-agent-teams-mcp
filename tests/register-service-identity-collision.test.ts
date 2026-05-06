@@ -12,19 +12,22 @@ describe('RegisterAgentService identity is (team, name)', () => {
   const dirs: string[] = []
   afterEach(() => { dirs.forEach(d => rmSync(d, { recursive: true, force: true })); dirs.length = 0 })
 
-  function fresh(): RegisterAgentService {
+  function fresh(deps: ConstructorParameters<typeof RegisterAgentService>[1] = {}): RegisterAgentService {
     const dir = tmp(); dirs.push(dir)
     const db = openDb(join(dir, 'data.db'))
     applySchema(db)
-    return new RegisterAgentService(db)
+    return new RegisterAgentService(db, deps)
   }
 
-  it('second session with same (team, name) different role gets agent_id_collision', () => {
-    const svc = fresh()
+  it('second session with same (team, name) different role takes over (no collision error)', () => {
+    const closes: string[] = []
+    const svc = fresh({ closeSessionByConnectionId: (cid) => { closes.push(cid); return true } })
     const r1 = svc.register({ connection_id: 'sess-A', model: 'opus', name: 'alice', role: 'backend', team: 'default' })
     expect('agent_id' in r1).toBe(true)
     const r2 = svc.register({ connection_id: 'sess-B', model: 'opus', name: 'alice', role: 'frontend', team: 'default' })
-    expect(r2).toEqual({ error: 'agent_id_collision' })
+    expect('agent_id' in r2).toBe(true)
+    expect((r2 as { agent_id: string }).agent_id).toBe((r1 as { agent_id: string }).agent_id)
+    expect(closes).toEqual(['sess-A'])
   })
 
   it('same session re-registering same (team, name) with new role is a reuse, not collision', () => {

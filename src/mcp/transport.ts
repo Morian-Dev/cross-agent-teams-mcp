@@ -5,6 +5,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { randomUUID, createHash } from 'node:crypto'
 import { echoSchema, echoHandler } from './echo.js'
 import { registerBusinessTools, type AgentIdHolder } from './tools.js'
+import { RegisterAgentService } from './register-agent.js'
 import type { SseFanout, SseSink } from '../daemon/sse-fanout.js'
 import type { ChannelWakeFanout } from '../daemon/channel-wake-fanout.js'
 
@@ -13,19 +14,47 @@ interface Session {
   server: McpServer
   sessionId: string
   agentIdHolder: AgentIdHolder
+  createdAt: number
   clientInfo?: {
     name?: string
     version?: string
   }
 }
 
+export interface MountMcpResult {
+  /**
+   * Force-close any session whose `agentIdHolder.current === undefined` and
+   * `now - session.createdAt >= graceMs`. Calling `transport.close()` on each
+   * orphan triggers the existing onclose chain. Default `graceMs` is 60_000.
+   */
+  reapOrphanSessions: (now: number, graceMs?: number) => void
+}
+
 export function mountMcp(
   app: FastifyInstance,
   db: Database.Database,
   fanout: SseFanout,
-  channelWakeFanout?: ChannelWakeFanout
-): void {
+  channelWakeFanout?: ChannelWakeFanout,
+  opts: { log?: (line: string) => void } = {}
+): MountMcpResult {
   const sessions = new Map<string, Session>()
+  const log = opts.log ?? ((line: string) => { console.debug(line) })
+
+  function closeSessionByConnectionId(connectionId: string): boolean {
+    const s = sessions.get(connectionId)
+    if (!s) return false
+    try { void s.transport.close() } catch { /* best-effort */ }
+    return true
+  }
+
+  // Single RegisterAgentService for the whole daemon: its `connections` Map is
+  // the cross-session (team, name) → connection_id ledger. Per-session
+  // instantiation would defeat takeover detection.
+  const registerSvc = new RegisterAgentService(db, {
+    closeSessionByConnectionId,
+    log,
+  })
+
   // Once register_agent succeeds for a session id, pin the owning Authorization hash.
   // A later register_agent presenting a different Authorization triggers HTTP 409.
   const sessionOwners = new Map<string, string>()
@@ -96,7 +125,14 @@ export function mountMcp(
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sid: string) => {
         sessionIdForCaller = sid
-        sessions.set(sid, { transport, server, sessionId: sid, agentIdHolder, clientInfo: undefined })
+        sessions.set(sid, {
+          transport,
+          server,
+          sessionId: sid,
+          agentIdHolder,
+          createdAt: Date.now(),
+          clientInfo: undefined,
+        })
       }
     })
     transport.onclose = () => {
@@ -107,6 +143,13 @@ export function mountMcp(
         try { channelWakeFanout.detachBySession(transport.sessionId) } catch { /* ignore */ }
       }
       if (transport.sessionId) {
+        // Release this session's identity binding from the daemon-singleton
+        // RegisterAgentService so its `connections` Map does not retain dead
+        // (team, name) → connection_id entries. Without this, every reconnect
+        // would log a misleading "takeover" against an already-dead session.
+        if (agentIdHolder.current) {
+          try { registerSvc.releaseConnection(agentIdHolder.current, transport.sessionId) } catch { /* ignore */ }
+        }
         sessions.delete(transport.sessionId)
         sessionOwners.delete(transport.sessionId)
       }
@@ -125,10 +168,11 @@ export function mountMcp(
         if (!sid) return undefined
         return sessions.get(sid)?.clientInfo
       },
-      onUnregisterSuccess
+      onUnregisterSuccess,
+      registerSvc
     )
     server.connect(transport)
-    return { transport, server, sessionId: '', agentIdHolder }
+    return { transport, server, sessionId: '', agentIdHolder, createdAt: Date.now() }
   }
 
   function authHashFor(req: FastifyRequest): string | null {
@@ -205,4 +249,18 @@ export function mountMcp(
     await session.transport.handleRequest(req.raw, reply.raw)
     return reply
   })
+
+  function reapOrphanSessions(now: number, graceMs = 60_000): void {
+    for (const [sid, session] of sessions) {
+      if (session.agentIdHolder.current !== undefined) continue
+      const ageMs = now - session.createdAt
+      if (ageMs < graceMs) continue
+      try {
+        log(`mcp orphan session reap: sid=${sid} age_s=${Math.round(ageMs / 1000)}`)
+      } catch { /* best-effort */ }
+      try { void session.transport.close() } catch { /* best-effort */ }
+    }
+  }
+
+  return { reapOrphanSessions }
 }

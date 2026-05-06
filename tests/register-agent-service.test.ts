@@ -12,11 +12,11 @@ describe('RegisterAgentService', () => {
   const cleanups: string[] = []
   afterEach(() => { cleanups.forEach(d => rmSync(d, { recursive: true, force: true })); cleanups.length = 0 })
 
-  function setup() {
+  function setup(deps: ConstructorParameters<typeof RegisterAgentService>[1] = {}) {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db'))
     applySchema(db)
-    return { db, svc: new RegisterAgentService(db) }
+    return { db, svc: new RegisterAgentService(db, deps) }
   }
 
   it('same identity with same connection_id succeeds and reuses agent_id', () => {
@@ -27,12 +27,15 @@ describe('RegisterAgentService', () => {
     expect(r2.agent_id).toBe(r1.agent_id)
   })
 
-  it('same identity different connection_id returns agent_id_collision', () => {
-    const { svc } = setup()
+  it('same identity different connection_id takes over (no collision error)', () => {
+    const closes: string[] = []
+    const { svc } = setup({ closeSessionByConnectionId: (cid) => { closes.push(cid); return true } })
     const r1 = svc.register({ connection_id: 'conn-1', model: 'opus', role: 'backend', name: 'alice' })
     const r2 = svc.register({ connection_id: 'conn-2', model: 'opus', role: 'backend', name: 'alice' })
     if ('error' in r1) throw new Error('r1 unexpected error')
-    expect(r2).toEqual({ error: 'agent_id_collision' })
+    if ('error' in r2) throw new Error('r2 unexpected error')
+    expect(r2.agent_id).toBe(r1.agent_id)
+    expect(closes).toEqual(['conn-1'])
   })
 
   it('same identity different connection succeeds after releaseConnection', () => {

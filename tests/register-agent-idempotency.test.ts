@@ -23,11 +23,11 @@ describe('register_agent idempotency integration', () => {
   const cleanups: string[] = []
   afterEach(() => { cleanups.forEach(d => rmSync(d, { recursive: true, force: true })); cleanups.length = 0 })
 
-  function setup(): Setup {
+  function setup(deps: ConstructorParameters<typeof RegisterAgentService>[1] = {}): Setup {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db'))
     applySchema(db)
-    const svc = new RegisterAgentService(db)
+    const svc = new RegisterAgentService(db, deps)
     const agents = new AgentsRepo(db)
     const events = new EventsOutbox(db)
     return { db, svc, agents, events }
@@ -75,12 +75,15 @@ describe('register_agent idempotency integration', () => {
     expect(row.tmux_pane_id).toBe('%42')
   })
 
-  it('scenario 5: role change from another live session is a collision', () => {
-    const { svc, db } = setup()
+  it('scenario 5: role change from another live session is a takeover (no collision)', () => {
+    const closes: string[] = []
+    const { svc, db } = setup({ closeSessionByConnectionId: (cid) => { closes.push(cid); return true } })
     const r1 = svc.register({ connection_id: 'c1', model: 'opus', name: 'alice', role: 'backend' })
     if ('error' in r1) throw new Error('r1 unexpected')
     const r2 = svc.register({ connection_id: 'c2', model: 'opus', name: 'alice', role: 'frontend' })
-    expect(r2).toEqual({ error: 'agent_id_collision' })
+    if ('error' in r2) throw new Error('r2 unexpected')
+    expect(r2.agent_id).toBe(r1.agent_id)
+    expect(closes).toEqual(['c1'])
     const count = db.prepare('SELECT COUNT(*) AS c FROM agents').get() as { c: number }
     expect(count.c).toBe(1)
   })

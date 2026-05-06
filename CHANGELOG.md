@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.1
+
+### Fixed
+
+- **Daemon session leak (OOM in ~20 min under multi-host load).**  Three layered fixes target the feedback loop where channel-proxy reconnects accumulated phantom MCP sessions on the daemon side:
+  - `register_agent` cross-session re-claim of an existing `(team, name)` is now a TAKEOVER instead of returning `{ error: 'agent_id_collision' }`.  The daemon force-closes the prior MCP transport, releases the binding, and accepts the new registration.  The within-session Authorization-mismatch HTTP 409 path is preserved.  Existing in-memory bindings move to the new session id; SSE fanout, channel-wake fanout, and Authorization-hash bindings are detached via the existing `transport.onclose` chain.
+  - `mountMcp` adds an orphan-session GC that force-closes any session whose `agentIdHolder.current === undefined` and `Date.now() - createdAt >= 60_000`.  Sessions that completed `register_agent` are NEVER touched.  The ticker runs in `buildServer` next to the existing cleanup ticker; default tick 60 s, configurable via `opts.orphanGcIntervalMs` and env `ORPHAN_GC_INTERVAL_MS`.
+  - Channel proxy `waitForDisconnect` default heartbeat raised from 200 ms to 30 000 ms.  `transport.onclose` remains the primary disconnect signal; echo polling is now a coarse-grained backstop.  Override stays available via `ReconnectingProxyConfig.healthCheckIntervalMs` for tests.
+
+### Migration
+
+- API consumers that previously relied on `agent_id_collision` as a guard against double-registration MUST treat the second `register_agent` from a different MCP session as a takeover that returns the (existing) `agent_id` and assume the prior session is closed.
+
 ## 0.5.0
 
 ### BREAKING

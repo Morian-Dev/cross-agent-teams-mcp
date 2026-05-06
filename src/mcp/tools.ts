@@ -194,6 +194,7 @@ export interface UnregisterSuccessHook {
   (agent_id: string): void
 }
 
+
 export interface TransportLike {
   send(msg: Record<string, unknown>): Promise<void> | void
 }
@@ -230,11 +231,12 @@ export function registerBusinessTools(
   channelWakeFanout?: ChannelWakeFanout,
   getTransport?: () => TransportLike,
   getSessionClientInfo?: () => SessionClientInfo | undefined,
-  onUnregisterSuccess?: UnregisterSuccessHook
+  onUnregisterSuccess?: UnregisterSuccessHook,
+  injectedRegisterSvc?: RegisterAgentService
 ): void {
   const agents = new AgentsRepo(db)
   const events = new EventsOutbox(db)
-  const registerSvc = new RegisterAgentService(db)
+  const registerSvc = injectedRegisterSvc ?? new RegisterAgentService(db)
   const bindRuntimeIdentitySvc = new BindRuntimeIdentityService(db)
   const registerCodexSelfSvc = new RegisterCodexSelfService(registerSvc)
   const unregisterSelfSvc = new UnregisterSelfService(db, agents)

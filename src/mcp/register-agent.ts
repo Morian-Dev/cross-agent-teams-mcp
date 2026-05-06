@@ -34,11 +34,29 @@ function identityKey(team: string, name: string): string {
   return `${team}\u0000${name}`
 }
 
+export interface RegisterAgentDeps {
+  /**
+   * Cross-session takeover hook. When `register_agent` re-claims a `(team, name)`
+   * binding from a NEW MCP session id, the service invokes this with the OLD
+   * connection_id so the transport layer can force-close the prior session.
+   * Returns true when the old session id was found and a close was issued.
+   */
+  closeSessionByConnectionId?: (connectionId: string) => boolean
+  /**
+   * Debug log sink. When omitted, takeover events go through `console.debug`.
+   */
+  log?: (line: string) => void
+}
+
 export class RegisterAgentService {
   private readonly repo: AgentsRepo
   private readonly connections = new Map<string, string>()
+  private readonly deps: RegisterAgentDeps
 
-  constructor(db: Database.Database) { this.repo = new AgentsRepo(db) }
+  constructor(db: Database.Database, deps: RegisterAgentDeps = {}) {
+    this.repo = new AgentsRepo(db)
+    this.deps = deps
+  }
 
   register(input: RegisterInput): RegisterResult {
     const validated =
@@ -58,7 +76,19 @@ export class RegisterAgentService {
     })
     const key = identityKey(team, input.name)
     const bound = this.connections.get(key)
-    if (bound && bound !== input.connection_id) return { error: 'agent_id_collision' }
+    if (bound && bound !== input.connection_id) {
+      // Cross-session takeover: release the old binding and force-close the
+      // prior MCP transport. The old session's `onclose` chain reaps it from
+      // the daemon's `sessions` Map; new session keeps its existing binding.
+      let closed = false
+      if (this.deps.closeSessionByConnectionId) {
+        try { closed = this.deps.closeSessionByConnectionId(bound) } catch { /* best-effort */ }
+      }
+      const log = this.deps.log ?? ((line: string) => { console.debug(line) })
+      try {
+        log(`register_agent takeover: old=${bound} new=${input.connection_id} team=${team} name=${input.name} closed=${closed}`)
+      } catch { /* best-effort */ }
+    }
     this.connections.set(key, input.connection_id)
     return this.repo.register({
       agent_type: input.agent_type,
