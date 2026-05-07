@@ -251,13 +251,10 @@ export function mountMcp(
   })
 
   function reapOrphanSessions(now: number, graceMs = 60_000): void {
-    for (const [sid, session] of sessions) {
+    for (const session of sessions.values()) {
       if (session.agentIdHolder.current !== undefined) continue
       const ageMs = now - session.createdAt
       if (ageMs < graceMs) continue
-      try {
-        log(`mcp orphan session reap: sid=${sid} age_s=${Math.round(ageMs / 1000)}`)
-      } catch { /* best-effort */ }
       try { void session.transport.close() } catch { /* best-effort */ }
     }
   }
