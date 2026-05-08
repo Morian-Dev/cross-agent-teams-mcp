@@ -66,28 +66,88 @@ claude --dangerously-load-development-channels server:cross-agent-teams-channel
 
 ### Codex CLI
 
-Codex 直接通过 Streamable HTTP 跟 daemon 通信, 不需要 channel proxy — Codex 没有 `claude/channel` capability, 唤醒走 Codex 自己的 app-server websocket (或 tmux paste 兜底).
+Codex 通过 Streamable HTTP 跟 daemon 通信.  唤醒走 Codex 自己的 app-server WebSocket, 不经 channel proxy.
+
+#### 最小配置 (只能收邮箱, 没有 push 唤醒)
 
 `~/.codex/config.toml`:
 
 ```toml
-[mcp_servers.cross-agent-teams]
+experimental_use_rmcp_client = true
+
+[mcp_servers.cross-agent-teams-mcp]
 type = "streamable-http"
 url = "http://127.0.0.1:9100/mcp"
 ```
 
-(daemon 带了 `--token <t>` 时, 加 `[mcp_servers.cross-agent-teams.headers]` 和 `Authorization = "Bearer <t>"`.)
+`experimental_use_rmcp_client = true` 必须放在**顶级**, 缺这条 streamable-http MCP 加载不了.
 
-如果你希望别的 agent 能**唤醒**这个 Codex thread (不只是给它发邮件), 在跑 Codex 之前把 codex app-server 一起拉起来:
+(daemon 带了 `--token <t>` 时, 加 `[mcp_servers.cross-agent-teams-mcp.headers]` 和 `Authorization = "Bearer <t>"`.)
+
+这种最小配置下 `send_message` 给这个 codex 会写邮箱, 但需要手动调 `get_inbox` 拉读, 没有跨会话 push 唤醒.
+
+#### 让别人能唤醒你 (codex-appserver poke)
+
+要让别的 agent 能**主动唤醒**这个 codex thread (而不只是发邮件), 需要 `codex-appserver` delivery.  这里有个不直观的坑要写清楚:
+
+> **`codex --remote` 模式下, MCP server 是 app-server 加载的, 不是 TUI 加载的**.  上面那段 MCP 配置必须放在 **app-server** 启动时读到的 `CODEX_HOME` 里 — 一般就是全局 `~/.codex/config.toml`.  仅在 TUI 这边设 `CODEX_HOME` 在 `--remote` 模式下对 MCP 不起作用.
+
+启动顺序:
 
 ```bash
-codex app-server --listen ws://127.0.0.1:8799     # 一个终端
-codex --remote ws://127.0.0.1:8799                # 另一个终端 (TUI)
+# 1) 在某个长跑终端起 codex app-server (它的 CODEX_HOME 决定 MCP set)
+codex app-server --listen ws://127.0.0.1:8799
+
+# 2) 在另一个终端启动 codex TUI, 连同一个 app-server
+codex --remote ws://127.0.0.1:8799
 ```
 
-不启 app-server 也能用 — `send_message` 给这个 Codex 仍然会写到邮箱, 但需要你自己调 `get_inbox` 拉读, 没有推送唤醒.
+如果第 1 步的 app-server 的 `CODEX_HOME` 里没配 `cross-agent-teams-mcp`, `--remote` 进去的 codex agent 根本看不到 MCP 工具, `register_agent` 调都调不到.
 
-详细配置 (auth header, tmux fallback, 底层 `register_agent` 用法): [docs/configs/codex-cli.md](docs/configs/codex-cli.md).
+#### 推荐: launcher 函数 (tmux pane 自动绑定)
+
+为了让 daemon 把 wake-hint 直接 inject 到 codex thread (而不是只 paste 到 tmux pane), daemon 需要知道 codex 进程在哪个 tmux pane.  launcher 通过 `pre-register-codex-pane` CLI 在 exec codex 之前先把 pane 占住.  把下面的函数加到 `~/.zshrc`:
+
+```zsh
+free-xats-codex() {
+    local xats_agent_id codex_home search_dir
+    xats_agent_id="$(uuidgen)"
+    search_dir="$PWD"
+    while [[ "$search_dir" != "/" ]]; do
+        if [[ -f "$search_dir/.codex/config.toml" ]]; then
+            codex_home="$search_dir/.codex"
+            break
+        fi
+        search_dir="${search_dir:h}"
+    done
+
+    if [[ -n "$TMUX_PANE" ]]; then
+        npx -y cross-agent-teams-mcp pre-register-codex-pane \
+            --pane "$TMUX_PANE" \
+            --agent-id "$xats_agent_id" \
+            >/dev/null 2>&1 \
+            || echo "[xats] pre-register failed (continuing without pane claim)" >&2
+    fi
+
+    if [[ -n "$codex_home" ]]; then
+        CODEX_HOME="$codex_home" exec codex \
+            --remote ws://127.0.0.1:8799 \
+            -c xats.agent_id="\"$xats_agent_id\"" "$@"
+    else
+        exec codex \
+            --remote ws://127.0.0.1:8799 \
+            -c xats.agent_id="\"$xats_agent_id\"" "$@"
+    fi
+}
+```
+
+行为:
+
+- tmux 内 (`$TMUX_PANE` 非空): 先发一条 pre-register (pane_id + UUID + 120s TTL) 给 daemon.  codex agent 之后调 `register_agent({agent_type: "codex", thread_id: $CODEX_THREAD_ID, ...})` 时, daemon 会用 pending pre-reg + 匹配 codex 进程 argv 自动绑 `tmux_pane_id`.
+- `--remote ws://127.0.0.1:8799` 让 codex 连步骤 (1) 起好的 app-server.
+- `-c xats.agent_id="\"$uuid\""` 把 UUID 暴露在 codex argv 里, daemon 用它反向校验 pane.
+
+详细配置 (auth header, 底层 `register_agent` 用法): [docs/configs/codex-cli.md](docs/configs/codex-cli.md).
 
 ### 其它编码 agent (opencode, cursor, ...)
 

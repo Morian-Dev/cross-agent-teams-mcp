@@ -3,20 +3,28 @@
 把下面配置加到 `~/.codex/config.toml`:
 
 ```toml
+experimental_use_rmcp_client = true
+
 [mcp_servers.cross-agent-teams-mcp]
 type = "streamable-http"
 url = "http://127.0.0.1:9100/mcp"
 ```
 
+`experimental_use_rmcp_client = true` 必须放在**顶级**, 缺这条 codex 不会用 rmcp client, streamable-http 类型 MCP 加载不了.
+
 如果 daemon 启动时带了 `--token`:
 
 ```toml
+experimental_use_rmcp_client = true
+
 [mcp_servers.cross-agent-teams-mcp]
 type = "streamable-http"
 url = "http://127.0.0.1:9100/mcp"
 [mcp_servers.cross-agent-teams-mcp.headers]
 Authorization = "Bearer YOUR_TOKEN"
 ```
+
+> **--remote 模式下 MCP 是 app-server 加载的**, 不是 TUI 加载的.  如果你打算用下文的"方案 2 (codex app-server websocket delivery)", 上面这段配置必须放在 app-server 启动时读到的 `CODEX_HOME` 里 — 一般就是全局 `~/.codex/config.toml`.  仅在项目 `.codex/config.toml` 配, 或仅在 TUI 启动时覆盖 `CODEX_HOME=...`, 在 `--remote` 模式下对 MCP 不起作用.
 
 ## 推荐: `register_agent({ agent_type: "codex", thread_id, ... })`
 
@@ -78,6 +86,8 @@ node scripts/register-codex-self.mjs --name gpt --team default --role default --
 ```bash
 codex app-server --listen ws://127.0.0.1:8799
 ```
+
+启动时不带 `CODEX_HOME` 的话, app-server 读全局 `~/.codex/config.toml`.  确保那份配置里**已经配了** `cross-agent-teams-mcp` MCP (见本文档开头), 否则 `--remote` 接进来的 codex agent 看不到 xats 的工具, `register_agent` 调不到, codex-appserver delivery 等于没装上.
 
 如果你需要显式 bearer token, 先准备一个环境变量, 再让 app-server 和 TUI 都引用它:
 
