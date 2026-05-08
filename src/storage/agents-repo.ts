@@ -133,12 +133,20 @@ export class AgentsRepo {
     preserveExistingDelivery: number
   }): void {
     const { newId, input, team, role, name, now, serialized, preserveExistingDelivery } = args
+    // Fresh INSERT initialises last_processed_event_id to MAX(event_id) so
+    // newly registered agents do not see historical mail. The MAX read happens
+    // inside the same SQLite transaction as the INSERT (writeAgentRow is always
+    // called from `register`'s db.transaction). Reuse path preserves the
+    // existing cursor — the ON CONFLICT branch deliberately does not touch
+    // last_processed_event_id.
     this.db.prepare(
       `INSERT INTO agents (
          agent_id, agent_type, agent_type_name, team, role, name, model, registered_at, last_seen_at,
-         tmux_pane_id, claude_ui_pid, runtime_ui_pid, delivery_kind, delivery_payload
+         tmux_pane_id, claude_ui_pid, runtime_ui_pid, delivery_kind, delivery_payload,
+         last_processed_event_id
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+               COALESCE((SELECT MAX(event_id) FROM events), 0))
        ON CONFLICT (team, name) DO UPDATE SET
          agent_type = excluded.agent_type,
          agent_type_name = excluded.agent_type_name,

@@ -58,42 +58,73 @@ Rows where `from_team = :team` but `to_team != :team` (i.e. the team's outbound 
 - **WHEN** `since({team:'default', since_event_id:0, limit:10})` is queried
 - **THEN** the returned rows contain none of ids 6..10
 
-### Requirement: Seven-day cleanup preserving unacked events
+### Requirement: Thirty-day uniform cleanup of mailbox-derived tables
 
-A cleanup routine SHALL delete rows whose `created_at` is older than 7 days, but MUST NOT delete any row whose `event_id` is greater than or equal to the minimum `last_processed_event_id` of online agents (per target team).  The agents-per-team grouping uses `to_team` (since agents read their own team's inbox via `to_team`).
+A cleanup routine SHALL run periodically (default every 1 hour, overridable via `CLEANUP_INTERVAL_MS`) and delete every row in `events`, `messages`, and `message_delivery_status` that satisfies a uniform 30-day age threshold:
 
-If no agents of a given team are online, the age threshold alone applies to rows with that `to_team`.
+- `messages` rows where `sent_at < now - 30d`
+- `message_delivery_status` rows whose `message_id` references a `messages` row marked for deletion
+- `events` rows where `created_at < now - 30d`
 
-#### Scenario: Cleanup preserves events newer than online cursor
+The deletion MUST execute as a single SQLite transaction in child-to-parent order (`message_delivery_status` → `messages` → `events`) so that no foreign-key reference is dangling at any observable point. The `runCleanup` function MUST return the total number of rows deleted across all three tables.
 
-- **GIVEN** events with ids 1..100 in team `default` (all `from_team=to_team='default'`), all older than 7 days
-- **AND** one online agent in team `default` with `last_processed_event_id = 50`
-- **WHEN** cleanup runs
-- **THEN** events 1..49 are deleted and events 50..100 remain
+The 30-day threshold is hard — it MUST NOT be gated by `last_processed_event_id` of any agent, online or otherwise. Agents that have been offline for more than 30 days forfeit any unread mail.
 
-#### Scenario: Cleanup with no online agents in a team
+The cleanup routine MUST NOT delete:
 
-- **GIVEN** events with ids 1..100 targeted at team `default` (to_team='default'), all older than 7 days
-- **AND** no agents of team `default` currently online (all `last_seen_at` older than 5 minutes)
-- **WHEN** cleanup runs
-- **THEN** all 100 events are deleted
+- Rows newer than 30 days (regardless of read status).
+- Rows in tables other than the three listed above.
 
-#### Scenario: Cross-team event retention follows the to_team cursor
+#### Scenario: Cleanup deletes 31-day-old rows across all three tables in one transaction
 
-- **GIVEN** event with `from_team='alpha', to_team='beta'`, event_id=42, older than 7 days
-- **AND** team `beta` has one online agent with `last_processed_event_id = 40` (not yet consumed event 42)
-- **WHEN** cleanup runs
-- **THEN** event_id=42 is preserved (to_team='beta' agent hasn't processed it)
+- **GIVEN** an `events` row with `event_id=42`, `created_at = now - 31d`, plus a `messages` row with `event_id=42`, `sent_at = now - 31d`, plus a `message_delivery_status` row keyed by that message
+- **WHEN** `runCleanup` runs
+- **THEN** all three rows are deleted
+- **AND** the deletions occur in the order: `message_delivery_status` first, `messages` second, `events` last
+- **AND** the call returns a non-zero `deleted` count
+
+#### Scenario: Cleanup leaves <30-day rows intact
+
+- **GIVEN** an `events` row with `created_at = now - 29d` plus its paired `messages` and `message_delivery_status` rows
+- **WHEN** `runCleanup` runs
+- **THEN** none of the three rows are deleted
+
+#### Scenario: Cleanup ignores last_processed_event_id
+
+- **GIVEN** all online agents in team `default` have `last_processed_event_id = 0`
+- **AND** events / messages / delivery status rows older than 30 days exist
+- **WHEN** `runCleanup` runs
+- **THEN** those old rows are deleted regardless of any agent's cursor position
+
+#### Scenario: Cleanup leaves agents, tasks, contracts untouched
+
+- **GIVEN** an `agents` row with `registered_at = now - 90d`, a `tasks` row with `created_at = now - 90d`, and a `contracts` row with `registered_at = now - 90d`
+- **WHEN** `runCleanup` runs
+- **THEN** all three rows remain
 
 ### Requirement: Cleanup does not touch current-state tables
 
-The cleanup routine SHALL only operate on the `events` table. Rows in `agents`, `messages`, `tasks`, `contracts`, `contract_subscriptions` MUST NOT be affected by age-based cleanup.
+The cleanup routine SHALL only operate on `events`, `messages`, and `message_delivery_status`. Rows in `agents`, `tasks`, `contracts`, `contract_subscriptions` MUST NOT be affected by age-based cleanup.
+
+The `messages` and `message_delivery_status` tables are projections of the events outbox (each `messages` row carries `event_id REFERENCES events(event_id)` and each `message_delivery_status` row is keyed by `message_id`), so cleanup deletes them in lock-step with the underlying events to preserve referential integrity. Other current-state tables (`agents`, `tasks`, `contracts`, `contract_subscriptions`) carry no time-bounded retention contract and survive cleanup forever.
 
 #### Scenario: Ancient contracts survive cleanup
 
-- **GIVEN** a contract registered 30 days ago
+- **GIVEN** a contract registered 60 days ago
 - **WHEN** cleanup runs
 - **THEN** the contract row remains in the `contracts` table
+
+#### Scenario: Ancient agent rows survive cleanup
+
+- **GIVEN** an agent row with `registered_at = now - 90d` and `last_seen_at = now - 90d`
+- **WHEN** cleanup runs
+- **THEN** the `agents` row remains
+
+#### Scenario: Ancient tasks survive cleanup
+
+- **GIVEN** a `tasks` row with `created_at = now - 90d` and `status='completed'`
+- **WHEN** cleanup runs
+- **THEN** the row remains in the `tasks` table
 
 ### Requirement: SQLite PRAGMAs on bootstrap
 

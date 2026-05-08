@@ -36,21 +36,21 @@ describe('cleanup interval', () => {
     const dbPath = join(dir, 'data.db')
     const { app } = await startServer({ dbPath, port: 0, cleanupIntervalMs: 300 })
 
-    // Seed 10 events dated 8 days old — beyond the 7-day threshold, and no agents online
-    seedAgedEvents(dbPath, 10, 8)
+    // Seed 10 events dated 31 days old — beyond the 30-day uniform TTL
+    seedAgedEvents(dbPath, 10, 31)
     expect(countEvents(dbPath)).toBe(10)
 
     // Wait past one cleanup tick
     await new Promise(r => setTimeout(r, 500))
 
-    // Aged events should be deleted (no online agents, so pure-time branch deletes all)
+    // Aged events should be deleted by the 30-day hard TTL
     expect(countEvents(dbPath)).toBe(0)
 
     // Close — onClose hook must clearInterval so vitest doesn't report a leaked handle
     await app.close()
 
     // After close, even if we re-insert aged events, they are NOT cleaned up (proof the interval stopped)
-    seedAgedEvents(dbPath, 5, 8)
+    seedAgedEvents(dbPath, 5, 31)
     await new Promise(r => setTimeout(r, 500))
     expect(countEvents(dbPath)).toBe(5)
   }, 10000)

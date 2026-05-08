@@ -2,37 +2,32 @@ import type Database from 'better-sqlite3'
 
 export interface CleanupOpts {
   maxAgeDays?: number
-  onlineWindowMs?: number
   now?: Date
 }
 
-// Online cursor floor per destination team: an agent in team T with recent last_seen_at
-// advances team T's inbox cursor. Events older than 7 days that target team T can be
-// dropped once T's min cursor has moved past their event_id.
-const DELETE_AGED_EVENTS_SQL = `
-  WITH online_cursor AS (
-    SELECT team AS to_team, MIN(last_processed_event_id) AS min_cursor
-    FROM agents
-    WHERE last_seen_at >= :cutoffOnline
-    GROUP BY team
-  )
-  DELETE FROM events
-  WHERE created_at < :ageCutoff
-    AND (
-      events.to_team NOT IN (SELECT to_team FROM online_cursor)
-      OR events.event_id < (
-        SELECT min_cursor FROM online_cursor WHERE online_cursor.to_team = events.to_team
-      )
-    )
-`
-
+// Uniform 30-day hard TTL for mailbox-derived tables. The deletion runs as a
+// single SQLite transaction in child→parent order so foreign-key references
+// (PRAGMA foreign_keys=ON) never become dangling mid-transaction. Cursor
+// position is intentionally NOT consulted — agents that have been offline for
+// more than 30 days forfeit any unread mail, which is the explicit retention
+// contract.
 export function runCleanup(db: Database.Database, opts: CleanupOpts = {}): { deleted: number } {
   const now = opts.now ?? new Date()
-  const maxAgeDays = opts.maxAgeDays ?? 7
-  const onlineWindowMs = opts.onlineWindowMs ?? 5 * 60 * 1000
+  const maxAgeDays = opts.maxAgeDays ?? 30
   const ageCutoff = new Date(now.getTime() - maxAgeDays * 86400 * 1000).toISOString()
-  const cutoffOnline = new Date(now.getTime() - onlineWindowMs).toISOString()
 
-  const info = db.prepare(DELETE_AGED_EVENTS_SQL).run({ ageCutoff, cutoffOnline })
-  return { deleted: Number(info.changes) }
+  const deleteStatus = db.prepare(
+    `DELETE FROM message_delivery_status
+      WHERE message_id IN (SELECT id FROM messages WHERE sent_at < ?)`
+  )
+  const deleteMessages = db.prepare(`DELETE FROM messages WHERE sent_at < ?`)
+  const deleteEvents = db.prepare(`DELETE FROM events WHERE created_at < ?`)
+
+  const tx = db.transaction(() => {
+    const s = deleteStatus.run(ageCutoff)
+    const m = deleteMessages.run(ageCutoff)
+    const e = deleteEvents.run(ageCutoff)
+    return Number(s.changes) + Number(m.changes) + Number(e.changes)
+  })
+  return { deleted: tx() }
 }

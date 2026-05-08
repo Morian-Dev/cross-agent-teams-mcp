@@ -839,7 +839,13 @@ export function registerBusinessTools(
     'get_inbox',
     {
       title: 'Get inbox',
-      description: 'Return messages addressed to caller after since_event_id',
+      description: [
+        'Return messages addressed to the caller (by agent_id or matching role) within the caller team.',
+        'Default behaviour (since_event_id omitted): the daemon reads the caller\'s server-side cursor (`agents.last_processed_event_id`), returns mail past it, and ADVANCES the cursor to the highest returned event_id in the same transaction. Subsequent default calls return only newer mail.',
+        'Pagination via `limit` advances the cursor only to the last RETURNED event_id; the next default call resumes from there.',
+        'Explicit `since_event_id` (any number, including 0) is read-only inspection: the daemon uses the supplied value as the lower bound and does NOT advance the stored cursor — useful for re-reading history or debugging without disturbing live read position.',
+        'Retention: messages older than 30 days are deleted by the cleanup routine regardless of read state. Agents that go offline for more than 30 days forfeit any unread mail in that window.'
+      ].join(' '),
       inputSchema: {
         since_event_id: z.number().int().optional(),
         limit: z.number().int().optional()
