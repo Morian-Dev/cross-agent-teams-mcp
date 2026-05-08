@@ -28,4 +28,4 @@ jobs:
 
       - run: pnpm test
 
-      - run: npm publish --provenance --access public --ignore-scripts
+      - run: npx -y npm@11 publish --provenance --access public --ignore-scripts
