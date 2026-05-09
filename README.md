@@ -4,12 +4,45 @@
 
 A local MCP daemon that lets multiple AI coding agents (Claude Code, Codex, opencode) running on the same machine talk to each other.  Agents register, send 1-to-1 messages, broadcast to a team or role, and wake each other up — all over a single daemon, no external services.
 
-## What's in the npm package
+## Quick start
 
-`cross-agent-teams-mcp` ships two bins from the same package:
+### Claude Code
 
-- **`cross-agent-teams-mcp daemon`** — the long-running HTTP daemon.  Stores agents, mailboxes, and the task list in a local SQLite file, exposes its tools at `http://127.0.0.1:9100/mcp`.
-- **`cross-agent-teams-channel`** — a stdio MCP shim that lets Claude Code receive `notifications/channel_wake` from the daemon (Claude Code's experimental channel capability).  Required for Claude Code wake-ups; not needed for Codex (which uses its own app-server transport) or opencode (which falls back to tmux-pane injection).
+```bash
+# 1. Start the daemon (run once, keep it alive)
+npx -y cross-agent-teams-mcp@latest daemon --port 9100 &
+
+# 2. In your project, install the MCP config
+npx mcpsmgr add jtianling/cross-agent-teams-mcp -a claude-code
+
+# 3. Start Claude Code with the channel loader
+claude --dangerously-load-development-channels server:cross-agent-teams-channel
+```
+
+### Other agents (Codex, opencode, ...)
+
+```bash
+# 1. Start the daemon (run once, keep it alive)
+npx -y cross-agent-teams-mcp@latest daemon --port 9100 &
+
+# 2. In your project, install the MCP config (interactive picker)
+npx mcpsmgr add jtianling/cross-agent-teams-mcp
+
+# 3. Start your coding agent as usual
+```
+
+Then talk to your agent in plain language:
+
+```
+# In agent A:
+Register me to xats as backend on team default.
+
+# In agent B:
+Register me to xats as frontend on team default.
+Send backend a message: the API has changed.
+```
+
+That's it.  Sections below cover the details — daemon flags, manual MCP config, codex `--remote` setup, more usage patterns.
 
 ## 1. Start the daemon
 
@@ -30,26 +63,11 @@ Common flags:
 
 ## 2. Configure your agent's MCP client
 
-### Recommended: install via `mcpsmgr`
+### Recommended: `mcpsmgr` (shown in Quick start)
 
-The fastest path is the [`mcpsmgr`](https://www.npmjs.com/package/mcpsmgr) CLI.  It reads this repo's manifest (`mcpsmgr.json`) and writes the right MCP entries (and any required stdio proxy entries) into your agent's config in one shot.
+[`mcpsmgr`](https://www.npmjs.com/package/mcpsmgr) reads this repo's `mcpsmgr.json` and writes the right MCP entries into your agent's config in one shot — including the Claude Code stdio channel proxy entry, the Codex `experimental_use_rmcp_client` toggle, and the streamable-http MCP entry.
 
-```bash
-cd <your-project>
-
-# Pick one or run the bare command for an interactive picker.
-npx mcpsmgr add jtianling/cross-agent-teams-mcp -a claude-code
-npx mcpsmgr add jtianling/cross-agent-teams-mcp -a codex
-npx mcpsmgr add jtianling/cross-agent-teams-mcp                   # interactive
-```
-
-What it does:
-
-- For Claude Code, writes both `.mcp.json` entries (the HTTP server AND the `cross-agent-teams-channel` stdio proxy) — you don't have to know there are two.
-- For Codex, writes `~/.codex/config.toml` with `experimental_use_rmcp_client = true` plus the streamable-http MCP entry.
-- Prints the post-install steps you still need to run yourself (e.g. the `--dangerously-load-development-channels server:cross-agent-teams-channel` flag for Claude Code, or the codex `--remote` setup if you want push wake).
-
-Override the daemon port:
+To override the daemon port:
 
 ```bash
 npx mcpsmgr add jtianling/cross-agent-teams-mcp -a claude-code --port 9300

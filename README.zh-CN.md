@@ -4,12 +4,45 @@
 
 一个本地 MCP daemon, 让同一台机器上的多个 AI 编码 agent (Claude Code, Codex, opencode) 互相通信.  agent 注册到 daemon, 互发 1-to-1 消息, 在 team 或 role 内广播, 互相唤醒 — 全部通过一个本地 daemon 完成, 不依赖任何外部服务.
 
-## npm 包内容
+## 快速开始
 
-`cross-agent-teams-mcp` 在同一个包里发两个 bin:
+### Claude Code
 
-- **`cross-agent-teams-mcp daemon`** — 长驻 HTTP daemon.  把 agent 注册表和邮箱存在本地 SQLite 文件里, MCP endpoint 在 `http://127.0.0.1:9100/mcp`.
-- **`cross-agent-teams-channel`** — stdio MCP shim, 让 Claude Code 通过 `notifications/channel_wake` 接收唤醒通知 (Claude Code 的 experimental channel capability).  Claude Code 需要它接收 wake; Codex 用自己的 app-server 通道, opencode 走 tmux-pane 文本注入, 都不需要 channel proxy.
+```bash
+# 1. 启动 daemon (跑一次, 保持运行)
+npx -y cross-agent-teams-mcp@latest daemon --port 9100 &
+
+# 2. 在你的项目下安装 MCP 配置
+npx mcpsmgr add jtianling/cross-agent-teams-mcp -a claude-code
+
+# 3. 带上 channel loader 启动 Claude Code
+claude --dangerously-load-development-channels server:cross-agent-teams-channel
+```
+
+### 其它 agent (Codex, opencode, ...)
+
+```bash
+# 1. 启动 daemon (跑一次, 保持运行)
+npx -y cross-agent-teams-mcp@latest daemon --port 9100 &
+
+# 2. 在你的项目下安装 MCP 配置 (交互式选择对应 agent)
+npx mcpsmgr add jtianling/cross-agent-teams-mcp
+
+# 3. 按平时的方式启动对应 coding agent
+```
+
+之后用平时跟 agent 对话的语言就能用了:
+
+```
+# Agent A 里:
+Register me to xats as backend on team default.
+
+# Agent B 里:
+Register me to xats as frontend on team default.
+Send backend a message: the API has changed.
+```
+
+就这些.  下面是细节 — daemon 参数, 手动 MCP 配置, codex `--remote` 设置, 更多使用方式.
 
 ## 1. 启动 daemon
 
@@ -30,24 +63,9 @@ daemon 默认监听 `127.0.0.1:9100`.  MCP endpoint: `http://127.0.0.1:9100/mcp`
 
 ## 2. 在 agent 端配置 MCP client
 
-### 推荐: 用 `mcpsmgr` 安装
+### 推荐: `mcpsmgr` (快速开始里已经演示)
 
-最快的方式是用 [`mcpsmgr`](https://www.npmjs.com/package/mcpsmgr) CLI.  它读取本仓库的 manifest (`mcpsmgr.json`), 一次性把对应 agent 需要的 MCP 条目 (含必要的 stdio proxy 条目) 写到 agent 的配置文件里.
-
-```bash
-cd <your-project>
-
-# 选一个, 或者用裸命令进入交互式选择.
-npx mcpsmgr add jtianling/cross-agent-teams-mcp -a claude-code
-npx mcpsmgr add jtianling/cross-agent-teams-mcp -a codex
-npx mcpsmgr add jtianling/cross-agent-teams-mcp                   # 交互式
-```
-
-它做了什么:
-
-- Claude Code: 同时写两条 `.mcp.json` 条目 (HTTP 工具 + `cross-agent-teams-channel` stdio proxy) — 你不用记两条.
-- Codex: 写 `~/.codex/config.toml`, 带上 `experimental_use_rmcp_client = true` 和 streamable-http MCP 条目.
-- 打印你还需要自己跑的 post-install 步骤 (例如 Claude Code 的 `--dangerously-load-development-channels server:cross-agent-teams-channel` 启动 flag, 或 codex 想要 push 唤醒时的 `--remote` 配置).
+[`mcpsmgr`](https://www.npmjs.com/package/mcpsmgr) 读取本仓库的 `mcpsmgr.json`, 一次性把对应 agent 需要的 MCP 条目写进配置 — 包括 Claude Code 的 stdio channel proxy 条目, Codex 的 `experimental_use_rmcp_client` 开关和 streamable-http MCP 条目.
 
 覆盖 daemon 端口:
 
