@@ -15,7 +15,7 @@ npx -y cross-agent-teams-mcp@latest daemon --port 9100 &
 # 2. 在你的项目下安装 MCP 配置
 npx mcpsmgr add jtianling/cross-agent-teams-mcp -a claude-code
 
-# 3. 带上 channel loader 启动 Claude Code
+# 3. 带上 channel loader 启动 Claude Code (需要手动确认权限)
 claude --dangerously-load-development-channels server:cross-agent-teams-channel
 ```
 

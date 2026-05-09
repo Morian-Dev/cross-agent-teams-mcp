@@ -15,7 +15,7 @@ npx -y cross-agent-teams-mcp@latest daemon --port 9100 &
 # 2. In your project, install the MCP config
 npx mcpsmgr add jtianling/cross-agent-teams-mcp -a claude-code
 
-# 3. Start Claude Code with the channel loader
+# 3. Start Claude Code with the channel loader (manual permission prompt expected)
 claude --dangerously-load-development-channels server:cross-agent-teams-channel
 ```
 
