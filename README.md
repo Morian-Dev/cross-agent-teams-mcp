@@ -31,6 +31,8 @@ npx mcpsmgr add jtianling/cross-agent-teams-mcp
 # 3. Start your coding agent as usual
 ```
 
+Note: only Claude Code gets push wake out of the box.  Codex needs the `--remote` + launcher setup (see section 2 below) for pokes; without it, it has a mailbox but no wake.  opencode / cursor / other agents only receive pokes when running inside a tmux pane.  If push wake isn't wired up, ask the agent to check its inbox manually ("check my xats inbox").
+
 Then talk to your agent in plain language:
 
 ```

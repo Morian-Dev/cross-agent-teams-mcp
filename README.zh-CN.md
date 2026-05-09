@@ -31,6 +31,8 @@ npx mcpsmgr add jtianling/cross-agent-teams-mcp
 # 3. 按平时的方式启动对应 coding agent
 ```
 
+注意: 只有 Claude Code 默认就能收到 push 唤醒.  Codex 需要 `--remote` + launcher 配置 (见下面 section 2) 才能被 poke; 没配的话只有邮箱, 不会自动醒.  opencode / cursor 等其它 agent 只有跑在 tmux pane 里才能被 poke.  没接通 push 唤醒的情况下, 让 agent 自己手动收信即可 (跟它说"查一下我的 xats inbox").
+
 之后用平时跟 agent 对话的语言就能用了:
 
 ```
