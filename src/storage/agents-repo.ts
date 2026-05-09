@@ -72,7 +72,12 @@ function toAgentRow(row: DbAgentRow): AgentRow {
 }
 
 export class AgentsRepo {
-  constructor(private db: Database.Database) {}
+  constructor(private db: Database.Database) {
+    // Bind hot read-paths so callers can destructure or extract method
+    // references without losing `this` binding. (Tests in particular extract
+    // `repo.list` to a local for type-cast purposes.)
+    this.list = this.list.bind(this)
+  }
 
   findByIdentity(args: { team: string; name: string }): { agent_id: string } | undefined {
     return this.db.prepare(
@@ -251,8 +256,9 @@ export class AgentsRepo {
     )
   }
 
-  list(args: { team: string }): AgentListRow[] {
-    const rows = this.db.prepare(
+  list(args: { team: string; excludeRoles?: string[] }): AgentListRow[] {
+    const exclude = args.excludeRoles ?? []
+    const baseSelect =
       `SELECT
          agent_id,
          agent_type,
@@ -266,9 +272,17 @@ export class AgentsRepo {
          delivery_payload,
          last_seen_at
        FROM agents
-       WHERE team=?
-       ORDER BY registered_at ASC`
-    ).all(args.team) as DbAgentRow[]
+       WHERE team=?`
+    const orderBy = ` ORDER BY registered_at ASC`
+    let rows: DbAgentRow[]
+    if (exclude.length > 0) {
+      const placeholders = exclude.map(() => '?').join(',')
+      rows = this.db.prepare(
+        `${baseSelect} AND role NOT IN (${placeholders})${orderBy}`
+      ).all(args.team, ...exclude) as DbAgentRow[]
+    } else {
+      rows = this.db.prepare(`${baseSelect}${orderBy}`).all(args.team) as DbAgentRow[]
+    }
     const nowMs = Date.now()
     return rows.map((row) => {
       const agent = toAgentRow(row)

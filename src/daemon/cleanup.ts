@@ -22,12 +22,28 @@ export function runCleanup(db: Database.Database, opts: CleanupOpts = {}): { del
   )
   const deleteMessages = db.prepare(`DELETE FROM messages WHERE sent_at < ?`)
   const deleteEvents = db.prepare(`DELETE FROM events WHERE created_at < ?`)
+  // Channel-proxy GC (design D3 / D4): prune stale `__channel_proxy__` rows
+  // whose channel_session_id is no longer referenced by any non-proxy host's
+  // delivery_payload. Live-bound proxies survive even past the cutoff.
+  const deleteStaleProxies = db.prepare(
+    `DELETE FROM agents
+      WHERE role = '__channel_proxy__'
+        AND last_seen_at < ?
+        AND NOT EXISTS (
+          SELECT 1 FROM agents host
+          WHERE host.delivery_kind = 'claude-channel'
+            AND host.role <> '__channel_proxy__'
+            AND json_extract(host.delivery_payload, '$.channel_session_id')
+                = json_extract(agents.delivery_payload, '$.channel_session_id')
+        )`
+  )
 
   const tx = db.transaction(() => {
     const s = deleteStatus.run(ageCutoff)
     const m = deleteMessages.run(ageCutoff)
     const e = deleteEvents.run(ageCutoff)
-    return Number(s.changes) + Number(m.changes) + Number(e.changes)
+    const p = deleteStaleProxies.run(ageCutoff)
+    return Number(s.changes) + Number(m.changes) + Number(e.changes) + Number(p.changes)
   })
   return { deleted: tx() }
 }

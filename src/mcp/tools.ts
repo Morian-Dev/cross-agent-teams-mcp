@@ -734,7 +734,9 @@ export function registerBusinessTools(
       if (typeof who !== 'string') return toText(who)
       const row = agents.findById(who)!
       return run(() => ({
-        agents: agents.list({ team: row.team }).map(toPublicAgentRow),
+        agents: agents
+          .list({ team: row.team, excludeRoles: ['__channel_proxy__'] })
+          .map(toPublicAgentRow),
       }))
     }
   )
