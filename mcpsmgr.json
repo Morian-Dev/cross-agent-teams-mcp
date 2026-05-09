@@ -26,11 +26,10 @@
   "prerequisites": [
     {
       "kind": "long-running-command",
-      "description": "Start the daemon (long-running). Keep it alive in tmux/launchd/dedicated terminal.",
-      "command": "npx -y cross-agent-teams-mcp@^0.5 daemon --port ${port}",
+      "description": "Start the daemon (long-running). Keep it alive in tmux/launchd/dedicated terminal. MUST be running before any agent client connects.",
+      "command": "npx -y cross-agent-teams-mcp daemon --port ${port}",
       "notes": [
-        "If you set CROSS_AGENT_TEAMS_TOKEN, append: --token ${CROSS_AGENT_TEAMS_TOKEN}",
-        "Daemon MUST be running before any agent client connects (Claude Code's stdio channel proxy fails to register otherwise)."
+        "If you set CROSS_AGENT_TEAMS_TOKEN, append: --token ${CROSS_AGENT_TEAMS_TOKEN}"
       ]
     }
   ],
@@ -52,7 +51,7 @@
             "args": [
               "-y",
               "-p",
-              "cross-agent-teams-mcp@^0.5",
+              "cross-agent-teams-mcp",
               "cross-agent-teams-channel",
               "--daemon-url",
               "http://127.0.0.1:${port}/mcp"
@@ -61,7 +60,6 @@
         }
       ],
       "postInstallNotes": [
-        "Start the daemon BEFORE launching Claude Code; otherwise the stdio channel proxy fails to register.",
         "Launch Claude Code with: claude --dangerously-load-development-channels server:cross-agent-teams-channel",
         "The 'server:<name>' suffix MUST equal the MCP server key 'cross-agent-teams-channel' above."
       ]
