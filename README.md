@@ -30,7 +30,36 @@ Common flags:
 
 ## 2. Configure your agent's MCP client
 
-### Claude Code (needs both entries — HTTP for tools, stdio for channel wake)
+### Recommended: install via `mcpsmgr`
+
+The fastest path is the [`mcpsmgr`](https://www.npmjs.com/package/mcpsmgr) CLI.  It reads this repo's manifest (`mcpsmgr.json`) and writes the right MCP entries (and any required stdio proxy entries) into your agent's config in one shot.
+
+```bash
+cd <your-project>
+
+# Pick one or run the bare command for an interactive picker.
+npx mcpsmgr add jtianling/cross-agent-teams-mcp -a claude-code
+npx mcpsmgr add jtianling/cross-agent-teams-mcp -a codex
+npx mcpsmgr add jtianling/cross-agent-teams-mcp                   # interactive
+```
+
+What it does:
+
+- For Claude Code, writes both `.mcp.json` entries (the HTTP server AND the `cross-agent-teams-channel` stdio proxy) — you don't have to know there are two.
+- For Codex, writes `~/.codex/config.toml` with `experimental_use_rmcp_client = true` plus the streamable-http MCP entry.
+- Prints the post-install steps you still need to run yourself (e.g. the `--dangerously-load-development-channels server:cross-agent-teams-channel` flag for Claude Code, or the codex `--remote` setup if you want push wake).
+
+Override the daemon port:
+
+```bash
+npx mcpsmgr add jtianling/cross-agent-teams-mcp -a claude-code --port 9300
+```
+
+### Manual config
+
+If you don't want `mcpsmgr` (private fork, custom token, custom stdio args, or you just prefer hand-edited config), the raw per-agent configs are below.
+
+#### Claude Code (needs both entries — HTTP for tools, stdio for channel wake)
 
 `.mcp.json` (or `~/.claude.json`):
 
@@ -64,11 +93,11 @@ claude --dangerously-load-development-channels server:cross-agent-teams-channel
 
 The `server:<name>` suffix MUST equal the MCP server key in `.mcp.json` (`cross-agent-teams-channel` above).  If your daemon uses `--token <t>`, add `"headers": { "Authorization": "Bearer <t>" }` to the HTTP entry.
 
-### Codex CLI
+#### Codex CLI
 
 Codex talks to the daemon over Streamable HTTP.  Wake-ups go through Codex's own app-server WebSocket transport — there is no channel proxy involved.
 
-#### Minimum config (mailbox only, no push wake)
+##### Minimum config (mailbox only, no push wake)
 
 `~/.codex/config.toml`:
 
@@ -86,7 +115,7 @@ url = "http://127.0.0.1:9100/mcp"
 
 In this minimum mode, `send_message` to this Codex still drops a row in its mailbox, but you have to call `get_inbox` yourself to read it — no push wake.
 
-#### Let other agents wake you (codex-appserver poke)
+##### Let other agents wake you (codex-appserver poke)
 
 To let other agents **wake** this Codex thread (not just mail it), you need `codex-appserver` delivery.  The setup has one non-obvious gotcha worth calling out:
 
@@ -104,7 +133,7 @@ codex --remote ws://127.0.0.1:8799
 
 If the app-server's `CODEX_HOME` doesn't have `cross-agent-teams-mcp` configured, the codex agent inside `--remote` won't see the MCP tools at all and `register_agent` will never fire.
 
-#### Recommended: launcher with tmux pane auto-bind
+##### Recommended: launcher with tmux pane auto-bind
 
 For pokes to be injected directly into the running Codex thread (rather than landing as a tmux paste), the daemon needs to know which tmux pane the codex process lives in.  The launcher pre-claims a pane via the `pre-register-codex-pane` CLI before exec'ing codex.  Add to `~/.zshrc`:
 
@@ -149,7 +178,7 @@ What the launcher does:
 
 More detail (auth headers, lower-level `register_agent` form): [docs/configs/codex-cli.md](docs/configs/codex-cli.md).
 
-### Other coding agents (opencode, cursor, ...)
+#### Other coding agents (opencode, cursor, ...)
 
 Anything that is not Claude Code or Codex — opencode, cursor, an editor extension, your own harness — connects over plain Streamable HTTP and registers as `agent_type="custom"` (the agent figures this out for you).  There is no dedicated wake-up transport for these; cross-agent pokes are delivered by injecting text into the agent's tmux pane, so run the agent inside a tmux window and the daemon will resolve `pid → tty → pane` automatically when you register.
 

@@ -30,7 +30,36 @@ daemon 默认监听 `127.0.0.1:9100`.  MCP endpoint: `http://127.0.0.1:9100/mcp`
 
 ## 2. 在 agent 端配置 MCP client
 
-### Claude Code (两个条目都需要 — HTTP 用于工具, stdio 用于 channel 唤醒)
+### 推荐: 用 `mcpsmgr` 安装
+
+最快的方式是用 [`mcpsmgr`](https://www.npmjs.com/package/mcpsmgr) CLI.  它读取本仓库的 manifest (`mcpsmgr.json`), 一次性把对应 agent 需要的 MCP 条目 (含必要的 stdio proxy 条目) 写到 agent 的配置文件里.
+
+```bash
+cd <your-project>
+
+# 选一个, 或者用裸命令进入交互式选择.
+npx mcpsmgr add jtianling/cross-agent-teams-mcp -a claude-code
+npx mcpsmgr add jtianling/cross-agent-teams-mcp -a codex
+npx mcpsmgr add jtianling/cross-agent-teams-mcp                   # 交互式
+```
+
+它做了什么:
+
+- Claude Code: 同时写两条 `.mcp.json` 条目 (HTTP 工具 + `cross-agent-teams-channel` stdio proxy) — 你不用记两条.
+- Codex: 写 `~/.codex/config.toml`, 带上 `experimental_use_rmcp_client = true` 和 streamable-http MCP 条目.
+- 打印你还需要自己跑的 post-install 步骤 (例如 Claude Code 的 `--dangerously-load-development-channels server:cross-agent-teams-channel` 启动 flag, 或 codex 想要 push 唤醒时的 `--remote` 配置).
+
+覆盖 daemon 端口:
+
+```bash
+npx mcpsmgr add jtianling/cross-agent-teams-mcp -a claude-code --port 9300
+```
+
+### 手动配置
+
+如果不想用 `mcpsmgr` (私有 fork / 自定义 token / 自定义 stdio args / 或者就是想手写), 各 agent 的原始配置如下.
+
+#### Claude Code (两个条目都需要 — HTTP 用于工具, stdio 用于 channel 唤醒)
 
 `.mcp.json` (或 `~/.claude.json`):
 
@@ -64,11 +93,11 @@ claude --dangerously-load-development-channels server:cross-agent-teams-channel
 
 `server:<name>` 后缀 **必须** 等于 `.mcp.json` 里的 MCP server key (上例中是 `cross-agent-teams-channel`).  如果 daemon 启动带了 `--token <t>`, 在 HTTP 条目里加 `"headers": { "Authorization": "Bearer <t>" }`.
 
-### Codex CLI
+#### Codex CLI
 
 Codex 通过 Streamable HTTP 跟 daemon 通信.  唤醒走 Codex 自己的 app-server WebSocket, 不经 channel proxy.
 
-#### 最小配置 (只能收邮箱, 没有 push 唤醒)
+##### 最小配置 (只能收邮箱, 没有 push 唤醒)
 
 `~/.codex/config.toml`:
 
@@ -86,7 +115,7 @@ url = "http://127.0.0.1:9100/mcp"
 
 这种最小配置下 `send_message` 给这个 codex 会写邮箱, 但需要手动调 `get_inbox` 拉读, 没有跨会话 push 唤醒.
 
-#### 让别人能唤醒你 (codex-appserver poke)
+##### 让别人能唤醒你 (codex-appserver poke)
 
 要让别的 agent 能**主动唤醒**这个 codex thread (而不只是发邮件), 需要 `codex-appserver` delivery.  这里有个不直观的坑要写清楚:
 
@@ -104,7 +133,7 @@ codex --remote ws://127.0.0.1:8799
 
 如果第 1 步的 app-server 的 `CODEX_HOME` 里没配 `cross-agent-teams-mcp`, `--remote` 进去的 codex agent 根本看不到 MCP 工具, `register_agent` 调都调不到.
 
-#### 推荐: launcher 函数 (tmux pane 自动绑定)
+##### 推荐: launcher 函数 (tmux pane 自动绑定)
 
 为了让 daemon 把 wake-hint 直接 inject 到 codex thread (而不是只 paste 到 tmux pane), daemon 需要知道 codex 进程在哪个 tmux pane.  launcher 通过 `pre-register-codex-pane` CLI 在 exec codex 之前先把 pane 占住.  把下面的函数加到 `~/.zshrc`:
 
@@ -149,7 +178,7 @@ free-xats-codex() {
 
 详细配置 (auth header, 底层 `register_agent` 用法): [docs/configs/codex-cli.md](docs/configs/codex-cli.md).
 
-### 其它编码 agent (opencode, cursor, ...)
+#### 其它编码 agent (opencode, cursor, ...)
 
 非 Claude Code 也非 Codex 的工具 — opencode, cursor, 编辑器扩展, 自己的 harness — 直接通过 Streamable HTTP 连 daemon, 注册时用 `agent_type="custom"` (agent 自己会判断).  这些 agent 没有专用的唤醒通道; 跨 agent poke 通过把文本注入到 agent 所在的 tmux pane 实现, 所以把 agent 跑在 tmux 窗口里, 注册时 daemon 会自动解析 `pid → tty → pane`.
 
