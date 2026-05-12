@@ -115,4 +115,5 @@ skillsmgr-deploy.json
 
 # Local git worktrees
 worktrees/
+.worktrees/
 .e2e-test/
