@@ -110,7 +110,9 @@ const SEND_MESSAGE_DESC = [
   '除非用户明确指定 to_team, 不要跨 team 沟通 (explicitly set to_team only when user asks).',
   'Reports poked, poke_skip_reasons (no_pane, guard_failed, tmux_unavailable, self); on guard_failed daemon retries at 30s/180s/600s (retry_scheduled, retry_delays_s); stops early on poked.',
   'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender>, 请调 get_inbox 查看), NOT the body — read bodies via get_inbox.',
-  'Delivery is NOT filtered by online/idle (unlike broadcast\'s 5 min idle skip) — offline targets still receive the mailbox row.'
+  'Delivery is NOT filtered by online/idle (unlike broadcast\'s 5 min idle skip) — offline targets still receive the mailbox row.',
+  'DO NOT pre-verify the recipient via list_agents before calling send_message — this rule applies to BOTH same-team and cross-team sends (list_agents is caller-team scoped and CANNOT see cross-team agents, so a cross-team pre-check always falsely reports "missing"; for same-team sends the pre-check is pure waste).',
+  'On miss send_message returns unknown_recipient cleanly with no side effects, so the correct pattern is "try send, then handle unknown_recipient" — never "list_agents first, then send".'
 ].join(' ')
 
 const SEND_MESSAGE_BY_ID_DESC = [
@@ -726,7 +728,11 @@ export function registerBusinessTools(
     'list_agents',
     {
       title: 'List agents',
-      description: 'List agents in the caller\'s team',
+      description: [
+        'List agents in the caller\'s team. Scope is caller-team only: this tool CANNOT see cross-team agents and MUST NOT be used to verify whether a cross-team recipient exists.',
+        'DO NOT call list_agents as a pre-flight / pre-verify / pre-check step before send_message — neither for same-team nor for cross-team sends. For cross-team targets the pre-check will always falsely report "missing" because list_agents is caller-team scoped; for same-team targets the pre-check is pure waste.',
+        'The canonical miss signal is the unknown_recipient error returned by send_message itself. The correct pattern is "try send, then handle unknown_recipient" — never "list_agents first, then send".'
+      ].join(' '),
       inputSchema: {}
     },
     async () => {

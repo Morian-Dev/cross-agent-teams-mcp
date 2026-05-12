@@ -70,6 +70,7 @@ export function mountMcp(
           + ' For `agent_type="claude-code"`: pass `$PPID` as `ui_pid` so channel delivery auto-binds.'
           + ' For ANY other harness (cursor, opencode, an editor extension, an unknown caller, etc.): use `agent_type="custom"` together with `agent_type_name=<your harness name>`. Do NOT guess from system-wide signals like "binary X is on PATH" — those reflect what the user has installed, not what runtime you are inside.'
           + ' `model` is OPTIONAL for any agent_type; omit it when you do not have an authoritative model identifier.'
+          + ' Anti-pattern: DO NOT call list_agents to pre-verify / pre-check a recipient before send_message. list_agents is scoped to the caller\'s team and CANNOT see cross-team agents, so using it as a pre-flight check before a cross-team send_message will always falsely report the target as missing; for same-team sends the pre-check is wasted work. On miss, send_message itself returns unknown_recipient cleanly with no side effects — the correct pattern is "try send_message, then handle unknown_recipient", never "list_agents first, then send_message".'
       }
     )
     const agentIdHolder: AgentIdHolder = { current: undefined }
