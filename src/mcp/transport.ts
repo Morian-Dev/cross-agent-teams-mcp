@@ -8,6 +8,8 @@ import { registerBusinessTools, type AgentIdHolder } from './tools.js'
 import { RegisterAgentService } from './register-agent.js'
 import type { SseFanout, SseSink } from '../daemon/sse-fanout.js'
 import type { ChannelWakeFanout } from '../daemon/channel-wake-fanout.js'
+import type { DaemonContext } from '../daemon/server.js'
+import type { SessionOriginInfo } from '../daemon/network-origin.js'
 
 interface Session {
   transport: StreamableHTTPServerTransport
@@ -19,6 +21,7 @@ interface Session {
     name?: string
     version?: string
   }
+  originInfo: SessionOriginInfo
 }
 
 export interface MountMcpResult {
@@ -35,10 +38,11 @@ export function mountMcp(
   db: Database.Database,
   fanout: SseFanout,
   channelWakeFanout?: ChannelWakeFanout,
-  opts: { log?: (line: string) => void } = {}
+  opts: { log?: (line: string) => void; context?: DaemonContext } = {}
 ): MountMcpResult {
   const sessions = new Map<string, Session>()
   const log = opts.log ?? ((line: string) => { console.debug(line) })
+  const context = opts.context ?? { localDevice: 'local' }
 
   function closeSessionByConnectionId(connectionId: string): boolean {
     const s = sessions.get(connectionId)
@@ -48,11 +52,13 @@ export function mountMcp(
   }
 
   // Single RegisterAgentService for the whole daemon: its `connections` Map is
-  // the cross-session (team, name) → connection_id ledger. Per-session
+  // the cross-session (device, team, name) → connection_id ledger. Per-session
   // instantiation would defeat takeover detection.
   const registerSvc = new RegisterAgentService(db, {
     closeSessionByConnectionId,
     log,
+    localDevice: context.localDevice,
+    getSessionOrigin: (connectionId) => sessions.get(connectionId)?.originInfo,
   })
 
   // Once register_agent succeeds for a session id, pin the owning Authorization hash.
@@ -133,6 +139,7 @@ export function mountMcp(
           agentIdHolder,
           createdAt: Date.now(),
           clientInfo: undefined,
+          originInfo: { origin: 'local', remote_addr: null },
         })
       }
     })
@@ -146,7 +153,7 @@ export function mountMcp(
       if (transport.sessionId) {
         // Release this session's identity binding from the daemon-singleton
         // RegisterAgentService so its `connections` Map does not retain dead
-        // (team, name) → connection_id entries. Without this, every reconnect
+        // (device, team, name) → connection_id entries. Without this, every reconnect
         // would log a misleading "takeover" against an already-dead session.
         if (agentIdHolder.current) {
           try { registerSvc.releaseConnection(agentIdHolder.current, transport.sessionId) } catch { /* ignore */ }
@@ -169,11 +176,24 @@ export function mountMcp(
         if (!sid) return undefined
         return sessions.get(sid)?.clientInfo
       },
+      () => {
+        const sid = sessionIdForCaller
+        if (!sid) return undefined
+        return sessions.get(sid)?.originInfo
+      },
+      context,
       onUnregisterSuccess,
       registerSvc
     )
     server.connect(transport)
-    return { transport, server, sessionId: '', agentIdHolder, createdAt: Date.now() }
+    return {
+      transport,
+      server,
+      sessionId: '',
+      agentIdHolder,
+      createdAt: Date.now(),
+      originInfo: { origin: 'local', remote_addr: null },
+    }
   }
 
   function authHashFor(req: FastifyRequest): string | null {
@@ -194,6 +214,8 @@ export function mountMcp(
     const body = req.body as ToolsCallBody | undefined
     const isInit = body?.method === 'initialize'
     let session = sid ? sessions.get(sid) : undefined
+    const originInfo = (req as FastifyRequest & { xatsPeer?: SessionOriginInfo }).xatsPeer
+      ?? { origin: 'local' as const, remote_addr: null }
     if (!session && !isInit) { return reply.code(400).send({ error: 'unknown_session' }) }
 
     // register_agent presenting a different Authorization header than the one that
@@ -223,6 +245,10 @@ export function mountMcp(
     }
 
     if (!session) { session = createSession() }
+    if (session) {
+      session.originInfo = originInfo
+    }
+
     if (body?.method === 'initialize') {
       const params = body.params as { clientInfo?: { name?: unknown; version?: unknown } } | undefined
       const clientInfo = params?.clientInfo
@@ -232,6 +258,12 @@ export function mountMcp(
       }
     }
     await session.transport.handleRequest(req.raw, reply.raw, body)
+    if (isInit && session.transport.sessionId) {
+      const initialized = sessions.get(session.transport.sessionId)
+      if (initialized) {
+        initialized.originInfo = originInfo
+      }
+    }
     return reply
   })
 

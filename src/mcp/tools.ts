@@ -3,7 +3,10 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { AgentsRepo } from '../storage/agents-repo.js'
 import { EventsOutbox } from '../storage/events-outbox.js'
-import { RegisterAgentService } from './register-agent.js'
+import {
+  RegisterAgentService,
+  resolveEffectiveDevice,
+} from './register-agent.js'
 import { SendMessageService } from './send-message.js'
 import { BroadcastService } from './broadcast.js'
 import { BroadcastToRoleService } from './broadcast-to-role.js'
@@ -39,6 +42,8 @@ import {
   preRegisterCodexPaneInputSchema,
 } from './pre-register-codex-pane.js'
 import { autoBindCodexPane } from './auto-bind-codex-pane.js'
+import type { SessionOriginInfo } from '../daemon/network-origin.js'
+import type { DaemonContext } from '../daemon/server.js'
 
 export interface AgentIdHolder { current: string | undefined }
 
@@ -105,7 +110,7 @@ const bindRuntimeIdentityArgsSchema = bindRuntimeIdentitySchema.superRefine((val
 const SEND_MESSAGE_DESC = [
   'Private 1→1 message to another agent by name.  By default auto-poke=true with quiet-guard (auto_poke:false opts out), and need_reply=true.',
   'Set need_reply:false for FYI/no-response-needed messages; recipients see need_reply in get_inbox.',
-  'to_agent_name is the target\'s `name` within its team; this is the preferred addressing form.  For UUID-based sends use send_message_by_id.',
+  'to_agent_name is the target\'s `name` within its team; bare names resolve on the caller\'s device, and `name:device` targets a specific device.  For UUID-based sends use send_message_by_id.',
   'For multi-recipient use broadcast (same-team) or broadcast_to_role (same-team, by role).',
   '除非用户明确指定 to_team, 不要跨 team 沟通 (explicitly set to_team only when user asks).',
   'Reports poked, poke_skip_reasons (no_pane, guard_failed, tmux_unavailable, self); on guard_failed daemon retries at 30s/180s/600s (retry_scheduled, retry_delays_s); stops early on poked.',
@@ -125,7 +130,7 @@ const SEND_MESSAGE_BY_ID_DESC = [
 ].join(' ')
 
 const BROADCAST_DESC = [
-  'Same-team broadcast to every other agent in the caller team.',
+  'Same-team broadcast to every other agent in the caller team across all devices.',
   'Auto-poke default true (quiet-guard + 30s/180s/600s retry; reports poked, poke_skip_reasons, retry_scheduled, retry_delays_s).  auto_poke:false opts out.',
   'For role filter use broadcast_to_role.  For cross-team 1→1 use send_message({to_team}).',
   'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender>, 请调 get_inbox 查看) — never the body.  Read via get_inbox.',
@@ -133,7 +138,7 @@ const BROADCAST_DESC = [
 ].join(' ')
 
 const BROADCAST_TO_ROLE_DESC = [
-  'Same-team broadcast filtered by role.  Strictly same-team — no cross-team variant.',
+  'Same-team broadcast filtered by role across all devices.  Strictly same-team — no cross-team variant.',
   'For cross-team private 1→1 use send_message({to_team}).',
   'Auto-poke default true with quiet-guard + 30s/180s/600s retry (auto_poke:false opts out); injects only a SHORT wake-up hint, not the message body.  Recipients read via get_inbox.',
   'Returns unknown_recipient when no same-team agent matches to_role.'
@@ -233,12 +238,17 @@ export function registerBusinessTools(
   channelWakeFanout?: ChannelWakeFanout,
   getTransport?: () => TransportLike,
   getSessionClientInfo?: () => SessionClientInfo | undefined,
+  getSessionOriginInfo?: () => SessionOriginInfo | undefined,
+  context?: DaemonContext,
   onUnregisterSuccess?: UnregisterSuccessHook,
   injectedRegisterSvc?: RegisterAgentService
 ): void {
   const agents = new AgentsRepo(db)
   const events = new EventsOutbox(db)
-  const registerSvc = injectedRegisterSvc ?? new RegisterAgentService(db)
+  const registerSvc = injectedRegisterSvc ?? new RegisterAgentService(db, {
+    localDevice: context?.localDevice,
+    getSessionOrigin: () => getSessionOriginInfo?.(),
+  })
   const bindRuntimeIdentitySvc = new BindRuntimeIdentityService(db)
   const registerCodexSelfSvc = new RegisterCodexSelfService(registerSvc)
   const unregisterSelfSvc = new UnregisterSelfService(db, agents)
@@ -365,6 +375,7 @@ export function registerBusinessTools(
   const registerAgentInputSchema = z.object({
     model: z.string().optional(),
     name: z.string().min(1).refine(v => v.trim().length > 0, { message: 'name must not be empty' }),
+    device: z.string().optional(),
     role: z.string().optional(),
     team: z.string().optional(),
     project_dir: z.string().min(1).optional(),
@@ -438,6 +449,7 @@ export function registerBusinessTools(
       agent_type?: AgentType
       agent_type_name?: string
       model?: string
+      device?: string
       name: string
       role?: string
       team?: string
@@ -478,8 +490,15 @@ export function registerBusinessTools(
       args.ui_pid !== undefined &&
       autoBindChannelSvc
     ) {
+      const effectiveDevice = resolveEffectiveDevice({
+        requestedDevice: args.device,
+        originInfo: getSessionOriginInfo?.(),
+        localDevice: context?.localDevice ?? 'local',
+      })
+      if ('error' in effectiveDevice) return effectiveDevice
       const proxyLookup = autoBindChannelSvc.lookup({
         ui_pid: args.ui_pid,
+        device: effectiveDevice.ok,
       })
       if (
         proxyLookup.ok &&
@@ -504,6 +523,7 @@ export function registerBusinessTools(
       hasCodexTransportFields
         ? await registerCodexSelfSvc.register({
             connection_id: connectionId,
+            device: args.device,
             name: args.name,
             model: args.model,
             role: args.role,
@@ -518,6 +538,7 @@ export function registerBusinessTools(
             agent_type: args.agent_type,
             agent_type_name: args.agent_type_name,
             model: args.model,
+            device: args.device,
             name: args.name,
             role: args.role,
             team: args.team,
@@ -555,9 +576,11 @@ export function registerBusinessTools(
         args.ui_pid !== undefined &&
         autoBindChannelSvc
       ) {
+        const callerRow = agents.findById(res.agent_id)
         const autoBind = autoBindChannelSvc.run({
           callerAgentId: res.agent_id,
           ui_pid: args.ui_pid,
+          device: callerRow?.device,
         })
         if (autoBind.ok) {
           autoBoundChannelCsid = autoBind.channel_session_id
@@ -657,7 +680,7 @@ export function registerBusinessTools(
         '1. `printenv CODEX_THREAD_ID` non-empty → `agent_type="codex"`; pass that value as `thread_id` (REQUIRED for codex per the schema). Do NOT pass `ui_pid` (the launcher\'s `pre_register_codex_pane` flow handles tmux pane binding; supplying `ui_pid` from codex disables that auto-bind path).',
         '2. `printenv CLAUDECODE` non-empty OR `printenv CLAUDE_CODE_ENTRYPOINT` non-empty → `agent_type="claude-code"`; pass `$PPID` as `ui_pid` to enable channel auto-bind.',
         '3. None of the above → `agent_type="custom"` with `agent_type_name="<the harness you are running under, e.g. cursor, opencode, ...>"` (`agent_type_name` is required when `agent_type="custom"`). Detect the harness name from your runtime environment if you can — e.g. `printenv CURSOR_TRACE_ID` non-empty means cursor — but do NOT guess from system-wide signals like "binary X exists on PATH": such probes detect what the user has installed, not what runtime you are inside, and pick the wrong agent type. When unsure, prefer `agent_type_name="unknown"` over a wrong guess.',
-        'Calling this tool again with the same `(team, name, role)` identity reuses the existing `agent_id` and refreshes `tmux_pane_id` and `model`; no duplicate row is created.',
+        'Calling this tool again with the same `(device, team, name)` identity reuses the existing `agent_id` and refreshes `tmux_pane_id` and `model`; no duplicate row is created.',
         'Use `agent_type="custom"` for unsupported agent harnesses; provide `agent_type_name` for observability.',
         'Claude Code sessions: pass `agent_type="claude-code"` and PREFERRED: pass only `ui_pid` (from `$PPID`) so the daemon auto-binds channel delivery — do not pass `channel_session_id` explicitly. When BOTH `ui_pid` AND `channel_session_id` are supplied, the daemon runs a consistency check against the caller `ui_pid`\'s live channel proxy; if the proxy\'s csid does not match the supplied `channel_session_id`, the call is rejected with `channel_session_id_ui_pid_mismatch` before any agent row is written. Use `bind_channel` for low-level rebind after registration instead of supplying csid here.',
         'Codex sessions: pass `agent_type="codex"` and `thread_id` (from `$CODEX_THREAD_ID`) to register Codex app-server delivery. The schema REQUIRES `thread_id` when `agent_type="codex"`; missing or empty `thread_id` is rejected before any handshake runs. Launcher pre-reg callers without `thread_id` should use `pre_register_codex_pane` instead. `ws_url` defaults to `ws://127.0.0.1:8799` (env override `CROSS_AGENT_TEAMS_CODEX_WS_URL`); `model` defaults to `gpt` when omitted. For `agent_type="claude-code"` callers, `model` defaults to a Claude-specific value derived from MCP session client info when omitted.',
@@ -677,6 +700,7 @@ export function registerBusinessTools(
     async (args: {
       agent_type: AgentType
       agent_type_name?: string
+      device?: string
       model?: string; name: string; role?: string; team?: string;
       project_dir?: string;
       ui_pid?: number;
@@ -729,7 +753,7 @@ export function registerBusinessTools(
     {
       title: 'List agents',
       description: [
-        'List agents in the caller\'s team. Scope is caller-team only: this tool CANNOT see cross-team agents and MUST NOT be used to verify whether a cross-team recipient exists.',
+        'List agents in the caller\'s team across all devices. Scope is caller-team only: this tool CANNOT see cross-team agents and MUST NOT be used to verify whether a cross-team recipient exists.',
         'DO NOT call list_agents as a pre-flight / pre-verify / pre-check step before send_message — neither for same-team nor for cross-team sends. For cross-team targets the pre-check will always falsely report "missing" because list_agents is caller-team scoped; for same-team targets the pre-check is pure waste.',
         'The canonical miss signal is the unknown_recipient error returned by send_message itself. The correct pattern is "try send, then handle unknown_recipient" — never "list_agents first, then send".'
       ].join(' '),

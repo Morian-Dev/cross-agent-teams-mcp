@@ -81,6 +81,23 @@ describe('broadcast_to_role', () => {
     expect(new Set(rows.map(row => row.event_id)).size).toBe(1)
   })
 
+  it('role fan-out spans devices in the caller team', async () => {
+    const { svc, db, cleanup } = setup()
+    cleanups.push(cleanup)
+    insertAgent(db, { agent_id: 'S', device: 'jt', team: 'default', role: 'lead' })
+    insertAgent(db, { agent_id: 'W1', device: 'jt', team: 'default', role: 'worker' })
+    insertAgent(db, { agent_id: 'W2', device: 'gx', team: 'default', role: 'worker' })
+    insertAgent(db, { agent_id: 'W3', device: 'gx', team: 'other', role: 'worker' })
+    const r = await svc.broadcast({
+      from: 'S',
+      to_role: 'worker',
+      body: 'task',
+      auto_poke: false,
+    })
+    if ('error' in r) throw new Error(r.error)
+    expect([...r.recipients].sort()).toEqual(['W1', 'W2'])
+  })
+
   it('marks role fan-out rows no-reply', async () => {
     const { svc, db, cleanup } = setup()
     cleanups.push(cleanup)

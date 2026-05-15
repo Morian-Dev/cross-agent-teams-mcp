@@ -8,7 +8,7 @@ import { AgentsRepo } from '../src/storage/agents-repo.js'
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'atm-agents-identity-tn-'))
 
-describe('AgentsRepo identity is (team, name)', () => {
+describe('AgentsRepo identity is (device, team, name)', () => {
   const dirs: string[] = []
   afterEach(() => { dirs.forEach(d => rmSync(d, { recursive: true, force: true })); dirs.length = 0 })
 
@@ -19,23 +19,37 @@ describe('AgentsRepo identity is (team, name)', () => {
     return { db, repo: new AgentsRepo(db) }
   }
 
-  it('findByIdentity takes {team, name} only and returns the row when it exists', () => {
+  it('findByIdentity takes {device, team, name} and returns the row when it exists', () => {
     const { db, repo } = fresh()
     const r = repo.register({ name: 'alice', role: 'backend', team: 'default', model: 'opus' })
     expect('agent_id' in r).toBe(true)
     const id = (r as { agent_id: string }).agent_id
-    const found = repo.findByIdentity({ team: 'default', name: 'alice' })
+    const found = repo.findByIdentity({ device: 'local', team: 'default', name: 'alice' })
     expect(found?.agent_id).toBe(id)
     void db
   })
 
-  it('register returns same agent_id when (team, name) matches, regardless of role', () => {
+  it('register returns same agent_id when (device, team, name) matches, regardless of role', () => {
     const { repo } = fresh()
     const r1 = repo.register({ name: 'alice', role: 'backend', team: 'default', model: 'opus' })
     const id1 = (r1 as { agent_id: string }).agent_id
     const r2 = repo.register({ name: 'alice', role: 'frontend', team: 'default', model: 'sonnet' })
     const id2 = (r2 as { agent_id: string }).agent_id
     expect(id2).toBe(id1)
+  })
+
+  it('register allows the same team and name on different devices', () => {
+    const { db, repo } = fresh()
+    const r1 = repo.register({ device: 'jt', name: 'alice', role: 'backend', team: 'default', model: 'opus' })
+    const r2 = repo.register({ device: 'gx', name: 'alice', role: 'backend', team: 'default', model: 'opus' })
+    const id1 = (r1 as { agent_id: string }).agent_id
+    const id2 = (r2 as { agent_id: string }).agent_id
+    expect(id2).not.toBe(id1)
+    const rows = db.prepare(`SELECT device, team, name FROM agents WHERE team='default' AND name='alice' ORDER BY device`).all()
+    expect(rows).toEqual([
+      { device: 'gx', team: 'default', name: 'alice' },
+      { device: 'jt', team: 'default', name: 'alice' },
+    ])
   })
 
   it('role change updates existing row in place (single row, new role, same agent_id)', () => {

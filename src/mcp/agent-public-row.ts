@@ -10,6 +10,7 @@ export interface PublicAgentListRow {
   agent_id: string
   agent_type: AgentListRow['agent_type']
   agent_type_name: AgentListRow['agent_type_name']
+  device: string
   team: string
   role: string
   name: string
@@ -36,6 +37,7 @@ export function toPublicAgentRow(row: AgentListRow): PublicAgentListRow {
     agent_id: row.agent_id,
     agent_type: row.agent_type,
     agent_type_name: row.agent_type_name,
+    device: row.device,
     team: row.team,
     role: row.role,
     name: row.name,

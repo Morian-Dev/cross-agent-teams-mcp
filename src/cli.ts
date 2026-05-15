@@ -1,11 +1,14 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { startServer } from './daemon/server.js'
 import { wireShutdown } from './daemon/shutdown.js'
 import { acquirePidFile } from './daemon/pid.js'
 import { selectPort } from './daemon/port.js'
+import { resolveLocalDeviceLabel } from './daemon/local-device.js'
+import { isLoopbackHost } from './daemon/network-origin.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
@@ -18,18 +21,60 @@ function defaultHome(): string {
   return process.env.CROSS_AGENT_TEAMS_MCP_HOME ?? join(homedir(), '.cross-agent-teams-mcp')
 }
 
+export interface DaemonCliArgs {
+  pidPath: string
+  dbPath: string
+  token?: string
+  requestedPort: number
+  host: string
+  localDevice: string
+}
+
+export function parseDaemonCliArgs(
+  argv: readonly string[] = process.argv,
+  env: NodeJS.ProcessEnv = process.env
+): DaemonCliArgs {
+  const originalArgv = process.argv
+  try {
+    process.argv = [...argv]
+    const home = env.CROSS_AGENT_TEAMS_MCP_HOME ?? defaultHome()
+    const tokenExplicit = parseArg('--token')
+    const token = tokenExplicit ?? env.CROSS_AGENT_TEAMS_MCP_TOKEN
+    const host = parseArg('--host', '127.0.0.1') ?? '127.0.0.1'
+    const localDevice = resolveLocalDeviceLabel(parseArg('--device'))
+    const requestedPort = Number(parseArg('--port', '9100'))
+    return {
+      pidPath: parseArg('--pid-file', join(home, 'daemon.pid'))!,
+      dbPath: parseArg('--db', join(home, 'data.db'))!,
+      token,
+      requestedPort,
+      host,
+      localDevice,
+    }
+  } finally {
+    process.argv = originalArgv
+  }
+}
+
 async function runDaemon(): Promise<void> {
-  const home = defaultHome()
-  const pidPath = parseArg('--pid-file', join(home, 'daemon.pid'))!
-  const dbPath = parseArg('--db', join(home, 'data.db'))!
-  const token = parseArg('--token')
-  const requested = Number(parseArg('--port', '9100'))
+  const args = parseDaemonCliArgs()
+  if (!isLoopbackHost(args.host) && (!args.token || args.token.trim().length === 0)) {
+    console.error('token_required_for_non_loopback_bind')
+    process.exit(1)
+  }
+  const requested = args.requestedPort
   const port = requested === 0 ? 0 : await selectPort([requested, requested + 1, requested + 2])
-  const r = acquirePidFile(pidPath, port || requested)
+  const r = acquirePidFile(args.pidPath, port || requested)
   if (!r.ok) { console.error('daemon already running pid=' + r.pid); process.exit(1) }
-  const started = await startServer({ dbPath, token, port })
-  wireShutdown(started.app, pidPath)
-  console.log(`listening on ${started.host}:${started.port}`)
+  const started = await startServer({
+    dbPath: args.dbPath,
+    token: args.token,
+    port,
+    host: args.host,
+    localDevice: args.localDevice,
+  })
+  wireShutdown(started.app, args.pidPath)
+  console.log(`listening on ${started.host}:${started.port} device=${args.localDevice}`)
 }
 
 function resolveDaemonPort(explicit: string | undefined): number | undefined {
@@ -131,6 +176,11 @@ async function main(): Promise<void> {
   process.exit(2)
 }
 
-main().catch((e) => { console.error(e?.message ?? e); process.exit(1) })
+function isEntry(): boolean {
+  if (process.argv[1] === undefined) return false
+  return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1])
+}
 
-export {}
+if (isEntry()) {
+  main().catch((e) => { console.error(e?.message ?? e); process.exit(1) })
+}

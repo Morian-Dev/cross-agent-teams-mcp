@@ -9,6 +9,7 @@ export interface InsertAgentArgs {
   agent_id: string
   model?: string
   agent_type?: AgentType
+  device?: string
   role?: string
   name?: string
   team?: string
@@ -23,6 +24,7 @@ export interface InsertAgentArgs {
 export function insertAgent(db: Database.Database, args: InsertAgentArgs): string {
   const now = new Date().toISOString()
   const team = args.team ?? 'default'
+  const device = args.device ?? 'local'
   const role = args.role ?? 'default'
   const name = args.name ?? args.agent_id
   const model = args.model ?? 'test-model'
@@ -33,11 +35,11 @@ export function insertAgent(db: Database.Database, args: InsertAgentArgs): strin
   db.prepare(
     `INSERT INTO agents (
        agent_id, agent_type, team, role, name, model, registered_at, last_seen_at,
-       tmux_pane_id, delivery_kind, delivery_payload
+       device, tmux_pane_id, delivery_kind, delivery_payload
      )
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(agent_id) DO UPDATE SET
-       agent_type=excluded.agent_type, team=excluded.team, role=excluded.role, name=excluded.name, model=excluded.model,
+       agent_type=excluded.agent_type, device=excluded.device, team=excluded.team, role=excluded.role, name=excluded.name, model=excluded.model,
        last_seen_at=excluded.last_seen_at, tmux_pane_id=excluded.tmux_pane_id,
        delivery_kind=excluded.delivery_kind, delivery_payload=excluded.delivery_payload`
   ).run(
@@ -49,6 +51,7 @@ export function insertAgent(db: Database.Database, args: InsertAgentArgs): strin
     model,
     registered_at,
     last_seen_at,
+    device,
     tmux_pane_id,
     delivery.delivery_kind,
     delivery.delivery_payload,

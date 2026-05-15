@@ -31,4 +31,28 @@ describe('proxy registration sequence (self-binding)', () => {
     await seq.close()
     await app.close()
   }, 20000)
+
+  it('succeeds on loopback when the daemon has a custom --device and the proxy passes no device', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const { app, port, host } = await startServer({
+      dbPath: join(dir, 'data.db'),
+      port: 0,
+      localDevice: 'customlabel'
+    })
+    const url = `http://${host}:${port}/mcp`
+
+    // No `device` field in config → daemon-client omits the field →
+    // daemon's loopback auto-fill resolves device to `customlabel`.
+    const seq = await runRegistrationSequence({
+      daemonUrl: url,
+      channel_session_id: 'csid-xyz',
+      backoffInitialMs: 10,
+      backoffMaxMs: 50
+    })
+    expect(seq.order).toEqual(['register_agent', 'subscribe_channel_wake'])
+    expect(seq.lastSubscribeResult).toEqual({ ok: true })
+
+    await seq.close()
+    await app.close()
+  }, 20000)
 })

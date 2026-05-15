@@ -18,13 +18,16 @@ describe('agents schema', () => {
     const cols = db.pragma('table_info(agents)') as Array<{ name: string; type: string; notnull: number; pk: number }>
     const names = cols.map(c => c.name).sort()
     expect(names).toEqual([
-      'agent_id','agent_type','agent_type_name','channel_session_id','claude_ui_pid','delivery_kind','delivery_payload','last_processed_event_id','last_seen_at','model','name','registered_at','role','runtime_bound_at','runtime_tty','runtime_ui_pid','runtime_verification_mode','team','tmux_pane_id'
+      'agent_id','agent_type','agent_type_name','channel_session_id','claude_ui_pid','delivery_kind','delivery_payload','device','last_processed_event_id','last_seen_at','model','name','registered_at','remote_addr','role','runtime_bound_at','runtime_tty','runtime_ui_pid','runtime_verification_mode','team','tmux_pane_id'
     ])
     const pk = cols.find(c => c.name === 'agent_id')
     expect(pk?.pk).toBe(1)
     const nameCol = cols.find(c => c.name === 'name')
     expect(nameCol?.type).toBe('TEXT')
     expect(nameCol?.notnull).toBe(1)
+    const deviceCol = cols.find(c => c.name === 'device')
+    expect(deviceCol?.type).toBe('TEXT')
+    expect(deviceCol?.notnull).toBe(1)
     const pane = cols.find(c => c.name === 'tmux_pane_id')
     expect(pane?.type).toBe('TEXT')
     expect(pane?.notnull).toBe(0)
@@ -54,9 +57,9 @@ describe('agents schema', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db'))
     applySchema(db)
-    db.prepare(`INSERT INTO agents (agent_id, team, role, name, registered_at, last_seen_at)
-      VALUES (?, ?, ?, ?, ?, ?)`)
-      .run('a1', 'default', 'impl', 'alice', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
+    db.prepare(`INSERT INTO agents (agent_id, device, team, role, name, registered_at, last_seen_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run('a1', 'local', 'default', 'impl', 'alice', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
     const row = db.prepare(`SELECT delivery_kind, delivery_payload FROM agents WHERE agent_id = ?`).get('a1') as { delivery_kind: string; delivery_payload: string | null }
     expect(row.delivery_kind).toBe('none')
     expect(row.delivery_payload).toBeNull()
@@ -72,15 +75,15 @@ describe('agents schema', () => {
     expect(channel).toBeDefined()
     expect(channel?.type).toBe('TEXT')
     expect(channel?.notnull).toBe(0)
-    db.prepare(`INSERT INTO agents (agent_id, team, role, name, registered_at, last_seen_at)
-      VALUES (?, ?, ?, ?, ?, ?)`)
-      .run('a2', 'default', 'impl', 'bob', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
+    db.prepare(`INSERT INTO agents (agent_id, device, team, role, name, registered_at, last_seen_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run('a2', 'local', 'default', 'impl', 'bob', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
     const row = db.prepare(`SELECT channel_session_id FROM agents WHERE agent_id = ?`).get('a2') as { channel_session_id: string | null }
     expect(row.channel_session_id).toBeNull()
     db.close()
   })
 
-  it('creates UNIQUE agents_identity_idx covering (team, name)', () => {
+  it('creates UNIQUE agents_identity_idx covering (device, team, name)', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db'))
     applySchema(db)
@@ -90,7 +93,7 @@ describe('agents schema', () => {
     expect(target?.unique).toBe(1)
     const info = db.pragma(`index_info(agents_identity_idx)`) as Array<{ seqno: number; name: string }>
     const ordered = info.sort((a, b) => a.seqno - b.seqno).map(i => i.name)
-    expect(ordered).toEqual(['team', 'name'])
+    expect(ordered).toEqual(['device', 'team', 'name'])
     db.close()
   })
 })

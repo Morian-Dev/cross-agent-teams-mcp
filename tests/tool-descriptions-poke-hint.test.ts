@@ -155,12 +155,12 @@ describe('tool descriptions: auto-poke and delivery status', () => {
     expect(d).toMatch(/automatic or explicit runtime binding succeeds/i)
   })
 
-  it('register_agent description states identity reuse on (team, name, role)', async () => {
+  it('register_agent description states identity reuse on (device, team, name)', async () => {
     const tools = await listTools()
     const tool = tools.find(t => t.name === 'register_agent')
     const d = tool!.description!
     expect(d).toMatch(/reuse|reuses/i)
-    expect(d).toMatch(/team.*name.*role|\(team, name, role\)/i)
+    expect(d).toMatch(/device.*team.*name|\(device, team, name\)/i)
     expect(d).toMatch(/tmux_pane_id/)
   })
 

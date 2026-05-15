@@ -33,7 +33,7 @@ describe('register_agent cross-session takeover', () => {
     cleanups.length = 0
   })
 
-  it('second session re-claims (team, name): 200 + same agent_id, prior session removed from daemon sessions Map', async () => {
+  it('second session re-claims (device, team, name): 200 + same agent_id, prior session removed from daemon sessions Map', async () => {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
 
@@ -47,7 +47,7 @@ describe('register_agent cross-session takeover', () => {
     const sidA = a.t.sessionId
     expect(typeof sidA).toBe('string')
 
-    // Session B re-claims same (team, name)
+    // Session B re-claims same (device, team, name)
     const b = await connectClient(host, port)
     const r2 = await parseTool(await b.c.callTool({
       name: 'register_agent',
@@ -104,7 +104,7 @@ describe('register_agent cross-session takeover', () => {
       // Reset captured lines so we only assert on the second register attempt.
       lines.length = 0
 
-      // Session B re-registers same (team, name) — should be a clean reuse,
+      // Session B re-registers same (device, team, name) — should be a clean reuse,
       // not a takeover, because A's connection_id was released on close.
       const b = await connectClient(host, port)
       await b.c.callTool({
@@ -125,7 +125,7 @@ describe('register_agent cross-session takeover', () => {
     }
   }, 15000)
 
-  it('emits a debug-level takeover log identifying old/new sids and (team, name)', async () => {
+  it('emits a debug-level takeover log identifying old/new sids and (device, team, name)', async () => {
     const dir = tmp(); cleanups.push(dir)
     const lines: string[] = []
     const origDebug = console.debug
@@ -153,6 +153,7 @@ describe('register_agent cross-session takeover', () => {
       expect(takeoverLine, `expected takeover log; lines=${JSON.stringify(lines)}`).toBeDefined()
       expect(takeoverLine!).toContain(`old=${sidA}`)
       expect(takeoverLine!).toContain(`new=${sidB}`)
+      expect(takeoverLine!).toMatch(/device=[^\s]+/)
       expect(takeoverLine!).toContain('team=default')
       expect(takeoverLine!).toContain('name=alice')
 

@@ -11,6 +11,7 @@ import type { AgentType } from '../lib/agent-type.js'
 export interface RegisterInput {
   agent_type?: AgentType
   agent_type_name?: string
+  device?: string
   model?: string
   name: string
   role?: string
@@ -19,12 +20,14 @@ export interface RegisterInput {
   delivery?: DeliverySpec
   claude_ui_pid?: number
   runtime_ui_pid?: number
+  remote_addr?: string | null
 }
 
 export interface AgentRow {
   agent_id: string
   agent_type: AgentType | null
   agent_type_name: string | null
+  device: string
   team: string
   role: string
   name: string
@@ -45,6 +48,7 @@ type DbAgentRow = {
   agent_id: string
   agent_type: AgentType | null
   agent_type_name: string | null
+  device: string
   team: string
   role: string
   name: string
@@ -59,6 +63,7 @@ function toAgentRow(row: DbAgentRow): AgentRow {
     agent_id: row.agent_id,
     agent_type: row.agent_type,
     agent_type_name: row.agent_type_name,
+    device: row.device,
     team: row.team,
     role: row.role,
     name: row.name,
@@ -79,10 +84,10 @@ export class AgentsRepo {
     this.list = this.list.bind(this)
   }
 
-  findByIdentity(args: { team: string; name: string }): { agent_id: string } | undefined {
+  findByIdentity(args: { device: string; team: string; name: string }): { agent_id: string } | undefined {
     return this.db.prepare(
-      `SELECT agent_id FROM agents WHERE team=? AND name=?`
-    ).get(args.team, args.name) as { agent_id: string } | undefined
+      `SELECT agent_id FROM agents WHERE device=? AND team=? AND name=?`
+    ).get(args.device, args.team, args.name) as { agent_id: string } | undefined
   }
 
   register(input: RegisterInput): {
@@ -90,6 +95,7 @@ export class AgentsRepo {
     team: string
   } {
     const team = input.team ?? 'default'
+    const device = input.device ?? 'local'
     const role = input.role ?? 'default'
     const name = input.name
     const now = new Date().toISOString()
@@ -102,6 +108,7 @@ export class AgentsRepo {
         newId,
         input,
         team,
+        device,
         role,
         name,
         now,
@@ -116,6 +123,7 @@ export class AgentsRepo {
           : undefined
       if (rebindCsid !== undefined) {
         this.reactiveRebindHosts({
+          proxy_device: device,
           team,
           claude_ui_pid: input.claude_ui_pid!,
           new_csid: rebindCsid,
@@ -123,7 +131,9 @@ export class AgentsRepo {
       }
     })
     tx()
-    const row = this.db.prepare(`SELECT agent_id FROM agents WHERE team=? AND name=?`).get(team, name) as { agent_id: string }
+    const row = this.db.prepare(
+      `SELECT agent_id FROM agents WHERE device=? AND team=? AND name=?`
+    ).get(device, team, name) as { agent_id: string }
     return { agent_id: row.agent_id, team }
   }
 
@@ -131,13 +141,14 @@ export class AgentsRepo {
     newId: string
     input: RegisterInput
     team: string
+    device: string
     role: string
     name: string
     now: string
     serialized: ReturnType<typeof serializeDelivery>
     preserveExistingDelivery: number
   }): void {
-    const { newId, input, team, role, name, now, serialized, preserveExistingDelivery } = args
+    const { newId, input, team, device, role, name, now, serialized, preserveExistingDelivery } = args
     // Fresh INSERT initialises last_processed_event_id to MAX(event_id) so
     // newly registered agents do not see historical mail. The MAX read happens
     // inside the same SQLite transaction as the INSERT (writeAgentRow is always
@@ -146,13 +157,13 @@ export class AgentsRepo {
     // last_processed_event_id.
     this.db.prepare(
       `INSERT INTO agents (
-         agent_id, agent_type, agent_type_name, team, role, name, model, registered_at, last_seen_at,
-         tmux_pane_id, claude_ui_pid, runtime_ui_pid, delivery_kind, delivery_payload,
+         agent_id, agent_type, agent_type_name, device, team, role, name, model, registered_at, last_seen_at,
+         tmux_pane_id, claude_ui_pid, runtime_ui_pid, delivery_kind, delivery_payload, remote_addr,
          last_processed_event_id
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                COALESCE((SELECT MAX(event_id) FROM events), 0))
-       ON CONFLICT (team, name) DO UPDATE SET
+       ON CONFLICT (device, team, name) DO UPDATE SET
          agent_type = excluded.agent_type,
          agent_type_name = excluded.agent_type_name,
          role = excluded.role,
@@ -161,6 +172,7 @@ export class AgentsRepo {
          tmux_pane_id = COALESCE(excluded.tmux_pane_id, tmux_pane_id),
          claude_ui_pid = COALESCE(excluded.claude_ui_pid, claude_ui_pid),
          runtime_ui_pid = COALESCE(excluded.runtime_ui_pid, runtime_ui_pid),
+         remote_addr = excluded.remote_addr,
          delivery_kind = CASE
            WHEN ? THEN delivery_kind
            ELSE excluded.delivery_kind
@@ -173,6 +185,7 @@ export class AgentsRepo {
       newId,
       input.agent_type ?? null,
       input.agent_type_name ?? null,
+      device,
       team,
       role,
       name,
@@ -184,12 +197,14 @@ export class AgentsRepo {
       input.runtime_ui_pid ?? null,
       serialized.delivery_kind,
       serialized.delivery_payload,
+      input.remote_addr ?? null,
       preserveExistingDelivery,
       preserveExistingDelivery,
     )
   }
 
   private reactiveRebindHosts(args: {
+    proxy_device: string
     team: string
     claude_ui_pid: number
     new_csid: string
@@ -199,6 +214,7 @@ export class AgentsRepo {
        SET delivery_kind = 'claude-channel',
            delivery_payload = json_object('channel_session_id', ?)
        WHERE role != '__channel_proxy__'
+         AND device = ?
          AND runtime_ui_pid IS NOT NULL
          AND runtime_ui_pid = ?
          AND team = ?
@@ -207,7 +223,7 @@ export class AgentsRepo {
            OR (delivery_kind = 'claude-channel'
                AND json_extract(delivery_payload,'$.channel_session_id') != ?)
          )`
-    ).run(args.new_csid, args.claude_ui_pid, args.team, args.new_csid)
+    ).run(args.new_csid, args.proxy_device, args.claude_ui_pid, args.team, args.new_csid)
   }
 
   setDelivery(agent_id: string, spec: DeliverySpec): void {
@@ -263,6 +279,7 @@ export class AgentsRepo {
          agent_id,
          agent_type,
          agent_type_name,
+         device,
          team,
          role,
          name,
@@ -329,6 +346,7 @@ export class AgentsRepo {
          agent_id,
          agent_type,
          agent_type_name,
+         device,
          team,
          role,
          name,

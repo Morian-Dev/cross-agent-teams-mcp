@@ -24,6 +24,17 @@ function deliveryOf(db: ReturnType<typeof openDb>, name: string, team = 'default
   return db.prepare(`SELECT delivery_kind, delivery_payload FROM agents WHERE team=? AND name=?`).get(team, name) as DeliveryRow
 }
 
+function deliveryOfDevice(
+  db: ReturnType<typeof openDb>,
+  device: string,
+  name: string,
+  team = 'default'
+): DeliveryRow {
+  return db.prepare(
+    `SELECT delivery_kind, delivery_payload FROM agents WHERE device=? AND team=? AND name=?`
+  ).get(device, team, name) as DeliveryRow
+}
+
 describe('AgentsRepo reactive rebind on __channel_proxy__ register', () => {
   const cleanups: string[] = []
   afterEach(() => { cleanups.forEach(d => rmSync(d, { recursive: true, force: true })); cleanups.length = 0 })
@@ -89,6 +100,42 @@ describe('AgentsRepo reactive rebind on __channel_proxy__ register', () => {
     })
     const row = deliveryOf(db, 'alice')
     expect(JSON.parse(row.delivery_payload as string)).toEqual({ channel_session_id: 'csid-new' })
+    db.close()
+  })
+
+  it('does not rebind hosts on another device with the same runtime_ui_pid', () => {
+    const { dir, db, repo } = freshRepo(); cleanups.push(dir)
+    repo.register({
+      agent_type: 'claude-code',
+      device: 'jt',
+      model: 'opus',
+      role: 'worker',
+      name: 'alice',
+      team: 'default',
+      runtime_ui_pid: 25424,
+    })
+    repo.register({
+      agent_type: 'claude-code',
+      device: 'gx',
+      model: 'opus',
+      role: 'worker',
+      name: 'bob',
+      team: 'default',
+      runtime_ui_pid: 25424,
+    })
+    repo.register({
+      agent_type: 'custom',
+      device: 'jt',
+      model: 'proxy',
+      role: '__channel_proxy__',
+      name: 'channel-proxy-27245',
+      team: 'default',
+      claude_ui_pid: 25424,
+      delivery: { kind: 'claude-channel', channel_session_id: 'csid-new' },
+    })
+
+    expect(deliveryOfDevice(db, 'jt', 'alice').delivery_kind).toBe('claude-channel')
+    expect(deliveryOfDevice(db, 'gx', 'bob').delivery_kind).toBe('none')
     db.close()
   })
 

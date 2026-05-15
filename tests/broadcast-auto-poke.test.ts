@@ -137,6 +137,20 @@ describe('broadcast auto_poke default-on integration', () => {
     expect(e.to_team).toBe('default')
   })
 
+  it('broadcast spans devices in caller team and excludes channel proxies', async () => {
+    const { svc, db, cleanup } = setupService()
+    cleanups.push(cleanup)
+    insertAgent(db, { agent_id: 'A', device: 'jt', team: 'default', role: 'lead', name: 'A' })
+    insertAgent(db, { agent_id: 'B', device: 'jt', team: 'default', role: 'worker', name: 'B' })
+    insertAgent(db, { agent_id: 'C', device: 'gx', team: 'default', role: 'worker', name: 'C' })
+    insertAgent(db, { agent_id: 'P', device: 'gx', team: 'default', role: '__channel_proxy__', name: 'P' })
+    insertAgent(db, { agent_id: 'D', device: 'gx', team: 'other', role: 'worker', name: 'D' })
+
+    const resp = await svc.broadcast({ from: 'A', body: 'hi', auto_poke: false })
+    if ('error' in resp) throw new Error(resp.error)
+    expect([...resp.recipients].sort()).toEqual(['B', 'C'])
+  })
+
   it('broadcast rows are marked no-reply', async () => {
     const { svc, db, cleanup } = setupService()
     cleanups.push(cleanup)

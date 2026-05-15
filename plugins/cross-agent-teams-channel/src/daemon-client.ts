@@ -4,6 +4,8 @@ import { findClaudeUiPid } from './find-claude-pid.js'
 
 export interface RegistrationConfig {
   daemonUrl: string
+  token?: string
+  device?: string
   channel_session_id: string
   backoffInitialMs?: number
   backoffMaxMs?: number
@@ -41,7 +43,12 @@ export async function runRegistrationSequence(
   config: RegistrationConfig
 ): Promise<RegistrationSequenceResult> {
   const order: string[] = []
-  const transport = new StreamableHTTPClientTransport(new URL(config.daemonUrl))
+  const requestInit = config.token
+    ? { headers: { Authorization: `Bearer ${config.token}` } }
+    : undefined
+  const transport = new StreamableHTTPClientTransport(new URL(config.daemonUrl), {
+    requestInit,
+  })
   const client = new Client({ name: 'cross-agent-teams-proxy', version: '0.1.0' })
 
   if (config.notificationHandler) {
@@ -55,22 +62,28 @@ export async function runRegistrationSequence(
   await client.connect(transport)
 
   // 1. register_agent as proxy — identity keyed on pid, stable across reconnects
-  // so the (team, name) ON CONFLICT upsert reuses the same row instead of spamming new rows
+  // so the (device, team, name) ON CONFLICT upsert reuses the same row instead of spamming new rows.
+  // Only send `device` when the caller explicitly set one; otherwise let the daemon auto-fill
+  // its local label (loopback) or reject (remote, which requires explicit device).
+  const registerArgs: Record<string, unknown> = {
+    agent_type: 'custom',
+    agent_type_name: 'cross-agent-teams-channel',
+    model: 'proxy',
+    role: '__channel_proxy__',
+    name: `channel-proxy-${process.pid}`,
+    team: 'default',
+    claude_ui_pid: findClaudeUiPid(),
+    delivery: {
+      kind: 'claude-channel',
+      channel_session_id: config.channel_session_id,
+    },
+  }
+  if (config.device !== undefined) {
+    registerArgs.device = config.device
+  }
   const registerResp = await client.callTool({
     name: 'register_agent',
-    arguments: {
-      agent_type: 'custom',
-      agent_type_name: 'cross-agent-teams-channel',
-      model: 'proxy',
-      role: '__channel_proxy__',
-      name: `channel-proxy-${process.pid}`,
-      team: 'default',
-      claude_ui_pid: findClaudeUiPid(),
-      delivery: {
-        kind: 'claude-channel',
-        channel_session_id: config.channel_session_id,
-      },
-    }
+    arguments: registerArgs,
   })
   order.push('register_agent')
   const regResult = await parseToolResult(registerResp)

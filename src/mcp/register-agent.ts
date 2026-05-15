@@ -6,6 +6,7 @@ import {
 import type { AgentType } from '../lib/agent-type.js'
 import { deriveDefaultTeam } from '../lib/default-team.js'
 import { AgentsRepo } from '../storage/agents-repo.js'
+import type { SessionOriginInfo } from '../daemon/network-origin.js'
 
 export { deriveDefaultTeam } from '../lib/default-team.js'
 
@@ -14,6 +15,7 @@ export interface RegisterInput {
   agent_type?: AgentType
   agent_type_name?: string
   model?: string
+  device?: string
   name: string
   role?: string
   team?: string
@@ -29,14 +31,67 @@ export type RegisterResult =
   | { error: 'agent_id_collision' }
   | { error: 'invalid_delivery'; reason: DeliveryValidationReason }
   | { error: 'claude_ui_pid_requires_channel_proxy' }
+  | { error: 'device_spoofing_from_loopback' }
+  | { error: 'device_required_from_remote' }
+  | { error: 'device_spoofing_local_label_from_remote' }
+  | { error: 'invalid_device_label' }
+  | { error: 'invalid_name_label' }
 
-function identityKey(team: string, name: string): string {
-  return `${team}\u0000${name}`
+function identityKey(device: string, team: string, name: string): string {
+  return `${device}\u0000${team}\u0000${name}`
+}
+
+export function validateNameLabel(name: string): { ok: string } | { error: 'invalid_name_label' } {
+  if (name.includes(':')) {
+    return { error: 'invalid_name_label' }
+  }
+  return { ok: name }
+}
+
+export function resolveEffectiveDevice(args: {
+  requestedDevice?: string
+  originInfo?: SessionOriginInfo
+  localDevice: string
+}):
+  | { ok: string; remote_addr: string | null }
+  | { error: 'device_spoofing_from_loopback' | 'device_required_from_remote' | 'device_spoofing_local_label_from_remote' | 'invalid_device_label' } {
+  const origin = args.originInfo?.origin ?? 'local'
+  const remote_addr = args.originInfo?.remote_addr ?? null
+  const requestedDevice = args.requestedDevice?.trim()
+
+  if (origin === 'local') {
+    if (requestedDevice && requestedDevice !== args.localDevice) {
+      return { error: 'device_spoofing_from_loopback' }
+    }
+    return { ok: args.localDevice, remote_addr: null }
+  }
+
+  if (!requestedDevice) {
+    return { error: 'device_required_from_remote' }
+  }
+  if (requestedDevice.includes(':') || requestedDevice.length > 64) {
+    return { error: 'invalid_device_label' }
+  }
+  // Normalize the remote-supplied label using the same rules the daemon and
+  // channel-cli apply to locally-derived labels (lowercase, non-[a-z0-9_-]
+  // replaced with '-'). Without this, the same physical host registers under
+  // different labels depending on which path issued the register_agent call
+  // (e.g. `MyMac.local` via direct register vs `mymac-local` via channel-cli).
+  // requestedDevice is already trimmed and non-empty above, and `replace` (not
+  // `remove`) maps every char to at least one output char, so the normalized
+  // value is also non-empty.
+  const normalizedDevice = requestedDevice
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '-')
+  if (normalizedDevice === args.localDevice) {
+    return { error: 'device_spoofing_local_label_from_remote' }
+  }
+  return { ok: normalizedDevice, remote_addr }
 }
 
 export interface RegisterAgentDeps {
   /**
-   * Cross-session takeover hook. When `register_agent` re-claims a `(team, name)`
+   * Cross-session takeover hook. When `register_agent` re-claims a `(device, team, name)`
    * binding from a NEW MCP session id, the service invokes this with the OLD
    * connection_id so the transport layer can force-close the prior session.
    * Returns true when the old session id was found and a close was issued.
@@ -46,6 +101,8 @@ export interface RegisterAgentDeps {
    * Debug log sink. When omitted, takeover events go through `console.debug`.
    */
   log?: (line: string) => void
+  localDevice?: string
+  getSessionOrigin?: (connectionId: string) => SessionOriginInfo | undefined
 }
 
 export class RegisterAgentService {
@@ -69,12 +126,20 @@ export class RegisterAgentService {
     if (input.claude_ui_pid !== undefined && role !== '__channel_proxy__') {
       return { error: 'claude_ui_pid_requires_channel_proxy' }
     }
+    const validName = validateNameLabel(input.name)
+    if ('error' in validName) return validName
+    const resolvedDevice = resolveEffectiveDevice({
+      requestedDevice: input.device,
+      originInfo: this.deps.getSessionOrigin?.(input.connection_id),
+      localDevice: this.deps.localDevice ?? 'local',
+    })
+    if ('error' in resolvedDevice) return resolvedDevice
 
     const team = deriveDefaultTeam({
       team: input.team,
       project_dir: input.project_dir,
     })
-    const key = identityKey(team, input.name)
+    const key = identityKey(resolvedDevice.ok, team, input.name)
     const bound = this.connections.get(key)
     if (bound && bound !== input.connection_id) {
       // Cross-session takeover: release the old binding and force-close the
@@ -86,13 +151,14 @@ export class RegisterAgentService {
       }
       const log = this.deps.log ?? ((line: string) => { console.debug(line) })
       try {
-        log(`register_agent takeover: old=${bound} new=${input.connection_id} team=${team} name=${input.name} closed=${closed}`)
+        log(`register_agent takeover: old=${bound} new=${input.connection_id} device=${resolvedDevice.ok} team=${team} name=${input.name} closed=${closed}`)
       } catch { /* best-effort */ }
     }
     this.connections.set(key, input.connection_id)
     return this.repo.register({
       agent_type: input.agent_type,
       agent_type_name: input.agent_type_name,
+      device: resolvedDevice.ok,
       model: input.model,
       name: input.name,
       role,
@@ -101,6 +167,7 @@ export class RegisterAgentService {
       delivery: validated?.ok,
       claude_ui_pid: input.claude_ui_pid,
       runtime_ui_pid: input.runtime_ui_pid,
+      remote_addr: resolvedDevice.remote_addr,
     })
   }
 

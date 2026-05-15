@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
+import { hostname } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createProxyServer, relayChannelWake } from './proxy.js'
@@ -8,6 +9,11 @@ import { runReconnectingProxy } from './daemon-client.js'
 
 interface CliArgs {
   daemonUrl: string
+  token?: string
+  // Omitted when the user did not pass --device. The daemon then auto-fills
+  // its own local label on loopback registrations, which keeps zero-config
+  // proxies working against a daemon whose operator chose a custom --device.
+  device?: string
 }
 
 export class CliArgError extends Error {
@@ -33,6 +39,8 @@ export function buildStartupHint(csid: string): { content: string; meta: { sourc
 
 export function parseCliArgs(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): CliArgs {
   let daemonUrl: string | undefined
+  let token: string | undefined
+  let explicitDevice: string | undefined
 
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]
@@ -40,6 +48,10 @@ export function parseCliArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
     switch (flag) {
       case '--daemon-url':
         daemonUrl = next; i++; break
+      case '--token':
+        token = next; i++; break
+      case '--device':
+        explicitDevice = next; i++; break
       default:
         // Ignore unknown flags for forward-compat (including legacy
         // --agent-team / --agent-name, which are no longer honored).
@@ -50,13 +62,21 @@ export function parseCliArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
   if (!daemonUrl || daemonUrl.length === 0) {
     daemonUrl = env.CROSS_AGENT_TEAMS_MCP_DAEMON_URL
   }
+  if (!token || token.length === 0) {
+    token = env.CROSS_AGENT_TEAMS_MCP_TOKEN
+  }
 
   if (!daemonUrl || daemonUrl.length === 0) {
     throw new CliArgError(
       'missing --daemon-url (or CROSS_AGENT_TEAMS_MCP_DAEMON_URL env var)'
     )
   }
-  return { daemonUrl }
+  // Only validate / pass the device when the user explicitly provided one.
+  // Leaving it undefined lets daemon-client omit the field on register_agent
+  // so the daemon's loopback auto-fill resolves it to the daemon's localDevice.
+  const device =
+    explicitDevice !== undefined ? resolveDeviceLabel(explicitDevice) : undefined
+  return { daemonUrl, token, device }
 }
 
 export async function main(
@@ -81,6 +101,8 @@ export async function main(
   let registrationEverSucceeded = false
   const controller = runReconnectingProxy({
     daemonUrl: args.daemonUrl,
+    token: args.token,
+    device: args.device,
     channel_session_id: csid,
     notificationHandler: (params) => {
       relayChannelWake(hostServer, params as { content: string; meta: Record<string, string> })
@@ -132,4 +154,20 @@ function isEntry(): boolean {
 // eslint-disable-next-line @typescript-eslint/no-misused-promises
 if (isEntry()) {
   void main()
+}
+
+function resolveDeviceLabel(explicit?: string): string {
+  const raw = explicit ?? hostname()
+  if (raw.includes(':')) {
+    throw new CliArgError('invalid_device_label')
+  }
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '-')
+  const label = normalized.length > 0 ? normalized : 'local'
+  if (label.length > 64) {
+    throw new CliArgError('invalid_device_label')
+  }
+  return label
 }

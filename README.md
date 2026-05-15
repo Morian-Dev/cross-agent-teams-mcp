@@ -59,9 +59,38 @@ The daemon listens on `127.0.0.1:9100`.  MCP endpoint is `http://127.0.0.1:9100/
 Common flags:
 
 - `--port <n>` (default `9100`)
+- `--host <addr>` (default `127.0.0.1`)
+- `--device <label>` (default: hostname-derived label)
 - `--token <t>` (Bearer auth)
 - `--db <path>` (default `~/.cross-agent-teams-mcp/data.db`)
 - `--pid-file <path>` (default `~/.cross-agent-teams-mcp/daemon.pid`)
+
+### Cross-host (LAN) collaboration
+
+To let agents on another trusted machine use this daemon, bind the daemon to a LAN address and set a shared bearer token:
+
+```bash
+npx -y cross-agent-teams-mcp@latest daemon \
+  --host 192.168.1.10 \
+  --port 9100 \
+  --token "$XATS_TOKEN" \
+  --device jt-laptop
+```
+
+Then configure the peer host's Claude Code channel proxy to connect back to that daemon:
+
+```bash
+npx -y -p cross-agent-teams-mcp@latest cross-agent-teams-channel \
+  --daemon-url http://192.168.1.10:9100/mcp \
+  --token "$XATS_TOKEN" \
+  --device gx-laptop
+```
+
+Agents are namespaced by `(device, team, name)`.  A bare `send_message({to_agent_name:"creator"})` resolves on the caller's own device; use `creator:gx-laptop` to address a same-team agent on another device.  `list_agents` shows the `device` field so you can compose those addresses.
+
+Security notes: non-loopback `--host` requires `--token`, and the token is shared by everyone who can use that daemon.  Treat LAN exposure as trusted-team only; there is no per-agent authorization, device whitelist, or TLS in this mode.
+
+Upgrade note: the first startup after this version auto-migrates the storage schema from `(team, name)` identity to `(device, team, name)` identity and backfills existing rows with the daemon's local `--device` label.  Rolling back after registering multiple devices with the same `(team, name)` can violate the old uniqueness assumption.
 
 ## 2. Configure your agent's MCP client
 
@@ -111,7 +140,7 @@ Then start Claude Code with the experimental channel loader so it subscribes to 
 claude --dangerously-load-development-channels server:cross-agent-teams-channel
 ```
 
-The `server:<name>` suffix MUST equal the MCP server key in `.mcp.json` (`cross-agent-teams-channel` above).  If your daemon uses `--token <t>`, add `"headers": { "Authorization": "Bearer <t>" }` to the HTTP entry.
+The `server:<name>` suffix MUST equal the MCP server key in `.mcp.json` (`cross-agent-teams-channel` above).  If your daemon uses `--token <t>`, add `"headers": { "Authorization": "Bearer <t>" }` to the HTTP entry, and add `--token <t>` to the channel proxy args.
 
 #### Codex CLI
 

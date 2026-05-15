@@ -7,10 +7,12 @@ const LIVE_WINDOW_MS = 5 * 60 * 1000
 export interface AutoBindInput {
   callerAgentId: string
   ui_pid: number
+  device?: string
 }
 
 export interface LookupInput {
   ui_pid: number
+  device: string
 }
 
 export interface AutoBindSuccess {
@@ -58,7 +60,14 @@ export class AutoBindChannelService {
   }
 
   run(input: AutoBindInput): AutoBindResult {
-    const found = this.findLiveProxyCsid({ ui_pid: input.ui_pid })
+    const callerDevice = input.device !== undefined
+      ? { device: input.device }
+      : this.db.prepare(
+          `SELECT device FROM agents WHERE agent_id = ?`
+        ).get(input.callerAgentId) as { device: string } | undefined
+    const device = callerDevice?.device
+    if (!device) return { ok: false, reason: 'no_proxy_row' }
+    const found = this.findLiveProxyCsid({ ui_pid: input.ui_pid, device })
     if (!found.ok) return found
     const csid = found.channel_session_id
     if (!this.fanout.has(csid)) return { ok: false, reason: 'sink_not_live' }
@@ -80,12 +89,13 @@ export class AutoBindChannelService {
         `SELECT delivery_payload
          FROM agents
          WHERE role = ?
+           AND device = ?
            AND claude_ui_pid = ?
            AND last_seen_at > ?
          ORDER BY last_seen_at DESC
          LIMIT 1`
       )
-      .get(CHANNEL_PROXY_ROLE, input.ui_pid, cutoff) as ProxyRow | undefined
+      .get(CHANNEL_PROXY_ROLE, input.device, input.ui_pid, cutoff) as ProxyRow | undefined
     if (!row) return { ok: false, reason: 'no_proxy_row' }
     const csid = extractCsid(row.delivery_payload)
     if (!csid) return { ok: false, reason: 'proxy_payload_corrupt' }
