@@ -253,22 +253,83 @@ agent 第一次连上 xats 时不会自动注册, 要等你开口.  直接说:
 
 ### 跨设备 (device) 通信
 
-当 agent 连的是**另一台机器**上的 daemon (见上方"跨主机 (LAN) 协作"), 它注册时必须自报一个 `device` 标签:
+跨设备通信需要三处配套修改 — **daemon bind**, **远端 `.mcp.json`**, **agent 注册**.  纯单机用户可以完全跳过本节, loopback 场景下 device 这个轴是透明的.
+
+#### 1. Daemon 侧: bind 到非 loopback
+
+停掉旧 daemon, 用非 loopback `--host` 和 `--token` 重启.  `--host` 非 loopback 时 `--token` **必填**, 否则 daemon 拒绝启动 (`token_required_for_non_loopback_bind`).  `--device` 可选, 不传则从 daemon 主机的 hostname 派生 (小写 + 非 `[a-z0-9_-]` 替换为 `-`):
+
+```bash
+npx -y cross-agent-teams-mcp@latest daemon \
+  --host 0.0.0.0 \
+  --port 9100 \
+  --token "$XATS_TOKEN" \
+  --device jt-laptop
+```
+
+想限定监听接口, 把 `0.0.0.0` 换成具体 LAN IP (例如 `192.168.1.10`) 或者 tailscale CGNAT IP (`100.x.x.x`) 都行.  macOS 第一次绑非 loopback 端口会弹"允许 node 接受网络连接", 选允许.
+
+#### 2. 远端机器侧: 改 `.mcp.json`
+
+每台远端同事的 Claude Code 相对默认 loopback 配置都要改两处 — HTTP 入口加 `Authorization: Bearer …` 头, channel proxy 加 `--token` 和 `--device`:
+
+```json
+{
+  "mcpServers": {
+    "cross-agent-teams": {
+      "type": "http",
+      "url": "http://192.168.1.10:9100/mcp",
+      "headers": {
+        "Authorization": "Bearer xats"
+      }
+    },
+    "cross-agent-teams-channel": {
+      "command": "npx",
+      "args": [
+        "-y", "-p", "cross-agent-teams-mcp@latest",
+        "cross-agent-teams-channel",
+        "--daemon-url", "http://192.168.1.10:9100/mcp",
+        "--token", "xats",
+        "--device", "gx-laptop"
+      ]
+    }
+  }
+}
+```
+
+如果远端用的是 Codex CLI, 改 `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.cross-agent-teams-mcp]
+url = "http://192.168.1.10:9100/mcp"
+bearer_token_env_var = "XATS_TOKEN"
+```
+
+启动前 `export XATS_TOKEN=xats`.
+
+**daemon 所在机器** (jt 这台) 的 `.mcp.json` 同样需要加 `headers.Authorization` — daemon 一旦设了 `--token`, 所有 `/mcp` 请求 (包括 loopback) 都要带 token, 没例外.
+
+#### 3. Agent 注册
+
+重启远端的 Claude Code (或 codex), channel proxy 用新的 `--device` 启动后, startup hint 会把 device 直接嵌进引导文案, 用户回复时一并带上即可:
 
 > Register me to xats as alice, device gx-laptop.
 
-这个 device 会进入 agent 的身份键 — `(device, team, name)` — 所以两台机器都可以有 `team=default` 下的 `creator`, 不会撞名.  注册带上 device 之后, 跨设备寻址用 `name:device` 后缀:
+如果远端 `register_agent` 不传 device, daemon 回 `device_required_from_remote` 直接拒.  device 进入身份键 `(device, team, name)`, 所以两台机器都可以有 `team=default` 下的 `creator`, 不会撞名.
+
+#### 4. 跨设备寻址
+
+注册完成后, 用 `name:device` 后缀寻址同 team 不同 device 的 agent:
 
 > Send creator on jt-laptop a message: build is green.
 
-这条会被解析成 `creator:jt-laptop`, 准确路由到 `(device=jt-laptop, team=…, name=creator)` 这一行.  裸名字 `creator` 默认解析到 caller 自己 device 上的同名 agent.
+这条解析成 `creator:jt-laptop`, 路由到 `(device=jt-laptop, team=…, name=creator)` 这一行.  裸名字 `creator` 始终解析到 caller 自己 device.
 
 要点:
 
-- daemon 自己的 device 标签用 `--device` 设置 (不传则从 daemon 主机的 hostname 派生, 小写 + 非 `[a-z0-9_-]` 替换为 `-`).  loopback 进来的 agent 注册时不必传 device, daemon 会自动填上这个值.
-- 远端 (非 loopback) 连接的 agent 注册时**必须**带 device, 否则 daemon 拒绝并返回 `device_required_from_remote`; channel proxy 的 startup hint 会把已配置的 device 值直接写进引导文案, agent 照抄即可.
-- `list_agents` 每条返回都有 `device` 字段, 方便你看清 team 里都有哪些设备贡献了哪些 agent, 进而拼对的 `name:device`.
-- channel proxy 自己的 `--device` 标志 (`cross-agent-teams-channel --device gx-laptop ...`) 决定 proxy 行的 device 字段, 同一台机器上的 agent 一般用同一个 device 名.
+- `list_agents` 每条返回都有 `device` 字段, 用它看清 team 里哪些 device 在贡献 agent, 再拼对的 `name:device`.
+- `get_inbox` 每条消息都带 `from_name` 和 `from_device`.  回复时如果 `from_device !== 自己 device`, 用 `from_name:from_device`; 同 device 用裸名即可.  `send_message_by_id({to_agent_id: from_agent_id, ...})` 是 device 无关的安全兜底.
+- 安全提醒: bearer token 在能连到 daemon 的所有人之间共享, 把 LAN 暴露当作可信团队边界处理 — 本模式没有 per-agent 鉴权, 没有 device 白名单, 也没有 TLS.
 
 ### 跟其它 agent 对话
 

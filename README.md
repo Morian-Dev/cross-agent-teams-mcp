@@ -253,22 +253,83 @@ If you don't give a team, the agent uses your current working directory's basena
 
 ### Cross-device communication
 
-When an agent connects to a daemon running on **another machine** (the Cross-host (LAN) section above), it must self-declare a `device` label at registration:
+Cross-device messaging needs three coordinated changes — **daemon bind**, **peer `.mcp.json`**, and **agent registration**. Pure single-host users can ignore this entire section; the new `device` axis is invisible in loopback-only setups.
+
+#### 1. Daemon-side: bind beyond loopback
+
+Stop the daemon and restart with a non-loopback `--host` and a `--token`. The token is mandatory whenever `--host` is non-loopback — the daemon refuses to start otherwise (`token_required_for_non_loopback_bind`). Optionally set `--device` for the daemon-host label (defaults to `os.hostname()` lowercased with `[^a-z0-9_-]` replaced by `-`):
+
+```bash
+npx -y cross-agent-teams-mcp@latest daemon \
+  --host 0.0.0.0 \
+  --port 9100 \
+  --token "$XATS_TOKEN" \
+  --device jt-laptop
+```
+
+Use a specific LAN IP (e.g. `192.168.1.10`) or a tailscale CGNAT IP (`100.x.x.x`) instead of `0.0.0.0` if you want to restrict the listener. macOS will prompt to allow node to accept network connections on the first non-loopback bind.
+
+#### 2. Peer-side: `.mcp.json` updates
+
+Each remote teammate's Claude Code needs **two** changes from the default loopback config: the HTTP entry must carry an `Authorization: Bearer …` header, and the channel proxy must pass `--token` AND `--device`:
+
+```json
+{
+  "mcpServers": {
+    "cross-agent-teams": {
+      "type": "http",
+      "url": "http://192.168.1.10:9100/mcp",
+      "headers": {
+        "Authorization": "Bearer xats"
+      }
+    },
+    "cross-agent-teams-channel": {
+      "command": "npx",
+      "args": [
+        "-y", "-p", "cross-agent-teams-mcp@latest",
+        "cross-agent-teams-channel",
+        "--daemon-url", "http://192.168.1.10:9100/mcp",
+        "--token", "xats",
+        "--device", "gx-laptop"
+      ]
+    }
+  }
+}
+```
+
+For Codex CLI, edit `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.cross-agent-teams-mcp]
+url = "http://192.168.1.10:9100/mcp"
+bearer_token_env_var = "XATS_TOKEN"
+```
+
+…and `export XATS_TOKEN=xats` before launching codex.
+
+The **daemon-side** `.mcp.json` (the machine running the daemon) needs the same `headers.Authorization` because the daemon now requires the token on every request, even loopback ones — once `--token` is set, no path through `/mcp` is unauthenticated.
+
+#### 3. Agent registration
+
+Restart Claude Code (or codex) on the peer machine so the channel proxy spawns with the new `--device` argument. The proxy's startup hint then embeds the device verbatim, and the user's reply contains it too:
 
 > Register me to xats as alice, device gx-laptop.
 
-That label becomes part of the agent's identity — `(device, team, name)` — so two physical machines can both have a `creator` in `team=default` without collision.  Once registered with a device, addressing across devices uses a `name:device` suffix:
+If a remote `register_agent` call omits `device`, the daemon rejects with `device_required_from_remote` — the agent must self-declare. `device` becomes part of the identity tuple `(device, team, name)`, so two physical machines can each host a `creator` in `team=default` without collision.
+
+#### 4. Addressing across devices
+
+Once everyone is registered, use the `name:device` suffix to address a same-team agent on another device:
 
 > Send creator on jt-laptop a message: build is green.
 
-This resolves to `creator:jt-laptop` and routes to that exact `(device=jt-laptop, team=…, name=creator)` row.  Bare `creator` resolves on the caller's own device.
+This resolves to `creator:jt-laptop` and routes to that exact `(device=jt-laptop, team=…, name=creator)` row. A bare `creator` always resolves on the caller's own device.
 
 Notes:
 
-- The daemon's local label is set with its own `--device` flag (defaults to the daemon host's hostname normalized to lowercase + `-`).  Local-loopback agents auto-fill that label and don't need to specify `device` on register.
-- A remote register call that omits `device` is rejected with `device_required_from_remote`; the channel proxy's startup hint surfaces the configured device value so the agent prompt includes it verbatim.
-- `list_agents` returns a `device` field on every entry so you can see which devices contribute to your team and pick the right `name:device` target.
-- The channel proxy's `--device` flag (`cross-agent-teams-channel --device gx-laptop ...`) sets the device label for the proxy row and is propagated into the registration hint surfaced to the agent.  Match it to whatever label you want your machine's agents to appear under.
+- `list_agents` returns a `device` field on every entry — use it to see which devices contribute to your team and to compose the right `name:device` target.
+- `get_inbox` returns `from_name` and `from_device` on every message. When replying via `send_message`, if `from_device !== <your device>` use `from_name:from_device`; otherwise the bare name is correct. `send_message_by_id({to_agent_id: from_agent_id, ...})` is the device-agnostic safe fallback.
+- Security caveat: the bearer token is shared across everyone who can reach the daemon. Treat LAN exposure as a trusted-team boundary; there is no per-agent auth, device whitelist, or TLS in this mode.
 
 ### Talk to other agents
 
