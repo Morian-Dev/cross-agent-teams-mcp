@@ -34,9 +34,9 @@ describe('agents.channel_session_id column', () => {
     applySchema(db)
     const now = new Date().toISOString()
     db.prepare(
-      `INSERT INTO agents (agent_id, team, role, name, model, registered_at, last_seen_at, tmux_pane_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run('a1', 'default', 'r', 'n1', 'm', now, now, null)
+      `INSERT INTO agents (agent_id, device, team, role, name, model, registered_at, last_seen_at, tmux_pane_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run('a1', 'local', 'default', 'r', 'n1', 'm', now, now, null)
     const row = db.prepare(`SELECT channel_session_id FROM agents WHERE agent_id='a1'`).get() as
       { channel_session_id: string | null }
     expect(row.channel_session_id).toBeNull()

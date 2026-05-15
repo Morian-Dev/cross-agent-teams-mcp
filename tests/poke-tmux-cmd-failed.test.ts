@@ -34,11 +34,11 @@ describe('poke tmux_cmd_failed with stage info', () => {
     const db = openDb(join(dir, 'data.db'))
     applySchema(db)
 
-    db.prepare(`INSERT INTO agents (agent_id, team, role, name, model, registered_at, last_seen_at, tmux_pane_id) VALUES (?,?,?,?,?,?,?,?)`).run(
-      'caller-a', 'default', 'dev', 'caller-a', 'opus-4-7', new Date().toISOString(), new Date().toISOString(), null
+    db.prepare(`INSERT INTO agents (agent_id, device, team, role, name, model, registered_at, last_seen_at, tmux_pane_id) VALUES (?,?,?,?,?,?,?,?,?)`).run(
+      'caller-a', 'local', 'default', 'dev', 'caller-a', 'opus-4-7', new Date().toISOString(), new Date().toISOString(), null
     )
-    db.prepare(`INSERT INTO agents (agent_id, team, role, name, model, registered_at, last_seen_at, tmux_pane_id) VALUES (?,?,?,?,?,?,?,?)`).run(
-      'target-b', 'default', 'dev', 'target-b', 'gpt-5', new Date().toISOString(), new Date().toISOString(), '%42'
+    db.prepare(`INSERT INTO agents (agent_id, device, team, role, name, model, registered_at, last_seen_at, tmux_pane_id) VALUES (?,?,?,?,?,?,?,?,?)`).run(
+      'target-b', 'local', 'default', 'dev', 'target-b', 'gpt-5', new Date().toISOString(), new Date().toISOString(), '%42'
     )
 
     const result = await poke(

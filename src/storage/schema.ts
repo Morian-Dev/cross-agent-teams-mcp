@@ -16,6 +16,7 @@ const DDL = [
     agent_id TEXT PRIMARY KEY,
     agent_type TEXT,
     agent_type_name TEXT,
+    device TEXT NOT NULL,
     team TEXT NOT NULL,
     role TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -31,9 +32,10 @@ const DDL = [
     runtime_bound_at TEXT,
     channel_session_id TEXT,
     delivery_kind TEXT NOT NULL DEFAULT 'none',
-    delivery_payload TEXT
+    delivery_payload TEXT,
+    remote_addr TEXT
   )`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS agents_identity_idx ON agents(team, name)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS agents_identity_idx ON agents(device, team, name)`,
   `CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY,
     event_id INTEGER NOT NULL REFERENCES events(event_id),
@@ -183,6 +185,65 @@ function migrateAgentsDeliveryColumns(db: Database.Database): void {
   tx()
 }
 
+function hasDeviceIdentityIndex(db: Database.Database): boolean {
+  const indexes = db.pragma('index_list(agents)') as Array<{ name: string }>
+  const found = indexes.find((index) => index.name === 'agents_identity_idx')
+  if (!found) return false
+  const info = db.pragma('index_info(agents_identity_idx)') as Array<{ seqno: number; name: string }>
+  const ordered = info
+    .sort((a, b) => a.seqno - b.seqno)
+    .map((row) => row.name)
+  return ordered.length === 3
+    && ordered[0] === 'device'
+    && ordered[1] === 'team'
+    && ordered[2] === 'name'
+}
+
+function migrateAgentsDeviceColumns(
+  db: Database.Database,
+  localDevice: string
+): void {
+  const tableExists = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='agents'`)
+    .get() as { name: string } | undefined
+  if (!tableExists) return
+  const cols = db.pragma('table_info(agents)') as Array<{ name: string }>
+  const existing = new Set(cols.map(c => c.name))
+  const needDevice = !existing.has('device')
+  const needRemoteAddr = !existing.has('remote_addr')
+  const needIdentityIndex = !hasDeviceIdentityIndex(db)
+  if (!needDevice && !needRemoteAddr && !needIdentityIndex) return
+
+  const tx = db.transaction(() => {
+    if (needDevice) {
+      const badRow = db.prepare(
+        `SELECT team, name
+         FROM agents
+         WHERE instr(name, ':') > 0
+         ORDER BY rowid ASC
+         LIMIT 1`
+      ).get() as { team: string; name: string } | undefined
+      if (badRow) {
+        throw new Error(
+          `device migration blocked: offending row (${badRow.team}, ${badRow.name}) contains ':'`
+        )
+      }
+      db.exec(`ALTER TABLE agents ADD COLUMN device TEXT`)
+    }
+    if (needRemoteAddr) {
+      db.exec(`ALTER TABLE agents ADD COLUMN remote_addr TEXT`)
+    }
+    if (needDevice) {
+      db.prepare(`UPDATE agents SET device = ? WHERE device IS NULL`).run(localDevice)
+    }
+    if (needIdentityIndex) {
+      db.exec(`DROP INDEX IF EXISTS agents_identity_idx`)
+      db.exec(`CREATE UNIQUE INDEX agents_identity_idx ON agents(device, team, name)`)
+    }
+  })
+  tx()
+}
+
 function migrateMessagesNeedReplyColumn(db: Database.Database): void {
   const tableExists = db
     .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='messages'`)
@@ -208,9 +269,13 @@ function migrateAgentsCursorWatermark(db: Database.Database): void {
   )
 }
 
-export function applySchema(db: Database.Database): void {
+export function applySchema(
+  db: Database.Database,
+  opts: { localDevice?: string } = {}
+): void {
   for (const sql of DDL) db.exec(sql)
   migrateAgentsDeliveryColumns(db)
+  migrateAgentsDeviceColumns(db, opts.localDevice ?? 'local')
   migrateMessagesNeedReplyColumn(db)
   migrateAgentsCursorWatermark(db)
 }

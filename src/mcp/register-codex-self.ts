@@ -12,6 +12,7 @@ import {
 export interface RegisterCodexSelfInput {
   connection_id: string
   name: string
+  device?: string
   model?: string
   role?: string
   team?: string
@@ -35,6 +36,11 @@ export type RegisterCodexSelfResult =
   | { error: 'agent_id_collision' }
   | { error: 'invalid_delivery'; reason: string }
   | { error: 'claude_ui_pid_requires_channel_proxy' }
+  | { error: 'device_spoofing_from_loopback' }
+  | { error: 'device_required_from_remote' }
+  | { error: 'device_spoofing_local_label_from_remote' }
+  | { error: 'invalid_device_label' }
+  | { error: 'invalid_name_label' }
   | { error: 'missing_auth_token'; detail: { ref: string } }
   | { error: 'unsupported_client'; detail: { expected: 'codex'; reason: 'codex_appserver_unreachable' | 'codex_protocol_unavailable'; ws_url: string; cause?: unknown } }
   | { error: 'codex_connect_failed'; detail?: unknown }
@@ -239,6 +245,7 @@ export class RegisterCodexSelfService {
         connection_id: input.connection_id,
         agent_type: 'codex',
         model: input.model ?? 'codex',
+        device: input.device,
         name: input.name,
         role: input.role,
         team: input.team,

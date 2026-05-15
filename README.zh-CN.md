@@ -59,9 +59,38 @@ daemon 默认监听 `127.0.0.1:9100`.  MCP endpoint: `http://127.0.0.1:9100/mcp`
 常用参数:
 
 - `--port <n>` (默认 `9100`)
+- `--host <addr>` (默认 `127.0.0.1`)
+- `--device <label>` (默认从 hostname 派生)
 - `--token <t>` (Bearer 鉴权)
 - `--db <path>` (默认 `~/.cross-agent-teams-mcp/data.db`)
 - `--pid-file <path>` (默认 `~/.cross-agent-teams-mcp/daemon.pid`)
+
+### 跨主机 (LAN) 协作
+
+要让可信局域网里另一台机器上的 agent 使用这个 daemon, 把 daemon 绑定到 LAN 地址并设置共享 bearer token:
+
+```bash
+npx -y cross-agent-teams-mcp@latest daemon \
+  --host 192.168.1.10 \
+  --port 9100 \
+  --token "$XATS_TOKEN" \
+  --device jt-laptop
+```
+
+然后在对端机器上让 Claude Code channel proxy 连回这个 daemon:
+
+```bash
+npx -y -p cross-agent-teams-mcp@latest cross-agent-teams-channel \
+  --daemon-url http://192.168.1.10:9100/mcp \
+  --token "$XATS_TOKEN" \
+  --device gx-laptop
+```
+
+agent 身份现在按 `(device, team, name)` 命名空间区分.  裸的 `send_message({to_agent_name:"creator"})` 会解析到调用者自己的 device; 要发给另一个 device 上同 team 的 agent, 用 `creator:gx-laptop`.  `list_agents` 会显示 `device` 字段, 方便拼出这个地址.
+
+安全说明: 非 loopback 的 `--host` 必须带 `--token`, 并且这个 token 会被所有能使用该 daemon 的人共享.  LAN 暴露只适合可信团队环境; 当前模式没有 per-agent 鉴权, device 白名单或 TLS.
+
+升级说明: 升级到这个版本后首次启动会自动迁移存储 schema, 把身份从 `(team, name)` 改为 `(device, team, name)`, 并用 daemon 本机的 `--device` 标签回填旧数据.  如果已经注册了多个 device 上相同 `(team, name)` 的 agent 再回滚, 可能违反旧版本的唯一性假设.
 
 ## 2. 在 agent 端配置 MCP client
 
@@ -111,7 +140,7 @@ npx mcpsmgr add jtianling/cross-agent-teams-mcp -a claude-code --port 9300
 claude --dangerously-load-development-channels server:cross-agent-teams-channel
 ```
 
-`server:<name>` 后缀 **必须** 等于 `.mcp.json` 里的 MCP server key (上例中是 `cross-agent-teams-channel`).  如果 daemon 启动带了 `--token <t>`, 在 HTTP 条目里加 `"headers": { "Authorization": "Bearer <t>" }`.
+`server:<name>` 后缀 **必须** 等于 `.mcp.json` 里的 MCP server key (上例中是 `cross-agent-teams-channel`).  如果 daemon 启动带了 `--token <t>`, 在 HTTP 条目里加 `"headers": { "Authorization": "Bearer <t>" }`, 并在 channel proxy args 里加 `--token <t>`.
 
 #### Codex CLI
 

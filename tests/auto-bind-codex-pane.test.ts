@@ -24,9 +24,9 @@ function seedCaller(
   name = 'caller'
 ): void {
   db.prepare(
-    `INSERT INTO agents (agent_id, team, role, name, registered_at, last_seen_at)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(agentId, team, 'impl', name, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
+    `INSERT INTO agents (agent_id, device, team, role, name, registered_at, last_seen_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(agentId, 'local', team, 'impl', name, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
 }
 
 describe('autoBindCodexPane', () => {

@@ -6,7 +6,10 @@ import { openDb } from '../src/storage/db.js'
 import { applySchema } from '../src/storage/schema.js'
 import { AgentsRepo } from '../src/storage/agents-repo.js'
 import { EventsOutbox } from '../src/storage/events-outbox.js'
-import { SendMessageService } from '../src/mcp/send-message.js'
+import {
+  SendMessageService,
+  parseToAgentName,
+} from '../src/mcp/send-message.js'
 import { insertAgent } from './helpers/insert-agent.js'
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'atm-sm-byname-'))
@@ -33,6 +36,56 @@ describe('send_message by name — same-team resolution', () => {
       { to_agent_id: string; body: string }
     expect(m.to_agent_id).toBe('uuid-B')
     expect(m.body).toBe('hi')
+  })
+
+  it('bare name resolves on caller device when duplicate names exist', async () => {
+    const { svc, db } = setup()
+    insertAgent(db, { agent_id: 'uuid-A', device: 'jt', team: 'default', role: 'backend', name: 'alice' })
+    insertAgent(db, { agent_id: 'uuid-B-jt', device: 'jt', team: 'default', role: 'frontend', name: 'bob' })
+    insertAgent(db, { agent_id: 'uuid-B-gx', device: 'gx', team: 'default', role: 'frontend', name: 'bob' })
+
+    const resp = await svc.send({
+      from: 'uuid-A',
+      to_agent_name: 'bob',
+      body: 'hi',
+      auto_poke: false,
+    })
+    if ('error' in resp) throw new Error(`expected success, got ${resp.error}`)
+    expect(resp.recipients).toEqual(['uuid-B-jt'])
+  })
+
+  it('name:device resolves the specified device', async () => {
+    const { svc, db } = setup()
+    insertAgent(db, { agent_id: 'uuid-A', device: 'jt', team: 'default', role: 'backend', name: 'alice' })
+    insertAgent(db, { agent_id: 'uuid-B-jt', device: 'jt', team: 'default', role: 'frontend', name: 'bob' })
+    insertAgent(db, { agent_id: 'uuid-B-gx', device: 'gx', team: 'default', role: 'frontend', name: 'bob' })
+
+    const resp = await svc.send({
+      from: 'uuid-A',
+      to_agent_name: 'bob:gx',
+      body: 'hi',
+      auto_poke: false,
+    })
+    if ('error' in resp) throw new Error(`expected success, got ${resp.error}`)
+    expect(resp.recipients).toEqual(['uuid-B-gx'])
+  })
+
+  it('invalid name:device empty halves return invalid_to_agent_name', async () => {
+    const { svc, db } = setup()
+    insertAgent(db, { agent_id: 'uuid-A', device: 'jt', team: 'default', role: 'backend', name: 'alice' })
+
+    expect(await svc.send({
+      from: 'uuid-A',
+      to_agent_name: ':gx',
+      body: 'hi',
+      auto_poke: false,
+    })).toEqual({ error: 'invalid_to_agent_name' })
+    expect(await svc.send({
+      from: 'uuid-A',
+      to_agent_name: 'bob:',
+      body: 'hi',
+      auto_poke: false,
+    })).toEqual({ error: 'invalid_to_agent_name' })
   })
 
   it('returns missing_recipient when neither to_agent_id nor to_agent_name given', async () => {
@@ -108,5 +161,24 @@ describe('send_message by name — same-team resolution', () => {
     expect(resp).toEqual({ error: 'ambiguous_recipient' })
     const count = db.prepare(`SELECT COUNT(*) AS c FROM messages`).get() as { c: number }
     expect(count.c).toBe(0)
+  })
+})
+
+describe('parseToAgentName', () => {
+  it('parses bare names on the caller device', () => {
+    expect(parseToAgentName('creator', 'jt')).toEqual({
+      ok: { name: 'creator', device: 'jt' },
+    })
+  })
+
+  it('splits name:device on the first colon', () => {
+    expect(parseToAgentName('creator:gx', 'jt')).toEqual({
+      ok: { name: 'creator', device: 'gx' },
+    })
+  })
+
+  it('rejects empty halves', () => {
+    expect(parseToAgentName(':gx', 'jt')).toEqual({ error: 'invalid_to_agent_name' })
+    expect(parseToAgentName('creator:', 'jt')).toEqual({ error: 'invalid_to_agent_name' })
   })
 })

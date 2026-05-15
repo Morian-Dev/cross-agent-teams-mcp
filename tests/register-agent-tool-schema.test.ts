@@ -35,6 +35,7 @@ describe('register_agent tool schema', () => {
       properties: expect.objectContaining({
         model: expect.anything(),
         name: expect.anything(),
+        device: expect.anything(),
         role: expect.anything(),
         team: expect.anything(),
         project_dir: expect.anything(),

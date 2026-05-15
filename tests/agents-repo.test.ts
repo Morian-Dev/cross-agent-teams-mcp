@@ -59,8 +59,8 @@ describe('agents repo', () => {
     const repo = new AgentsRepo(db)
     const fresh = repo.register({ model: 'm', role: 'r', name: 'fresh' })
     const stale = new Date(Date.now() - 10 * 60 * 1000).toISOString()
-    db.prepare(`INSERT INTO agents (agent_id, team, role, name, registered_at, last_seen_at) VALUES (?,?,?,?,?,?)`)
-      .run('stale', 'default', 'r', 'stale-name', stale, stale)
+    db.prepare(`INSERT INTO agents (agent_id, device, team, role, name, registered_at, last_seen_at) VALUES (?,?,?,?,?,?,?)`)
+      .run('stale', 'local', 'default', 'r', 'stale-name', stale, stale)
     const out = repo.list({ team: 'default' })
     const freshRow = out.find(a => a.agent_id === fresh.agent_id)!
     const staleRow = out.find(a => a.agent_id === 'stale')!
@@ -68,7 +68,7 @@ describe('agents repo', () => {
     expect(staleRow.online).toBe(false)
   })
 
-  it('role change reuses agent_id and updates role in place (identity is team+name only)', () => {
+  it('role change reuses agent_id and updates role in place (identity is device+team+name)', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const repo = new AgentsRepo(db)
@@ -98,9 +98,9 @@ describe('agents repo', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const repo = new AgentsRepo(db)
-    expect(repo.findByIdentity({ team: 'default', name: 'alice' })).toBeUndefined()
+    expect(repo.findByIdentity({ device: 'local', team: 'default', name: 'alice' })).toBeUndefined()
     const r = repo.register({ model: 'm', role: 'backend', name: 'alice' })
-    expect(repo.findByIdentity({ team: 'default', name: 'alice' })).toEqual({ agent_id: r.agent_id })
+    expect(repo.findByIdentity({ device: 'local', team: 'default', name: 'alice' })).toEqual({ agent_id: r.agent_id })
   })
 })
 

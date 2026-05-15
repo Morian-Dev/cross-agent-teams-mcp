@@ -234,11 +234,12 @@ describe('RegisterCodexSelfService', () => {
 
     db.prepare(
       `INSERT INTO agents (
-         agent_id, team, role, name, model, registered_at, last_seen_at,
+         agent_id, device, team, role, name, model, registered_at, last_seen_at,
          last_processed_event_id, tmux_pane_id, delivery_kind, delivery_payload
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       'agent-1',
+      'local',
       'default',
       'default',
       'lead',
@@ -259,8 +260,8 @@ describe('RegisterCodexSelfService', () => {
     })
 
     const row = db.prepare(
-      'SELECT tmux_pane_id, delivery_kind FROM agents WHERE team=? AND name=?'
-    ).get('default', 'lead') as {
+      'SELECT tmux_pane_id, delivery_kind FROM agents WHERE device=? AND team=? AND name=?'
+    ).get('local', 'default', 'lead') as {
       tmux_pane_id: string | null
       delivery_kind: string
     }

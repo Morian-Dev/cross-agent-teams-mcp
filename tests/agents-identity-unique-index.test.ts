@@ -10,7 +10,7 @@ const tmp = (): string => mkdtempSync(join(tmpdir(), 'atm-identity-idx-'))
 interface IndexListRow { name: string; unique: number }
 interface IndexInfoRow { seqno: number; cid: number; name: string }
 
-describe('agents_identity_idx UNIQUE on (team, name)', () => {
+describe('agents_identity_idx UNIQUE on (device, team, name)', () => {
   const dirs: string[] = []
   afterEach(() => { dirs.forEach(d => rmSync(d, { recursive: true, force: true })); dirs.length = 0 })
 
@@ -29,23 +29,23 @@ describe('agents_identity_idx UNIQUE on (team, name)', () => {
     expect(row!.unique).toBe(1)
   })
 
-  it('index covers exactly team and name in order', () => {
+  it('index covers exactly device, team, and name in order', () => {
     const db = freshDb()
     const info = db.prepare(`PRAGMA index_info('agents_identity_idx')`).all() as IndexInfoRow[]
     const names = info.sort((a, b) => a.seqno - b.seqno).map(r => r.name)
-    expect(names).toEqual(['team', 'name'])
+    expect(names).toEqual(['device', 'team', 'name'])
   })
 
-  it('inserting two rows with same (team, name) raises UNIQUE constraint failed', () => {
+  it('inserting two rows with same (device, team, name) raises UNIQUE constraint failed', () => {
     const db = freshDb()
     const now = new Date().toISOString()
     const insert = db.prepare(
-      `INSERT INTO agents (agent_id, team, role, name, model, registered_at, last_seen_at, tmux_pane_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO agents (agent_id, device, team, role, name, model, registered_at, last_seen_at, tmux_pane_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    insert.run('X', 'default', 'backend', 'alice', null, now, now, null)
+    insert.run('X', 'local', 'default', 'backend', 'alice', null, now, now, null)
     expect(() => {
-      insert.run('Y', 'default', 'frontend', 'alice', null, now, now, null)
+      insert.run('Y', 'local', 'default', 'frontend', 'alice', null, now, now, null)
     }).toThrow(/UNIQUE constraint failed/)
   })
 })

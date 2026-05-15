@@ -25,9 +25,9 @@ const tmp = (): string => mkdtempSync(join(tmpdir(), 'atm-poke-self-distinct-'))
 function seed(db: ReturnType<typeof openDb>, agent_id: string, team: string, name: string, pane: string | null): void {
   const now = new Date().toISOString()
   db.prepare(
-    `INSERT INTO agents (agent_id, team, role, name, model, registered_at, last_seen_at, tmux_pane_id)
-     VALUES (?,?,?,?,?,?,?,?)`
-  ).run(agent_id, team, 'dev', name, null, now, now, pane)
+    `INSERT INTO agents (agent_id, device, team, role, name, model, registered_at, last_seen_at, tmux_pane_id)
+     VALUES (?,?,?,?,?,?,?,?,?)`
+  ).run(agent_id, 'local', team, 'dev', name, null, now, now, pane)
 }
 
 describe('poke() distinct agents are never self-poke', () => {

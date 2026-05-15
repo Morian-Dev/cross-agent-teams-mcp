@@ -37,6 +37,7 @@ export type SendResult =
   | { error: 'unknown_recipient' }
   | { error: 'ambiguous_recipient' }
   | { error: 'missing_recipient' }
+  | { error: 'invalid_to_agent_name' }
 
 interface RecipientPokeRow {
   agent_id: string
@@ -50,6 +51,24 @@ interface RecipientLookupRow {
   tmux_pane_id: string | null
   delivery_kind: string
   delivery_payload: string | null
+}
+
+export function parseToAgentName(
+  raw: string,
+  callerDevice: string
+):
+  | { ok: { name: string; device: string } }
+  | { error: 'invalid_to_agent_name' } {
+  const colon = raw.indexOf(':')
+  if (colon < 0) {
+    return { ok: { name: raw, device: callerDevice } }
+  }
+  const name = raw.slice(0, colon)
+  const device = raw.slice(colon + 1)
+  if (name.length === 0 || device.length === 0) {
+    return { error: 'invalid_to_agent_name' }
+  }
+  return { ok: { name, device } }
 }
 
 export class SendMessageService {
@@ -74,7 +93,13 @@ export class SendMessageService {
     if (hasId) {
       resolvedId = input.to_agent_id!
     } else {
-      const hit = this.agents.findByIdentity({ team: toTeam, name: input.to_agent_name! })
+      const parsed = parseToAgentName(input.to_agent_name!, fromRow.device)
+      if ('error' in parsed) return parsed
+      const hit = this.agents.findByIdentity({
+        device: parsed.ok.device,
+        team: toTeam,
+        name: parsed.ok.name,
+      })
       if (!hit) return { error: 'unknown_recipient' }
       resolvedId = hit.agent_id
     }

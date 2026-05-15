@@ -169,4 +169,39 @@ describe('list_agents delivery public projection (W2)', () => {
     db.close()
     await server.close()
   })
+
+  it('list_agents includes device and does not expose origin or remote_addr', async () => {
+    const { db, server, client, transport, holder } = await setup()
+    const caller = await parseTool(await client.callTool({
+      name: 'register_agent',
+      arguments: { agent_type: 'custom', model: 'opus', role: 'backend', name: 'caller' },
+    }))
+    holder.current = caller.agent_id as string
+
+    const repo = new AgentsRepo(db)
+    const peer = repo.register({
+      device: 'gx',
+      model: 'sonnet',
+      role: 'backend',
+      name: 'remote-peer',
+      team: 'default',
+      remote_addr: '192.168.1.42',
+    })
+
+    const list = await parseTool(await client.callTool({
+      name: 'list_agents',
+      arguments: {},
+    }))
+    const peerRow = (list.agents as Array<Record<string, unknown>>).find(
+      row => row.agent_id === peer.agent_id,
+    )!
+    expect(peerRow.device).toBe('gx')
+    expect(Object.prototype.hasOwnProperty.call(peerRow, 'origin')).toBe(false)
+    expect(Object.prototype.hasOwnProperty.call(peerRow, 'remote_addr')).toBe(false)
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
 })

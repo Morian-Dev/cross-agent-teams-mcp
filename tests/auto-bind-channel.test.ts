@@ -85,6 +85,33 @@ describe('AutoBindChannelService', () => {
     db.close()
   })
 
+  it('does not match a proxy row on another device when PIDs collide', () => {
+    const { dir, db, repo, fanout, svc } = setup(); cleanups.push(dir)
+    repo.register({
+      agent_type: 'custom',
+      device: 'jt',
+      model: 'proxy',
+      role: CHANNEL_PROXY_ROLE,
+      name: 'proxy-jt',
+      team: 'default',
+      claude_ui_pid: 555,
+      delivery: { kind: 'claude-channel', channel_session_id: 'csid-jt' },
+    })
+    fanout.attach('csid-jt', () => { /* sink */ }, 'sess-jt')
+    const caller = repo.register({
+      agent_type: 'claude-code',
+      device: 'gx',
+      model: 'opus',
+      role: 'worker',
+      name: 'host',
+      team: 'default',
+      runtime_ui_pid: 555,
+    })
+    const res = svc.run({ callerAgentId: caller.agent_id, ui_pid: 555 })
+    expect(res).toEqual({ ok: false, reason: 'no_proxy_row' })
+    db.close()
+  })
+
   it('returns sink_not_live when proxy row exists but fanout has no sink', () => {
     const { dir, db, repo, svc } = setup(); cleanups.push(dir)
     repo.register({
