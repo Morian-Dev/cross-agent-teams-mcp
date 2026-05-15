@@ -65,32 +65,7 @@ Common flags:
 - `--db <path>` (default `~/.cross-agent-teams-mcp/data.db`)
 - `--pid-file <path>` (default `~/.cross-agent-teams-mcp/daemon.pid`)
 
-### Cross-host (LAN) collaboration
-
-To let agents on another trusted machine use this daemon, bind the daemon to a LAN address and set a shared bearer token:
-
-```bash
-npx -y cross-agent-teams-mcp@latest daemon \
-  --host 10.0.0.10 \
-  --port 9100 \
-  --token "$XATS_TOKEN" \
-  --device host-a
-```
-
-Then configure the peer host's Claude Code channel proxy to connect back to that daemon:
-
-```bash
-npx -y -p cross-agent-teams-mcp@latest cross-agent-teams-channel \
-  --daemon-url http://10.0.0.10:9100/mcp \
-  --token "$XATS_TOKEN" \
-  --device host-b
-```
-
-Agents are namespaced by `(device, team, name)`.  A bare `send_message({to_agent_name:"creator"})` resolves on the caller's own device; use `creator:host-b` to address a same-team agent on another device.  `list_agents` shows the `device` field so you can compose those addresses.
-
-Security notes: non-loopback `--host` requires `--token`, and the token is shared by everyone who can use that daemon.  Treat LAN exposure as trusted-team only; there is no per-agent authorization, device whitelist, or TLS in this mode.
-
-Upgrade note: the first startup after this version auto-migrates the storage schema from `(team, name)` identity to `(device, team, name)` identity and backfills existing rows with the daemon's local `--device` label.  Rolling back after registering multiple devices with the same `(team, name)` can violate the old uniqueness assumption.
+For multi-host / multi-device setups (LAN, tailscale, etc.), see [section 4](#4-cross-host--cross-device-collaboration) below.
 
 ## 2. Configure your agent's MCP client
 
@@ -251,13 +226,35 @@ Or with an explicit team:
 
 If you don't give a team, the agent uses your current working directory's basename — so you typically don't need to think about it.
 
-### Cross-device communication
+### Talk to other agents
 
-Cross-device messaging needs three coordinated changes — **daemon bind**, **peer `.mcp.json`**, and **agent registration**. Pure single-host users can ignore this entire section; the new `device` axis is invisible in loopback-only setups.
+Address by name, by team, or by role:
 
-#### 1. Daemon-side: bind beyond loopback
+> Send a message to bob: how is the migration going?
+>
+> Tell my team I'm starting the deploy.
+>
+> Send the frontend role a heads-up that the API will change.
+>
+> What's in my inbox?
 
-Stop the daemon and restart with a non-loopback `--host` and a `--token`. The token is mandatory whenever `--host` is non-loopback — the daemon refuses to start otherwise (`token_required_for_non_loopback_bind`). Optionally set `--device` for the daemon-host label (defaults to `os.hostname()` lowercased with `[^a-z0-9_-]` replaced by `-`):
+The agent picks the right tool (`send_message`, `broadcast`, `broadcast_to_role`, `get_inbox`).  Outgoing messages also wake the recipient automatically — you don't need a separate poke.
+
+### See who else is around
+
+> Who else is registered on xats?
+>
+> List agents on team backend.
+
+## 4. Cross-host / cross-device collaboration
+
+Most users only need the single-host setup above; the `device` axis is invisible in loopback-only setups and you can skip this entire section.  Read on only if you want agents on multiple physical machines (LAN, tailscale, etc.) to share one daemon.
+
+The setup needs three coordinated changes — **daemon bind**, **peer `.mcp.json`**, and **agent registration**.  Agents are namespaced by `(device, team, name)`: a bare `send_message({to_agent_name:"creator"})` resolves on the caller's own device, while `creator:host-b` addresses a same-team agent on another device.
+
+### 1. Daemon-side: bind beyond loopback
+
+Stop the daemon and restart with a non-loopback `--host` and a `--token`.  The token is mandatory whenever `--host` is non-loopback — the daemon refuses to start otherwise (`token_required_for_non_loopback_bind`).  Optionally set `--device` for the daemon-host label (defaults to `os.hostname()` lowercased with `[^a-z0-9_-]` replaced by `-`):
 
 ```bash
 npx -y cross-agent-teams-mcp@latest daemon \
@@ -267,9 +264,9 @@ npx -y cross-agent-teams-mcp@latest daemon \
   --device host-a
 ```
 
-Use a specific LAN IP (e.g. `10.0.0.10`) or a tailscale CGNAT IP (`100.x.x.x`) instead of `0.0.0.0` if you want to restrict the listener. macOS will prompt to allow node to accept network connections on the first non-loopback bind.
+Use a specific LAN IP (e.g. `10.0.0.10`) or a tailscale CGNAT IP (`100.x.x.x`) instead of `0.0.0.0` if you want to restrict the listener.  macOS will prompt to allow node to accept network connections on the first non-loopback bind.
 
-#### 2. Peer-side: `.mcp.json` updates
+### 2. Peer-side: `.mcp.json` updates
 
 Each remote teammate's Claude Code needs **two** changes from the default loopback config: the HTTP entry must carry an `Authorization: Bearer …` header, and the channel proxy must pass `--token` AND `--device`:
 
@@ -309,47 +306,28 @@ bearer_token_env_var = "XATS_TOKEN"
 
 The **daemon-side** `.mcp.json` (the machine running the daemon) needs the same `headers.Authorization` because the daemon now requires the token on every request, even loopback ones — once `--token` is set, no path through `/mcp` is unauthenticated.
 
-#### 3. Agent registration
+### 3. Agent registration
 
-Restart Claude Code (or codex) on the peer machine so the channel proxy spawns with the new `--device` argument. The proxy's startup hint then embeds the device verbatim, and the user's reply contains it too:
+Restart Claude Code (or codex) on the peer machine so the channel proxy spawns with the new `--device` argument.  The proxy's startup hint then embeds the device verbatim, and the user's reply contains it too:
 
 > Register me to xats as alice, device host-b.
 
-If a remote `register_agent` call omits `device`, the daemon rejects with `device_required_from_remote` — the agent must self-declare. `device` becomes part of the identity tuple `(device, team, name)`, so two physical machines can each host a `creator` in `team=default` without collision.
+If a remote `register_agent` call omits `device`, the daemon rejects with `device_required_from_remote` — the agent must self-declare.  `device` becomes part of the identity tuple `(device, team, name)`, so two physical machines can each host a `creator` in `team=default` without collision.
 
-#### 4. Addressing across devices
+### 4. Addressing across devices
 
 Once everyone is registered, use the `name:device` suffix to address a same-team agent on another device:
 
 > Send creator on host-a a message: build is green.
 
-This resolves to `creator:host-a` and routes to that exact `(device=host-a, team=…, name=creator)` row. A bare `creator` always resolves on the caller's own device.
+This resolves to `creator:host-a` and routes to that exact `(device=host-a, team=…, name=creator)` row.  A bare `creator` always resolves on the caller's own device.
 
 Notes:
 
 - `list_agents` returns a `device` field on every entry — use it to see which devices contribute to your team and to compose the right `name:device` target.
-- `get_inbox` returns `from_name` and `from_device` on every message. When replying via `send_message`, if `from_device !== <your device>` use `from_name:from_device`; otherwise the bare name is correct. `send_message_by_id({to_agent_id: from_agent_id, ...})` is the device-agnostic safe fallback.
-- Security caveat: the bearer token is shared across everyone who can reach the daemon. Treat LAN exposure as a trusted-team boundary; there is no per-agent auth, device whitelist, or TLS in this mode.
-
-### Talk to other agents
-
-Address by name, by team, or by role:
-
-> Send a message to bob: how is the migration going?
->
-> Tell my team I'm starting the deploy.
->
-> Send the frontend role a heads-up that the API will change.
->
-> What's in my inbox?
-
-The agent picks the right tool (`send_message`, `broadcast`, `broadcast_to_role`, `get_inbox`).  Outgoing messages also wake the recipient automatically — you don't need a separate poke.
-
-### See who else is around
-
-> Who else is registered on xats?
->
-> List agents on team backend.
+- `get_inbox` returns `from_name` and `from_device` on every message.  When replying via `send_message`, if `from_device !== <your device>` use `from_name:from_device`; otherwise the bare name is correct.  `send_message_by_id({to_agent_id: from_agent_id, ...})` is the device-agnostic safe fallback.
+- Security caveat: the bearer token is shared across everyone who can reach the daemon.  Treat LAN exposure as a trusted-team boundary; there is no per-agent auth, device whitelist, or TLS in this mode.
+- Upgrade note: the first startup after introducing the `device` axis auto-migrates the storage schema from `(team, name)` identity to `(device, team, name)` identity and backfills existing rows with the daemon's local `--device` label.  Rolling back after registering multiple devices with the same `(team, name)` can violate the old uniqueness assumption.
 
 ## More
 

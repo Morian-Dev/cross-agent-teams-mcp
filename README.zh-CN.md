@@ -65,32 +65,7 @@ daemon 默认监听 `127.0.0.1:9100`.  MCP endpoint: `http://127.0.0.1:9100/mcp`
 - `--db <path>` (默认 `~/.cross-agent-teams-mcp/data.db`)
 - `--pid-file <path>` (默认 `~/.cross-agent-teams-mcp/daemon.pid`)
 
-### 跨主机 (LAN) 协作
-
-要让可信局域网里另一台机器上的 agent 使用这个 daemon, 把 daemon 绑定到 LAN 地址并设置共享 bearer token:
-
-```bash
-npx -y cross-agent-teams-mcp@latest daemon \
-  --host 10.0.0.10 \
-  --port 9100 \
-  --token "$XATS_TOKEN" \
-  --device host-a
-```
-
-然后在对端机器上让 Claude Code channel proxy 连回这个 daemon:
-
-```bash
-npx -y -p cross-agent-teams-mcp@latest cross-agent-teams-channel \
-  --daemon-url http://10.0.0.10:9100/mcp \
-  --token "$XATS_TOKEN" \
-  --device host-b
-```
-
-agent 身份现在按 `(device, team, name)` 命名空间区分.  裸的 `send_message({to_agent_name:"creator"})` 会解析到调用者自己的 device; 要发给另一个 device 上同 team 的 agent, 用 `creator:host-b`.  `list_agents` 会显示 `device` 字段, 方便拼出这个地址.
-
-安全说明: 非 loopback 的 `--host` 必须带 `--token`, 并且这个 token 会被所有能使用该 daemon 的人共享.  LAN 暴露只适合可信团队环境; 当前模式没有 per-agent 鉴权, device 白名单或 TLS.
-
-升级说明: 升级到这个版本后首次启动会自动迁移存储 schema, 把身份从 `(team, name)` 改为 `(device, team, name)`, 并用 daemon 本机的 `--device` 标签回填旧数据.  如果已经注册了多个 device 上相同 `(team, name)` 的 agent 再回滚, 可能违反旧版本的唯一性假设.
+多主机 / 多设备 (LAN, tailscale 等) 场景请看下面的 [第 4 节](#4-跨主机--跨设备协作).
 
 ## 2. 在 agent 端配置 MCP client
 
@@ -251,11 +226,33 @@ agent 第一次连上 xats 时不会自动注册, 要等你开口.  直接说:
 
 不传 team 的话, agent 会用当前工作目录的 basename 作为默认 team — 一般情况下你不用操心.
 
-### 跨设备 (device) 通信
+### 跟其它 agent 对话
 
-跨设备通信需要三处配套修改 — **daemon bind**, **远端 `.mcp.json`**, **agent 注册**.  纯单机用户可以完全跳过本节, loopback 场景下 device 这个轴是透明的.
+按名字, 按 team, 按 role 都行:
 
-#### 1. Daemon 侧: bind 到非 loopback
+> Send a message to bob: how is the migration going?
+>
+> Tell my team I'm starting the deploy.
+>
+> Send the frontend role a heads-up that the API will change.
+>
+> What's in my inbox?
+
+agent 会自动挑对应工具 (`send_message`, `broadcast`, `broadcast_to_role`, `get_inbox`).  发消息的同时会自动唤醒收件人, 不用单独再 poke.
+
+### 看看还有谁在线
+
+> Who else is registered on xats?
+>
+> List agents on team backend.
+
+## 4. 跨主机 / 跨设备协作
+
+大部分用户只用单机就够了, loopback 场景下 `device` 这个轴是透明的, 本节可以完全跳过.  只有当你想让多台物理机器 (LAN, tailscale 等) 共享一个 daemon 时, 才需要往下看.
+
+跨设备需要三处配套修改 — **daemon bind**, **远端 `.mcp.json`**, **agent 注册**.  agent 身份按 `(device, team, name)` 命名空间区分: 裸的 `send_message({to_agent_name:"creator"})` 解析到调用者自己的 device, 用 `creator:host-b` 可以指到另一个 device 上同 team 的 agent.
+
+### 1. Daemon 侧: bind 到非 loopback
 
 停掉旧 daemon, 用非 loopback `--host` 和 `--token` 重启.  `--host` 非 loopback 时 `--token` **必填**, 否则 daemon 拒绝启动 (`token_required_for_non_loopback_bind`).  `--device` 可选, 不传则从 daemon 主机的 hostname 派生 (小写 + 非 `[a-z0-9_-]` 替换为 `-`):
 
@@ -269,7 +266,7 @@ npx -y cross-agent-teams-mcp@latest daemon \
 
 想限定监听接口, 把 `0.0.0.0` 换成具体 LAN IP (例如 `10.0.0.10`) 或者 tailscale CGNAT IP (`100.x.x.x`) 都行.  macOS 第一次绑非 loopback 端口会弹"允许 node 接受网络连接", 选允许.
 
-#### 2. 远端机器侧: 改 `.mcp.json`
+### 2. 远端机器侧: 改 `.mcp.json`
 
 每台远端同事的 Claude Code 相对默认 loopback 配置都要改两处 — HTTP 入口加 `Authorization: Bearer …` 头, channel proxy 加 `--token` 和 `--device`:
 
@@ -309,7 +306,7 @@ bearer_token_env_var = "XATS_TOKEN"
 
 **daemon 所在机器** (host-a 这台) 的 `.mcp.json` 同样需要加 `headers.Authorization` — daemon 一旦设了 `--token`, 所有 `/mcp` 请求 (包括 loopback) 都要带 token, 没例外.
 
-#### 3. Agent 注册
+### 3. Agent 注册
 
 重启远端的 Claude Code (或 codex), channel proxy 用新的 `--device` 启动后, startup hint 会把 device 直接嵌进引导文案, 用户回复时一并带上即可:
 
@@ -317,7 +314,7 @@ bearer_token_env_var = "XATS_TOKEN"
 
 如果远端 `register_agent` 不传 device, daemon 回 `device_required_from_remote` 直接拒.  device 进入身份键 `(device, team, name)`, 所以两台机器都可以有 `team=default` 下的 `creator`, 不会撞名.
 
-#### 4. 跨设备寻址
+### 4. 跨设备寻址
 
 注册完成后, 用 `name:device` 后缀寻址同 team 不同 device 的 agent:
 
@@ -330,26 +327,7 @@ bearer_token_env_var = "XATS_TOKEN"
 - `list_agents` 每条返回都有 `device` 字段, 用它看清 team 里哪些 device 在贡献 agent, 再拼对的 `name:device`.
 - `get_inbox` 每条消息都带 `from_name` 和 `from_device`.  回复时如果 `from_device !== 自己 device`, 用 `from_name:from_device`; 同 device 用裸名即可.  `send_message_by_id({to_agent_id: from_agent_id, ...})` 是 device 无关的安全兜底.
 - 安全提醒: bearer token 在能连到 daemon 的所有人之间共享, 把 LAN 暴露当作可信团队边界处理 — 本模式没有 per-agent 鉴权, 没有 device 白名单, 也没有 TLS.
-
-### 跟其它 agent 对话
-
-按名字, 按 team, 按 role 都行:
-
-> Send a message to bob: how is the migration going?
->
-> Tell my team I'm starting the deploy.
->
-> Send the frontend role a heads-up that the API will change.
->
-> What's in my inbox?
-
-agent 会自动挑对应工具 (`send_message`, `broadcast`, `broadcast_to_role`, `get_inbox`).  发消息的同时会自动唤醒收件人, 不用单独再 poke.
-
-### 看看还有谁在线
-
-> Who else is registered on xats?
->
-> List agents on team backend.
+- 升级说明: 引入 `device` 轴之后首次启动会自动迁移存储 schema, 把身份从 `(team, name)` 改为 `(device, team, name)`, 并用 daemon 本机的 `--device` 标签回填旧数据.  如果已经注册了多个 device 上相同 `(team, name)` 的 agent 再回滚, 可能违反旧版本的唯一性假设.
 
 ## 更多
 
