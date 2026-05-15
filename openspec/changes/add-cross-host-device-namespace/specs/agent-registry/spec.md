@@ -33,15 +33,15 @@ On daemon startup, when the `agents` table is missing the `claude_ui_pid` column
 
 #### Scenario: Inserting two rows with same (device, team, name) violates UNIQUE constraint
 
-- **GIVEN** a fresh `agents` table with one row `(device='jt', team='default', name='alice', role='backend', agent_id='X')`
-- **WHEN** a second INSERT is attempted with `(device='jt', team='default', name='alice', role='frontend', agent_id='Y')`
+- **GIVEN** a fresh `agents` table with one row `(device='host-a', team='default', name='alice', role='backend', agent_id='X')`
+- **WHEN** a second INSERT is attempted with `(device='host-a', team='default', name='alice', role='frontend', agent_id='Y')`
 - **THEN** SQLite raises `UNIQUE constraint failed: agents.device, agents.team, agents.name`
 - **AND** only the original row `agent_id='X'` remains in the table
 
 #### Scenario: Same (team, name) coexists across distinct devices
 
-- **GIVEN** an `agents` table with one row `(device='jt', team='default', name='creator', agent_id='X')`
-- **WHEN** an INSERT writes `(device='gx', team='default', name='creator', agent_id='Y')`
+- **GIVEN** an `agents` table with one row `(device='host-a', team='default', name='creator', agent_id='X')`
+- **WHEN** an INSERT writes `(device='host-b', team='default', name='creator', agent_id='Y')`
 - **THEN** both rows persist (different devices ⇒ different identity tuples)
 - **AND** `SELECT agent_id FROM agents WHERE team='default' AND name='creator' ORDER BY device` returns `['X', 'Y']`
 
@@ -62,11 +62,11 @@ On daemon startup, when the `agents` table is missing the `claude_ui_pid` column
 #### Scenario: Startup migration adds device, backfills, and rebuilds identity index
 
 - **GIVEN** an existing `data.db` where `agents` table lacks the `device` column and contains rows with various `(team, name)` values, none of which contain `:` in `name`
-- **AND** the daemon is started with `--device jt-laptop` (or default-derived label `jt-laptop`)
+- **AND** the daemon is started with `--device host-a` (or default-derived label `host-a`)
 - **WHEN** the daemon starts
 - **THEN** the migration issues `ALTER TABLE agents ADD COLUMN device TEXT`
 - **AND** the migration issues `ALTER TABLE agents ADD COLUMN remote_addr TEXT`
-- **AND** every pre-existing row has `device = 'jt-laptop'` after the run
+- **AND** every pre-existing row has `device = 'host-a'` after the run
 - **AND** `agents_identity_idx` now covers exactly `(device, team, name)` in that order with `unique = 1`
 - **AND** the entire migration runs inside a single transaction
 
@@ -93,23 +93,23 @@ Rows with `role='__channel_proxy__'` MUST NOT appear in the response. Channel pr
 
 #### Scenario: list_agents returns one row per device for shared (team, name)
 
-- **GIVEN** the caller is in team `foo` on device `jt`
-- **AND** the `agents` table contains `(device='jt', team='foo', name='creator', role='default')` and `(device='gx', team='foo', name='creator', role='default')`
+- **GIVEN** the caller is in team `foo` on device `host-a`
+- **AND** the `agents` table contains `(device='host-a', team='foo', name='creator', role='default')` and `(device='host-b', team='foo', name='creator', role='default')`
 - **WHEN** the caller calls `list_agents()` (no `team` arg)
 - **THEN** the response `agents` array contains two entries with `name='creator'`
-- **AND** one entry has `device='jt'` and the other has `device='gx'`
+- **AND** one entry has `device='host-a'` and the other has `device='host-b'`
 - **AND** neither entry contains a `remote_addr` field or an `origin` field
 
 #### Scenario: list_agents excludes other teams across all devices
 
 - **GIVEN** the caller is in team `foo`
-- **AND** the `agents` table contains `(device='gx', team='bar', name='creator')`
+- **AND** the `agents` table contains `(device='host-b', team='bar', name='creator')`
 - **WHEN** the caller calls `list_agents()`
 - **THEN** the `bar`-team entry MUST NOT appear, regardless of its device
 
 #### Scenario: list_agents response includes device field on every entry
 
-- **GIVEN** the `agents` table contains one row `(device='jt', team='default', name='alice')`
+- **GIVEN** the `agents` table contains one row `(device='host-a', team='default', name='alice')`
 - **WHEN** the caller in team `default` calls `list_agents()`
 - **THEN** every entry in `agents[]` has a `device` field of type `string` with length ≥ 1
 
@@ -130,59 +130,59 @@ Callers with other agent types (`codex`, `opencode`, `custom`) are NOT affected 
 
 #### Scenario: register_agent with agent_type=claude-code and ui_pid auto-binds when proxy row exists on same device
 
-- **GIVEN** a `__channel_proxy__` row exists with `device='gx'`, `team='default'`, `claude_ui_pid=25424`, `delivery_kind='claude-channel'`, `delivery_payload='{\"channel_session_id\":\"csid-abc\"}'`, and a live `ChannelWakeFanout` sink under `'csid-abc'`
-- **WHEN** a caller from device `gx` invokes `register_agent({agent_type:'claude-code', name:'opus', model:'opus-4-7', project_dir:'/Users/gx/workspace/foo', ui_pid:25424})` (no `channel_session_id`)
+- **GIVEN** a `__channel_proxy__` row exists with `device='host-b'`, `team='default'`, `claude_ui_pid=25424`, `delivery_kind='claude-channel'`, `delivery_payload='{\"channel_session_id\":\"csid-abc\"}'`, and a live `ChannelWakeFanout` sink under `'csid-abc'`
+- **WHEN** a caller from device `host-b` invokes `register_agent({agent_type:'claude-code', name:'opus', model:'opus-4-7', project_dir:'/Users/host-b/workspace/foo', ui_pid:25424})` (no `channel_session_id`)
 - **THEN** the call succeeds
-- **AND** the caller's agents row has `device='gx'`, `delivery_kind='claude-channel'`, and `delivery_payload='{\"channel_session_id\":\"csid-abc\"}'`
+- **AND** the caller's agents row has `device='host-b'`, `delivery_kind='claude-channel'`, and `delivery_payload='{\"channel_session_id\":\"csid-abc\"}'`
 - **AND** the caller's `runtime_ui_pid` is `25424`
 
 #### Scenario: auto-bind does NOT cross devices when PIDs collide
 
-- **GIVEN** a `__channel_proxy__` row exists with `device='jt'`, `claude_ui_pid=25424`, live `delivery.channel_session_id='csid-jt'`
-- **AND** no `__channel_proxy__` row exists with `device='gx'`
-- **WHEN** a caller from device `gx` invokes `register_agent({agent_type:'claude-code', name:'opus', model:'opus-4-7', ui_pid:25424})`
+- **GIVEN** a `__channel_proxy__` row exists with `device='host-a'`, `claude_ui_pid=25424`, live `delivery.channel_session_id='csid-host-a'`
+- **AND** no `__channel_proxy__` row exists with `device='host-b'`
+- **WHEN** a caller from device `host-b` invokes `register_agent({agent_type:'claude-code', name:'opus', model:'opus-4-7', ui_pid:25424})`
 - **THEN** the call succeeds
-- **AND** the caller's agents row has `delivery_kind='none'` (the `device='jt'` proxy MUST NOT match a `device='gx'` caller despite the matching PID)
+- **AND** the caller's agents row has `delivery_kind='none'` (the `device='host-a'` proxy MUST NOT match a `device='host-b'` caller despite the matching PID)
 
 #### Scenario: register_agent with agent_type=claude-code without ui_pid does NOT auto-bind
 
 - **GIVEN** a `__channel_proxy__` row exists for some proxy
-- **WHEN** a caller invokes `register_agent({agent_type:'claude-code', name:'opus', model:'opus-4-7', project_dir:'/Users/jt/workspace/cross-agent-teams-mcp'})` with no `ui_pid`
+- **WHEN** a caller invokes `register_agent({agent_type:'claude-code', name:'opus', model:'opus-4-7', project_dir:'/Users/host-a/workspace/cross-agent-teams-mcp'})` with no `ui_pid`
 - **THEN** the call succeeds
 - **AND** the caller's agents row has `delivery_kind='none'`
 
 #### Scenario: register_agent with agent_type=claude-code and no matching proxy leaves delivery at none
 
-- **GIVEN** no `__channel_proxy__` row has `device='jt'` AND `claude_ui_pid=99999`
-- **WHEN** a caller from device `jt` invokes `register_agent({agent_type:'claude-code', name:'opus', model:'opus-4-7', ui_pid:99999})`
+- **GIVEN** no `__channel_proxy__` row has `device='host-a'` AND `claude_ui_pid=99999`
+- **WHEN** a caller from device `host-a` invokes `register_agent({agent_type:'claude-code', name:'opus', model:'opus-4-7', ui_pid:99999})`
 - **THEN** the call succeeds
 - **AND** the caller's agents row has `delivery_kind='none'`
 
 #### Scenario: register_agent with agent_type=claude-code skips auto-bind when proxy row's sink is dead
 
-- **GIVEN** a `__channel_proxy__` row exists with `device='jt'`, `claude_ui_pid=25424`, and `delivery.channel_session_id='csid-abc'`
+- **GIVEN** a `__channel_proxy__` row exists with `device='host-a'`, `claude_ui_pid=25424`, and `delivery.channel_session_id='csid-abc'`
 - **AND** no `ChannelWakeFanout` sink is attached under `'csid-abc'` (the proxy's MCP session closed)
-- **WHEN** a caller from device `jt` invokes `register_agent({agent_type:'claude-code', name:'opus', model:'opus-4-7', ui_pid:25424})`
+- **WHEN** a caller from device `host-a` invokes `register_agent({agent_type:'claude-code', name:'opus', model:'opus-4-7', ui_pid:25424})`
 - **THEN** the call succeeds
 - **AND** the caller's agents row has `delivery_kind='none'` (no stale csid bound)
 
 #### Scenario: explicit channel_session_id bypasses auto-bind entirely on register_agent
 
-- **GIVEN** a `__channel_proxy__` row exists with `device='jt'`, `claude_ui_pid=25424`, and `delivery.channel_session_id='csid-abc'` (live sink)
-- **WHEN** a caller from device `jt` invokes `register_agent({agent_type:'claude-code', name:'opus', model:'opus-4-7', ui_pid:25424, channel_session_id:'csid-explicit'})` and `'csid-explicit'` has a live sink attached
+- **GIVEN** a `__channel_proxy__` row exists with `device='host-a'`, `claude_ui_pid=25424`, and `delivery.channel_session_id='csid-abc'` (live sink)
+- **WHEN** a caller from device `host-a` invokes `register_agent({agent_type:'claude-code', name:'opus', model:'opus-4-7', ui_pid:25424, channel_session_id:'csid-explicit'})` and `'csid-explicit'` has a live sink attached
 - **THEN** the call succeeds
 - **AND** the caller's agents row has `delivery_payload='{\"channel_session_id\":\"csid-explicit\"}'` (explicit value wins, auto-bind did not run)
 
 #### Scenario: auto-bind ignores team: proxy row in team A still matches caller in team B on same device
 
-- **GIVEN** a `__channel_proxy__` row exists with `device='jt'`, `team='default'`, `claude_ui_pid=25424`, `delivery.channel_session_id='csid-abc'`, and a live `ChannelWakeFanout` sink under `'csid-abc'`
-- **WHEN** a caller from device `jt` invokes `register_agent({agent_type:'claude-code', name:'opus', model:'opus-4-7', team:'alpha', ui_pid:25424})`
+- **GIVEN** a `__channel_proxy__` row exists with `device='host-a'`, `team='default'`, `claude_ui_pid=25424`, `delivery.channel_session_id='csid-abc'`, and a live `ChannelWakeFanout` sink under `'csid-abc'`
+- **WHEN** a caller from device `host-a` invokes `register_agent({agent_type:'claude-code', name:'opus', model:'opus-4-7', team:'alpha', ui_pid:25424})`
 - **THEN** the caller's agents row is created in team `alpha` with `delivery_kind='claude-channel'` and `delivery_payload='{\"channel_session_id\":\"csid-abc\"}'` (proxy team `default` does NOT block the match; the `(device, claude_ui_pid)` pair uniquely identifies the caller's proxy)
 
 #### Scenario: register_agent with agent_type=codex does NOT auto-bind
 
-- **GIVEN** a live `__channel_proxy__` row with `device='jt'`, `claude_ui_pid=25424`, and `delivery.channel_session_id='csid-abc'` (live sink)
-- **WHEN** a caller from device `jt` invokes `register_agent({agent_type:'codex', name:'gpt', model:'gpt-5', thread_id:'<uuid>', ui_pid:25424})`
+- **GIVEN** a live `__channel_proxy__` row with `device='host-a'`, `claude_ui_pid=25424`, and `delivery.channel_session_id='csid-abc'` (live sink)
+- **WHEN** a caller from device `host-a` invokes `register_agent({agent_type:'codex', name:'gpt', model:'gpt-5', thread_id:'<uuid>', ui_pid:25424})`
 - **THEN** the call succeeds
 - **AND** the caller's agents row has its codex-specific delivery (or `delivery_kind='none'` if no codex delivery supplied) — it MUST NOT be set to `claude-channel`
 
@@ -201,30 +201,30 @@ These error codes are wire-stable. They are returned in the same `{ error: ... }
 
 #### Scenario: loopback caller omits device — daemon fills local label
 
-- **GIVEN** the daemon is started with `--device jt-laptop`
+- **GIVEN** the daemon is started with `--device host-a`
 - **AND** an MCP session was established via loopback (`origin='local'`)
 - **WHEN** the caller invokes `register_agent({agent_type:'claude-code', name:'creator', model:'opus-4-7'})` (no `device`)
 - **THEN** the call succeeds
-- **AND** the persisted row has `device='jt-laptop'`
+- **AND** the persisted row has `device='host-a'`
 - **AND** `remote_addr IS NULL`
 
 #### Scenario: loopback caller supplies matching device — accepted
 
-- **GIVEN** the daemon is started with `--device jt-laptop`
-- **WHEN** a loopback caller invokes `register_agent({agent_type:'claude-code', name:'creator', model:'opus-4-7', device:'jt-laptop'})`
+- **GIVEN** the daemon is started with `--device host-a`
+- **WHEN** a loopback caller invokes `register_agent({agent_type:'claude-code', name:'creator', model:'opus-4-7', device:'host-a'})`
 - **THEN** the call succeeds
-- **AND** the persisted row has `device='jt-laptop'`
+- **AND** the persisted row has `device='host-a'`
 
 #### Scenario: loopback caller spoofs another device — rejected
 
-- **GIVEN** the daemon is started with `--device jt-laptop`
-- **WHEN** a loopback caller invokes `register_agent({agent_type:'claude-code', name:'creator', model:'opus-4-7', device:'gx'})`
+- **GIVEN** the daemon is started with `--device host-a`
+- **WHEN** a loopback caller invokes `register_agent({agent_type:'claude-code', name:'creator', model:'opus-4-7', device:'host-b'})`
 - **THEN** the response is `{ error: 'device_spoofing_from_loopback' }`
 - **AND** no row is written
 
 #### Scenario: remote caller omits device — rejected
 
-- **GIVEN** the daemon is started with `--host 0.0.0.0 --token T --device jt-laptop`
+- **GIVEN** the daemon is started with `--host 0.0.0.0 --token T --device host-a`
 - **AND** an MCP session was established from a non-loopback peer (`origin='remote'`)
 - **WHEN** the caller invokes `register_agent({agent_type:'claude-code', name:'creator', model:'opus-4-7'})` (no `device`)
 - **THEN** the response is `{ error: 'device_required_from_remote' }`
@@ -232,20 +232,20 @@ These error codes are wire-stable. They are returned in the same `{ error: ... }
 
 #### Scenario: remote caller claims local label — rejected
 
-- **GIVEN** the daemon is started with `--device jt-laptop`
+- **GIVEN** the daemon is started with `--device host-a`
 - **AND** an MCP session was established from a non-loopback peer
-- **WHEN** the caller invokes `register_agent({agent_type:'claude-code', name:'creator', model:'opus-4-7', device:'jt-laptop'})`
+- **WHEN** the caller invokes `register_agent({agent_type:'claude-code', name:'creator', model:'opus-4-7', device:'host-a'})`
 - **THEN** the response is `{ error: 'device_spoofing_local_label_from_remote' }`
 - **AND** no row is written
 
 #### Scenario: remote caller supplies its own device — accepted and remote_addr recorded
 
-- **GIVEN** the daemon is started with `--device jt-laptop`
-- **AND** an MCP session was established from a non-loopback peer at `192.168.1.42`
-- **WHEN** the caller invokes `register_agent({agent_type:'claude-code', name:'creator', model:'opus-4-7', device:'gx'})`
+- **GIVEN** the daemon is started with `--device host-a`
+- **AND** an MCP session was established from a non-loopback peer at `10.0.0.42`
+- **WHEN** the caller invokes `register_agent({agent_type:'claude-code', name:'creator', model:'opus-4-7', device:'host-b'})`
 - **THEN** the call succeeds
-- **AND** the persisted row has `device='gx'`
-- **AND** the persisted row has `remote_addr='192.168.1.42'`
+- **AND** the persisted row has `device='host-b'`
+- **AND** the persisted row has `remote_addr='10.0.0.42'`
 
 #### Scenario: device label containing colon is rejected from remote
 

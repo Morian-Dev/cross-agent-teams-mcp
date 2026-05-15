@@ -67,9 +67,9 @@
 - [x] 9.8 Integration: remote register without device returns `device_required_from_remote`; with local-label returns `device_spoofing_local_label_from_remote`; with valid device succeeds and persists `remote_addr`
 - [x] 9.9 Integration: register two agents with identical `(team, name)` on distinct `device` values — both rows persist
 - [x] 9.10 Integration: `list_agents` returns both rows above with their `device` fields and no `origin`/`remote_addr`
-- [x] 9.11 Integration: `send_message({to_agent_name:'creator'})` resolves to caller's device; `send_message({to_agent_name:'creator:gx'})` resolves to `(gx, ..., creator)`; invalid `:gx` / `bob:` returns `invalid_to_agent_name`
+- [x] 9.11 Integration: `send_message({to_agent_name:'creator'})` resolves to caller's device; `send_message({to_agent_name:'creator:host-b'})` resolves to `(host-b, ..., creator)`; invalid `:host-b` / `bob:` returns `invalid_to_agent_name`
 - [x] 9.12 Integration: `broadcast` reaches a recipient on a different device in the same team
-- [x] 9.13 Integration: channel-proxy auto-bind for a `(device='gx', ui_pid=N)` caller does NOT match a `(device='jt', claude_ui_pid=N)` proxy row
+- [x] 9.13 Integration: channel-proxy auto-bind for a `(device='host-b', ui_pid=N)` caller does NOT match a `(device='host-a', claude_ui_pid=N)` proxy row
 - [x] 9.14 Integration: channel-cli with `--token` + `--device` registers a proxy whose row carries the supplied device
 - [x] 9.15 Update / re-run existing tests that asserted on `(team, name)` uniqueness or absence of `device` in responses; adjust to the new shape
 

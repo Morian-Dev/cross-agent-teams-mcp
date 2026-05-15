@@ -18,26 +18,26 @@ When the supplied recipient cannot be resolved, the daemon SHALL return `{ error
 
 #### Scenario: bare to_agent_name does not exist on caller's device
 
-- **GIVEN** the caller is on device `jt`, team `default`
-- **AND** an agent `(device='gx', team='default', name='ghost')` exists
-- **AND** no agent `(device='jt', team='default', name='ghost')` exists
+- **GIVEN** the caller is on device `host-a`, team `default`
+- **AND** an agent `(device='host-b', team='default', name='ghost')` exists
+- **AND** no agent `(device='host-a', team='default', name='ghost')` exists
 - **WHEN** the caller calls `send_message({to_agent_name:'ghost', body:'hi'})`
 - **THEN** response is `{ error: 'unknown_recipient' }` (the bare name resolved to the caller's device, where no `ghost` exists)
 - **AND** no new event row is created
 
 #### Scenario: name:device syntax does not exist on the specified device
 
-- **GIVEN** the caller is on device `jt`, team `default`
-- **AND** no agent `(device='gx', team='default', name='ghost')` exists
-- **WHEN** the caller calls `send_message({to_agent_name:'ghost:gx', body:'hi'})`
+- **GIVEN** the caller is on device `host-a`, team `default`
+- **AND** no agent `(device='host-b', team='default', name='ghost')` exists
+- **WHEN** the caller calls `send_message({to_agent_name:'ghost:host-b', body:'hi'})`
 - **THEN** response is `{ error: 'unknown_recipient' }`
 - **AND** no new event row is created
 
 #### Scenario: to_agent_name exists in caller team on caller device but explicit to_team points elsewhere
 
-- **GIVEN** agent `(device='jt', team='alpha', name='bob')` exists only; caller is on device `jt`, team `alpha`
+- **GIVEN** agent `(device='host-a', team='alpha', name='bob')` exists only; caller is on device `host-a`, team `alpha`
 - **WHEN** caller calls `send_message({to_agent_name:'bob', to_team:'beta', body:'hi'})`
-- **THEN** response is `{ error: 'unknown_recipient' }` (resolved triple is `(jt, beta, bob)`, which has no row)
+- **THEN** response is `{ error: 'unknown_recipient' }` (resolved triple is `(host-a, beta, bob)`, which has no row)
 - **AND** no new event row is created
 
 #### Scenario: send_message_by_id pointing at a cross-team agent returns unknown_recipient
@@ -64,52 +64,52 @@ Cross-team sends via `to_agent_name` SHALL set `from_team` / `to_team` on the pe
 
 #### Scenario: Same-device same-team send via bare to_agent_name persists and auto-pokes
 
-- **GIVEN** caller `alice` is on `(device='jt', team='default')` with `tmux_pane_id`
-- **AND** `bob` is on `(device='jt', team='default')` with `tmux_pane_id`; bob's pane is idle, `POKE_QUIET_MS=100`
+- **GIVEN** caller `alice` is on `(device='host-a', team='default')` with `tmux_pane_id`
+- **AND** `bob` is on `(device='host-a', team='default')` with `tmux_pane_id`; bob's pane is idle, `POKE_QUIET_MS=100`
 - **WHEN** alice calls `send_message({to_agent_name:'bob', body:'hi'})`
-- **THEN** the message is persisted with `from_agent_id=<alice.uuid>`, `to_agent_id=<bob.uuid in jt>`, `from_team='default'`, `to_team='default'`
-- **AND** response `recipients` equals `[<bob.uuid in jt>]`
+- **THEN** the message is persisted with `from_agent_id=<alice.uuid>`, `to_agent_id=<bob.uuid in host-a>`, `from_team='default'`, `to_team='default'`
+- **AND** response `recipients` equals `[<bob.uuid in host-a>]`
 - **AND** response `poked` is `true`
 - **AND** bob's pane receives the wake-up hint
 
 #### Scenario: Cross-device same-team send via name:device
 
-- **GIVEN** caller `alice` is on `(device='jt', team='default')`
-- **AND** `bob` is on `(device='gx', team='default')`
-- **WHEN** alice calls `send_message({to_agent_name:'bob:gx', body:'hi'})`
-- **THEN** the message is persisted with `to_agent_id=<bob.uuid in gx>`, `from_team='default'`, `to_team='default'`
-- **AND** response `recipients` equals `[<bob.uuid in gx>]`
+- **GIVEN** caller `alice` is on `(device='host-a', team='default')`
+- **AND** `bob` is on `(device='host-b', team='default')`
+- **WHEN** alice calls `send_message({to_agent_name:'bob:host-b', body:'hi'})`
+- **THEN** the message is persisted with `to_agent_id=<bob.uuid in host-b>`, `from_team='default'`, `to_team='default'`
+- **AND** response `recipients` equals `[<bob.uuid in host-b>]`
 
 #### Scenario: Bare name resolves to caller's device when both devices have agents with the same name
 
-- **GIVEN** caller `alice` is on `(device='jt', team='default')`
-- **AND** `creator` exists on both `(device='jt', team='default')` (uuid `X`) and `(device='gx', team='default')` (uuid `Y`)
+- **GIVEN** caller `alice` is on `(device='host-a', team='default')`
+- **AND** `creator` exists on both `(device='host-a', team='default')` (uuid `X`) and `(device='host-b', team='default')` (uuid `Y`)
 - **WHEN** alice calls `send_message({to_agent_name:'creator', body:'hi'})`
 - **THEN** response `recipients` equals `['X']` (caller's device wins)
 
 #### Scenario: name:device crosses both team and device
 
-- **GIVEN** caller `alice` is on `(device='jt', team='alpha')`
-- **AND** `bob` is on `(device='gx', team='beta')`
-- **WHEN** alice calls `send_message({to_agent_name:'bob:gx', to_team:'beta', body:'hi'})`
-- **THEN** the message is persisted with `from_team='alpha'`, `to_team='beta'`, `to_agent_id=<bob.uuid in (gx, beta)>`
+- **GIVEN** caller `alice` is on `(device='host-a', team='alpha')`
+- **AND** `bob` is on `(device='host-b', team='beta')`
+- **WHEN** alice calls `send_message({to_agent_name:'bob:host-b', to_team:'beta', body:'hi'})`
+- **THEN** the message is persisted with `from_team='alpha'`, `to_team='beta'`, `to_agent_id=<bob.uuid in (host-b, beta)>`
 
 #### Scenario: Success envelope recipients is always the resolved UUID
 
-- **GIVEN** agent `bob` on `(device='jt', team='default')` with `agent_id='uuid-B'`
-- **WHEN** caller A on `(device='jt', team='default')` calls `send_message({to_agent_name:'bob', body:'hi'})`
+- **GIVEN** agent `bob` on `(device='host-a', team='default')` with `agent_id='uuid-B'`
+- **WHEN** caller A on `(device='host-a', team='default')` calls `send_message({to_agent_name:'bob', body:'hi'})`
 - **AND** caller A calls `send_message_by_id({to_agent_id:'uuid-B', body:'hi'})`
 - **THEN** both responses have `recipients === ['uuid-B']`
 
 #### Scenario: Lookup is case-sensitive (byte-equal)
 
-- **GIVEN** agent registered with `name='Bob'` on `(device='jt', team='default')`
+- **GIVEN** agent registered with `name='Bob'` on `(device='host-a', team='default')`
 - **WHEN** caller on the same device/team calls `send_message({to_agent_name:'bob', body:'hi'})`
 - **THEN** response is `{ error: 'unknown_recipient' }` (lowercase `bob` does not match stored `Bob`)
 
 #### Scenario: Empty halves around colon are rejected as invalid input
 
-- **WHEN** the caller invokes `send_message({to_agent_name:':gx', body:'hi'})`
+- **WHEN** the caller invokes `send_message({to_agent_name:':host-b', body:'hi'})`
 - **THEN** response is `{ error: 'invalid_to_agent_name' }`
 
 - **WHEN** the caller invokes `send_message({to_agent_name:'bob:', body:'hi'})`
@@ -123,15 +123,15 @@ For every recipient, the persisted `messages` row MUST have `from_team` and `to_
 
 #### Scenario: Sender not in recipients
 
-- **GIVEN** team `default` has agents `sess-A`, `sess-B`, `sess-C` on `device='jt'`
+- **GIVEN** team `default` has agents `sess-A`, `sess-B`, `sess-C` on `device='host-a'`
 - **WHEN** `sess-A` calls `broadcast({body:'all-hands'})`
 - **THEN** `recipients` contains exactly `['sess-B','sess-C']`
 - **AND** all resulting messages rows have `from_team=to_team='default'`
 
 #### Scenario: Broadcast spans every device in the caller's team
 
-- **GIVEN** the caller is on `(device='jt', team='default')`
-- **AND** team `default` has `alice` on `device='jt'`, `bob` on `device='jt'`, and `creator` on `device='gx'`
+- **GIVEN** the caller is on `(device='host-a', team='default')`
+- **AND** team `default` has `alice` on `device='host-a'`, `bob` on `device='host-a'`, and `creator` on `device='host-b'`
 - **WHEN** the caller calls `broadcast({body:'all-hands'})`
 - **THEN** `recipients` contains `['alice', 'bob', 'creator']` (order-insensitive; both same-device peers AND the cross-device `creator` are addressed)
 - **AND** all resulting messages rows have `from_team=to_team='default'`
@@ -162,7 +162,7 @@ The response shape MUST be:
 
 #### Scenario: Two role-matching agents in team receive fan-out
 
-- **GIVEN** agents `sess-F1` and `sess-F2` both have `role='frontend'` in team `default` on `device='jt'`, caller `sess-X` also in team `default` on `device='jt'`
+- **GIVEN** agents `sess-F1` and `sess-F2` both have `role='frontend'` in team `default` on `device='host-a'`, caller `sess-X` also in team `default` on `device='host-a'`
 - **WHEN** `sess-X` calls `broadcast_to_role({to_role:'frontend', body:'ship status'})`
 - **THEN** `recipients` contains `['sess-F1', 'sess-F2']` (order-insensitive)
 - **AND** two `messages` rows appear with identical `event_id`, `from_team=to_team='default'`, `to_role='frontend'`
@@ -170,8 +170,8 @@ The response shape MUST be:
 
 #### Scenario: Role fan-out spans devices in the caller's team
 
-- **GIVEN** team `default` has `worker-A` on `device='jt'` with `role='worker'` and `worker-B` on `device='gx'` with `role='worker'`
-- **AND** the caller is on `(device='jt', team='default')` with `role='lead'`
+- **GIVEN** team `default` has `worker-A` on `device='host-a'` with `role='worker'` and `worker-B` on `device='host-b'` with `role='worker'`
+- **AND** the caller is on `(device='host-a', team='default')` with `role='lead'`
 - **WHEN** the caller calls `broadcast_to_role({to_role:'worker', body:'task'})`
 - **THEN** `recipients` contains both `worker-A` and `worker-B` (cross-device fan-out)
 
@@ -197,7 +197,7 @@ The response shape MUST be:
 
 #### Scenario: broadcast_to_role does not accept to_device parameter
 
-- **WHEN** a client calls `broadcast_to_role({to_role:'x', to_device:'gx', body:'hi'})`
+- **WHEN** a client calls `broadcast_to_role({to_role:'x', to_device:'host-b', body:'hi'})`
 - **THEN** the MCP tool's Zod schema MUST reject the call with a validation error (unknown field `to_device`)
 
 #### Scenario: broadcast_to_role tool description states same-team scope

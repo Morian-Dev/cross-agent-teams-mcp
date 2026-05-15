@@ -23,15 +23,15 @@ The CLI SHALL additionally accept:
 
 #### Scenario: --token flag adds Authorization header to daemon requests
 
-- **GIVEN** a daemon reachable at `http://192.168.1.10:9100/mcp` configured with `--token T`
-- **WHEN** the CLI is invoked with `--daemon-url http://192.168.1.10:9100/mcp --token T`
+- **GIVEN** a daemon reachable at `http://10.0.0.10:9100/mcp` configured with `--token T`
+- **WHEN** the CLI is invoked with `--daemon-url http://10.0.0.10:9100/mcp --token T`
 - **THEN** every HTTP request the CLI sends to the daemon carries `Authorization: Bearer T`
 - **AND** the registration sequence completes successfully
 
 #### Scenario: --token absent against a token-protected daemon fails
 
-- **GIVEN** a daemon reachable at `http://192.168.1.10:9100/mcp` configured with `--token T`
-- **WHEN** the CLI is invoked with `--daemon-url http://192.168.1.10:9100/mcp` (no `--token`, no `CROSS_AGENT_TEAMS_MCP_TOKEN`)
+- **GIVEN** a daemon reachable at `http://10.0.0.10:9100/mcp` configured with `--token T`
+- **WHEN** the CLI is invoked with `--daemon-url http://10.0.0.10:9100/mcp` (no `--token`, no `CROSS_AGENT_TEAMS_MCP_TOKEN`)
 - **THEN** the daemon responds with HTTP 401 to the initialize request
 - **AND** the CLI exits non-zero within its bounded retry budget
 
@@ -44,17 +44,17 @@ The CLI SHALL additionally accept:
 
 #### Scenario: --device flag is forwarded on register_agent
 
-- **GIVEN** a daemon at `http://192.168.1.10:9100/mcp` with `--device jt-laptop --token T`
-- **WHEN** the CLI is invoked with `--daemon-url http://192.168.1.10:9100/mcp --token T --device gx`
-- **THEN** the proxy's `register_agent` call carries `device:'gx'`
+- **GIVEN** a daemon at `http://10.0.0.10:9100/mcp` with `--device host-a --token T`
+- **WHEN** the CLI is invoked with `--daemon-url http://10.0.0.10:9100/mcp --token T --device host-b`
+- **THEN** the proxy's `register_agent` call carries `device:'host-b'`
 - **AND** the daemon accepts the registration (remote origin + non-local label)
-- **AND** the resulting `__channel_proxy__` row has `device='gx'`
+- **AND** the resulting `__channel_proxy__` row has `device='host-b'`
 
 #### Scenario: --device defaults to hostname-derived label
 
 - **GIVEN** `os.hostname()` returns `GX-Desktop`
 - **WHEN** the CLI is invoked with `--daemon-url ...` and no `--device` flag
-- **THEN** the proxy's `register_agent` call carries `device:'gx-desktop'`
+- **THEN** the proxy's `register_agent` call carries `device:'host-b-desktop'`
 
 #### Scenario: --device with colon is rejected
 

@@ -28,8 +28,8 @@ The legacy guarantee that loopback-only deployments need no token is preserved: 
 
 #### Scenario: Non-loopback host with token starts and binds the requested address
 
-- **WHEN** the daemon is started with `--host 192.168.1.10 --token T`
-- **THEN** the HTTP server listens on `192.168.1.10:9100`
+- **WHEN** the daemon is started with `--host 10.0.0.10 --token T`
+- **THEN** the HTTP server listens on `10.0.0.10:9100`
 - **AND** the startup log includes the bound host and port
 
 #### Scenario: Token via env variable satisfies the non-loopback guard
@@ -53,21 +53,21 @@ The resolved label is the authoritative local device identifier consumed by `age
 
 #### Scenario: Default device label derived from hostname
 
-- **GIVEN** `os.hostname()` returns `JT-Laptop.local`
+- **GIVEN** `os.hostname()` returns `Host-A.local`
 - **WHEN** the daemon is started without `--device`
-- **THEN** the resolved local device label is `jt-laptop.local`
+- **THEN** the resolved local device label is `host-a.local`
 - **AND** the startup log includes the resolved label
 
 #### Scenario: Hostname containing disallowed characters is normalised
 
-- **GIVEN** `os.hostname()` returns `JT@Laptop`
+- **GIVEN** `os.hostname()` returns `Host@A`
 - **WHEN** the daemon is started without `--device`
-- **THEN** the resolved local device label is `jt-laptop` (the `@` is replaced with `-`)
+- **THEN** the resolved local device label is `host-a` (the `@` is replaced with `-`)
 
 #### Scenario: --device flag overrides the derived default
 
-- **WHEN** the daemon is started with `--device gx`
-- **THEN** the resolved local device label is `gx`
+- **WHEN** the daemon is started with `--device host-b`
+- **THEN** the resolved local device label is `host-b`
 
 #### Scenario: --device with colon is rejected
 

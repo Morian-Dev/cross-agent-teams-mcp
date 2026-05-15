@@ -23,8 +23,8 @@ The session tag is daemon-internal: it MUST NOT appear in any tool response payl
 #### Scenario: Non-loopback session is tagged remote with peer address
 
 - **GIVEN** the daemon is bound to `0.0.0.0:9100` with a token
-- **WHEN** an MCP client connects from `192.168.1.42` and obtains a session id
-- **THEN** the daemon's session record for that session id has `origin = 'remote'` and `remote_addr = '192.168.1.42'`
+- **WHEN** an MCP client connects from `10.0.0.42` and obtains a session id
+- **THEN** the daemon's session record for that session id has `origin = 'remote'` and `remote_addr = '10.0.0.42'`
 
 #### Scenario: IPv6 loopback ::1 is tagged local
 

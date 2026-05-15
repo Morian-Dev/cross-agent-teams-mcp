@@ -71,22 +71,22 @@ To let agents on another trusted machine use this daemon, bind the daemon to a L
 
 ```bash
 npx -y cross-agent-teams-mcp@latest daemon \
-  --host 192.168.1.10 \
+  --host 10.0.0.10 \
   --port 9100 \
   --token "$XATS_TOKEN" \
-  --device jt-laptop
+  --device host-a
 ```
 
 Then configure the peer host's Claude Code channel proxy to connect back to that daemon:
 
 ```bash
 npx -y -p cross-agent-teams-mcp@latest cross-agent-teams-channel \
-  --daemon-url http://192.168.1.10:9100/mcp \
+  --daemon-url http://10.0.0.10:9100/mcp \
   --token "$XATS_TOKEN" \
-  --device gx-laptop
+  --device host-b
 ```
 
-Agents are namespaced by `(device, team, name)`.  A bare `send_message({to_agent_name:"creator"})` resolves on the caller's own device; use `creator:gx-laptop` to address a same-team agent on another device.  `list_agents` shows the `device` field so you can compose those addresses.
+Agents are namespaced by `(device, team, name)`.  A bare `send_message({to_agent_name:"creator"})` resolves on the caller's own device; use `creator:host-b` to address a same-team agent on another device.  `list_agents` shows the `device` field so you can compose those addresses.
 
 Security notes: non-loopback `--host` requires `--token`, and the token is shared by everyone who can use that daemon.  Treat LAN exposure as trusted-team only; there is no per-agent authorization, device whitelist, or TLS in this mode.
 
@@ -264,10 +264,10 @@ npx -y cross-agent-teams-mcp@latest daemon \
   --host 0.0.0.0 \
   --port 9100 \
   --token "$XATS_TOKEN" \
-  --device jt-laptop
+  --device host-a
 ```
 
-Use a specific LAN IP (e.g. `192.168.1.10`) or a tailscale CGNAT IP (`100.x.x.x`) instead of `0.0.0.0` if you want to restrict the listener. macOS will prompt to allow node to accept network connections on the first non-loopback bind.
+Use a specific LAN IP (e.g. `10.0.0.10`) or a tailscale CGNAT IP (`100.x.x.x`) instead of `0.0.0.0` if you want to restrict the listener. macOS will prompt to allow node to accept network connections on the first non-loopback bind.
 
 #### 2. Peer-side: `.mcp.json` updates
 
@@ -278,7 +278,7 @@ Each remote teammate's Claude Code needs **two** changes from the default loopba
   "mcpServers": {
     "cross-agent-teams": {
       "type": "http",
-      "url": "http://192.168.1.10:9100/mcp",
+      "url": "http://10.0.0.10:9100/mcp",
       "headers": {
         "Authorization": "Bearer xats"
       }
@@ -288,9 +288,9 @@ Each remote teammate's Claude Code needs **two** changes from the default loopba
       "args": [
         "-y", "-p", "cross-agent-teams-mcp@latest",
         "cross-agent-teams-channel",
-        "--daemon-url", "http://192.168.1.10:9100/mcp",
+        "--daemon-url", "http://10.0.0.10:9100/mcp",
         "--token", "xats",
-        "--device", "gx-laptop"
+        "--device", "host-b"
       ]
     }
   }
@@ -301,7 +301,7 @@ For Codex CLI, edit `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.cross-agent-teams-mcp]
-url = "http://192.168.1.10:9100/mcp"
+url = "http://10.0.0.10:9100/mcp"
 bearer_token_env_var = "XATS_TOKEN"
 ```
 
@@ -313,7 +313,7 @@ The **daemon-side** `.mcp.json` (the machine running the daemon) needs the same 
 
 Restart Claude Code (or codex) on the peer machine so the channel proxy spawns with the new `--device` argument. The proxy's startup hint then embeds the device verbatim, and the user's reply contains it too:
 
-> Register me to xats as alice, device gx-laptop.
+> Register me to xats as alice, device host-b.
 
 If a remote `register_agent` call omits `device`, the daemon rejects with `device_required_from_remote` — the agent must self-declare. `device` becomes part of the identity tuple `(device, team, name)`, so two physical machines can each host a `creator` in `team=default` without collision.
 
@@ -321,9 +321,9 @@ If a remote `register_agent` call omits `device`, the daemon rejects with `devic
 
 Once everyone is registered, use the `name:device` suffix to address a same-team agent on another device:
 
-> Send creator on jt-laptop a message: build is green.
+> Send creator on host-a a message: build is green.
 
-This resolves to `creator:jt-laptop` and routes to that exact `(device=jt-laptop, team=…, name=creator)` row. A bare `creator` always resolves on the caller's own device.
+This resolves to `creator:host-a` and routes to that exact `(device=host-a, team=…, name=creator)` row. A bare `creator` always resolves on the caller's own device.
 
 Notes:
 

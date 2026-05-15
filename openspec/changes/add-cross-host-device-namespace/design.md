@@ -8,7 +8,7 @@ The channel-cli is already structured as a relay: it holds an SSE subscription t
 
 **Goals:**
 - Let a peer host run `cross-agent-teams-channel` against the daemon over LAN with bearer auth, preserving poke delivery.
-- Give every agent a `device` label and resolve `name` / `name:device` from the caller's perspective so jt and gx can each say `creator` and mean their own.
+- Give every agent a `device` label and resolve `name` / `name:device` from the caller's perspective so host-a and host-b can each say `creator` and mean their own.
 - Keep the model symmetric: the rule is "caller-relative", independent of where the daemon physically runs.
 - Migrate existing data and old loopback clients without surprises.
 
@@ -31,7 +31,7 @@ We split the "local vs remote" idea into two concepts that the earlier explorati
 
 `origin` is never returned by any tool.  Users see only `device`.
 
-**Alternative considered**: a single `origin` field doing both safety and namespacing.  Rejected because the symmetric naming the user wants ("gx's `creator` means gx's local agent, even though it's `remote` from the daemon's view") requires the namespacing axis to follow the caller, not the daemon.
+**Alternative considered**: a single `origin` field doing both safety and namespacing.  Rejected because the symmetric naming the user wants ("host-b's `creator` means host-b's local agent, even though it's `remote` from the daemon's view") requires the namespacing axis to follow the caller, not the daemon.
 
 ### D2: Identity key `(device, team, name)`, additive migration
 

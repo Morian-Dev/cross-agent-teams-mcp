@@ -71,22 +71,22 @@ daemon 默认监听 `127.0.0.1:9100`.  MCP endpoint: `http://127.0.0.1:9100/mcp`
 
 ```bash
 npx -y cross-agent-teams-mcp@latest daemon \
-  --host 192.168.1.10 \
+  --host 10.0.0.10 \
   --port 9100 \
   --token "$XATS_TOKEN" \
-  --device jt-laptop
+  --device host-a
 ```
 
 然后在对端机器上让 Claude Code channel proxy 连回这个 daemon:
 
 ```bash
 npx -y -p cross-agent-teams-mcp@latest cross-agent-teams-channel \
-  --daemon-url http://192.168.1.10:9100/mcp \
+  --daemon-url http://10.0.0.10:9100/mcp \
   --token "$XATS_TOKEN" \
-  --device gx-laptop
+  --device host-b
 ```
 
-agent 身份现在按 `(device, team, name)` 命名空间区分.  裸的 `send_message({to_agent_name:"creator"})` 会解析到调用者自己的 device; 要发给另一个 device 上同 team 的 agent, 用 `creator:gx-laptop`.  `list_agents` 会显示 `device` 字段, 方便拼出这个地址.
+agent 身份现在按 `(device, team, name)` 命名空间区分.  裸的 `send_message({to_agent_name:"creator"})` 会解析到调用者自己的 device; 要发给另一个 device 上同 team 的 agent, 用 `creator:host-b`.  `list_agents` 会显示 `device` 字段, 方便拼出这个地址.
 
 安全说明: 非 loopback 的 `--host` 必须带 `--token`, 并且这个 token 会被所有能使用该 daemon 的人共享.  LAN 暴露只适合可信团队环境; 当前模式没有 per-agent 鉴权, device 白名单或 TLS.
 
@@ -264,10 +264,10 @@ npx -y cross-agent-teams-mcp@latest daemon \
   --host 0.0.0.0 \
   --port 9100 \
   --token "$XATS_TOKEN" \
-  --device jt-laptop
+  --device host-a
 ```
 
-想限定监听接口, 把 `0.0.0.0` 换成具体 LAN IP (例如 `192.168.1.10`) 或者 tailscale CGNAT IP (`100.x.x.x`) 都行.  macOS 第一次绑非 loopback 端口会弹"允许 node 接受网络连接", 选允许.
+想限定监听接口, 把 `0.0.0.0` 换成具体 LAN IP (例如 `10.0.0.10`) 或者 tailscale CGNAT IP (`100.x.x.x`) 都行.  macOS 第一次绑非 loopback 端口会弹"允许 node 接受网络连接", 选允许.
 
 #### 2. 远端机器侧: 改 `.mcp.json`
 
@@ -278,7 +278,7 @@ npx -y cross-agent-teams-mcp@latest daemon \
   "mcpServers": {
     "cross-agent-teams": {
       "type": "http",
-      "url": "http://192.168.1.10:9100/mcp",
+      "url": "http://10.0.0.10:9100/mcp",
       "headers": {
         "Authorization": "Bearer xats"
       }
@@ -288,9 +288,9 @@ npx -y cross-agent-teams-mcp@latest daemon \
       "args": [
         "-y", "-p", "cross-agent-teams-mcp@latest",
         "cross-agent-teams-channel",
-        "--daemon-url", "http://192.168.1.10:9100/mcp",
+        "--daemon-url", "http://10.0.0.10:9100/mcp",
         "--token", "xats",
-        "--device", "gx-laptop"
+        "--device", "host-b"
       ]
     }
   }
@@ -301,19 +301,19 @@ npx -y cross-agent-teams-mcp@latest daemon \
 
 ```toml
 [mcp_servers.cross-agent-teams-mcp]
-url = "http://192.168.1.10:9100/mcp"
+url = "http://10.0.0.10:9100/mcp"
 bearer_token_env_var = "XATS_TOKEN"
 ```
 
 启动前 `export XATS_TOKEN=xats`.
 
-**daemon 所在机器** (jt 这台) 的 `.mcp.json` 同样需要加 `headers.Authorization` — daemon 一旦设了 `--token`, 所有 `/mcp` 请求 (包括 loopback) 都要带 token, 没例外.
+**daemon 所在机器** (host-a 这台) 的 `.mcp.json` 同样需要加 `headers.Authorization` — daemon 一旦设了 `--token`, 所有 `/mcp` 请求 (包括 loopback) 都要带 token, 没例外.
 
 #### 3. Agent 注册
 
 重启远端的 Claude Code (或 codex), channel proxy 用新的 `--device` 启动后, startup hint 会把 device 直接嵌进引导文案, 用户回复时一并带上即可:
 
-> Register me to xats as alice, device gx-laptop.
+> Register me to xats as alice, device host-b.
 
 如果远端 `register_agent` 不传 device, daemon 回 `device_required_from_remote` 直接拒.  device 进入身份键 `(device, team, name)`, 所以两台机器都可以有 `team=default` 下的 `creator`, 不会撞名.
 
@@ -321,9 +321,9 @@ bearer_token_env_var = "XATS_TOKEN"
 
 注册完成后, 用 `name:device` 后缀寻址同 team 不同 device 的 agent:
 
-> Send creator on jt-laptop a message: build is green.
+> Send creator on host-a a message: build is green.
 
-这条解析成 `creator:jt-laptop`, 路由到 `(device=jt-laptop, team=…, name=creator)` 这一行.  裸名字 `creator` 始终解析到 caller 自己 device.
+这条解析成 `creator:host-a`, 路由到 `(device=host-a, team=…, name=creator)` 这一行.  裸名字 `creator` 始终解析到 caller 自己 device.
 
 要点:
 
