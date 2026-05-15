@@ -251,6 +251,25 @@ Or with an explicit team:
 
 If you don't give a team, the agent uses your current working directory's basename — so you typically don't need to think about it.
 
+### Cross-device communication
+
+When an agent connects to a daemon running on **another machine** (the Cross-host (LAN) section above), it must self-declare a `device` label at registration:
+
+> Register me to xats as alice, device gx-laptop.
+
+That label becomes part of the agent's identity — `(device, team, name)` — so two physical machines can both have a `creator` in `team=default` without collision.  Once registered with a device, addressing across devices uses a `name:device` suffix:
+
+> Send creator on jt-laptop a message: build is green.
+
+This resolves to `creator:jt-laptop` and routes to that exact `(device=jt-laptop, team=…, name=creator)` row.  Bare `creator` resolves on the caller's own device.
+
+Notes:
+
+- The daemon's local label is set with its own `--device` flag (defaults to the daemon host's hostname normalized to lowercase + `-`).  Local-loopback agents auto-fill that label and don't need to specify `device` on register.
+- A remote register call that omits `device` is rejected with `device_required_from_remote`; the channel proxy's startup hint surfaces the configured device value so the agent prompt includes it verbatim.
+- `list_agents` returns a `device` field on every entry so you can see which devices contribute to your team and pick the right `name:device` target.
+- The channel proxy's `--device` flag (`cross-agent-teams-channel --device gx-laptop ...`) sets the device label for the proxy row and is propagated into the registration hint surfaced to the agent.  Match it to whatever label you want your machine's agents to appear under.
+
 ### Talk to other agents
 
 Address by name, by team, or by role:

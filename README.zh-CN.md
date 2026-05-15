@@ -251,6 +251,25 @@ agent 第一次连上 xats 时不会自动注册, 要等你开口.  直接说:
 
 不传 team 的话, agent 会用当前工作目录的 basename 作为默认 team — 一般情况下你不用操心.
 
+### 跨设备 (device) 通信
+
+当 agent 连的是**另一台机器**上的 daemon (见上方"跨主机 (LAN) 协作"), 它注册时必须自报一个 `device` 标签:
+
+> Register me to xats as alice, device gx-laptop.
+
+这个 device 会进入 agent 的身份键 — `(device, team, name)` — 所以两台机器都可以有 `team=default` 下的 `creator`, 不会撞名.  注册带上 device 之后, 跨设备寻址用 `name:device` 后缀:
+
+> Send creator on jt-laptop a message: build is green.
+
+这条会被解析成 `creator:jt-laptop`, 准确路由到 `(device=jt-laptop, team=…, name=creator)` 这一行.  裸名字 `creator` 默认解析到 caller 自己 device 上的同名 agent.
+
+要点:
+
+- daemon 自己的 device 标签用 `--device` 设置 (不传则从 daemon 主机的 hostname 派生, 小写 + 非 `[a-z0-9_-]` 替换为 `-`).  loopback 进来的 agent 注册时不必传 device, daemon 会自动填上这个值.
+- 远端 (非 loopback) 连接的 agent 注册时**必须**带 device, 否则 daemon 拒绝并返回 `device_required_from_remote`; channel proxy 的 startup hint 会把已配置的 device 值直接写进引导文案, agent 照抄即可.
+- `list_agents` 每条返回都有 `device` 字段, 方便你看清 team 里都有哪些设备贡献了哪些 agent, 进而拼对的 `name:device`.
+- channel proxy 自己的 `--device` 标志 (`cross-agent-teams-channel --device gx-laptop ...`) 决定 proxy 行的 device 字段, 同一台机器上的 agent 一般用同一个 device 名.
+
 ### 跟其它 agent 对话
 
 按名字, 按 team, 按 role 都行:

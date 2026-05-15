@@ -111,6 +111,7 @@ const SEND_MESSAGE_DESC = [
   'Private 1→1 message to another agent by name.  By default auto-poke=true with quiet-guard (auto_poke:false opts out), and need_reply=true.',
   'Set need_reply:false for FYI/no-response-needed messages; recipients see need_reply in get_inbox.',
   'to_agent_name is the target\'s `name` within its team; bare names resolve on the caller\'s device, and `name:device` targets a specific device.  For UUID-based sends use send_message_by_id.',
+  'REPLY RULE: when replying to a message returned by get_inbox, treat its `from_device` as authoritative — if it differs from your own device, you MUST send to `from_name + ":" + from_device` (bare `from_name` would resolve on YOUR device and miss the actual sender). Same-device replies can use the bare name. The safe fallback for unknown device is send_message_by_id({to_agent_id: from_agent_id, ...}).',
   'For multi-recipient use broadcast (same-team) or broadcast_to_role (same-team, by role).',
   '除非用户明确指定 to_team, 不要跨 team 沟通 (explicitly set to_team only when user asks).',
   'Reports poked, poke_skip_reasons (no_pane, guard_failed, tmux_unavailable, self); on guard_failed daemon retries at 30s/180s/600s (retry_scheduled, retry_delays_s); stops early on poked.',
@@ -876,6 +877,7 @@ export function registerBusinessTools(
         'Default behaviour (since_event_id omitted): the daemon reads the caller\'s server-side cursor (`agents.last_processed_event_id`), returns mail past it, and ADVANCES the cursor to the highest returned event_id in the same transaction. Subsequent default calls return only newer mail.',
         'Pagination via `limit` advances the cursor only to the last RETURNED event_id; the next default call resumes from there.',
         'Explicit `since_event_id` (any number, including 0) is read-only inspection: the daemon uses the supplied value as the lower bound and does NOT advance the stored cursor — useful for re-reading history or debugging without disturbing live read position.',
+        'REPLY GUIDANCE: every returned message carries `from_agent_id`, `from_name`, and `from_device` for the sender. When replying via `send_message`, construct `to_agent_name` as `from_name + ":" + from_device` whenever `from_device !== <your own device>` — otherwise the daemon resolves the bare name on YOUR device, misses the cross-device sender, and returns `unknown_recipient`. Bare `from_name` is correct only when `from_device === <your own device>`. `send_message_by_id({to_agent_id: from_agent_id, ...})` always works regardless of device and is the safe fallback when device is unknown.',
         'Retention: messages older than 30 days are deleted by the cleanup routine regardless of read state. Agents that go offline for more than 30 days forfeit any unread mail in that window.'
       ].join(' '),
       inputSchema: {

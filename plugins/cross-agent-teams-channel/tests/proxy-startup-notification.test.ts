@@ -57,4 +57,26 @@ describe('proxy startup channel notification', () => {
     await client.close()
     await server.close()
   })
+
+  it('includes the device value in both the user-facing ask and the register_agent call when the proxy runs with --device', async () => {
+    const csid = 'csid-with-device'
+    const hint = buildStartupHint(csid, 'mb-neo')
+    expect(hint.content).toContain('device: "mb-neo"')
+    // The user-facing wording must surface the device so the human reply
+    // includes it verbatim — otherwise daemon returns device_required_from_remote.
+    expect(hint.content).toContain('device: mb-neo')
+    expect(hint.content).toContain('device_required_from_remote')
+  })
+
+  it('omits ALL device wording when the proxy was started without --device (pure-local zero-noise contract)', async () => {
+    // csid intentionally free of the substring "device" so the regex below
+    // only matches the hint's own wording, not the csid itself.
+    const csid = '11111111-2222-3333-4444-555555555555'
+    const hint = buildStartupHint(csid)
+    // Local-loopback path must contain ZERO mention of "device" anywhere
+    // (case-insensitive) so a single-host user never has to think about
+    // device labels.  Cross-host wording is gated on --device being passed.
+    expect(hint.content).not.toMatch(/device/i)
+    expect(hint.content).not.toMatch(/device_required_from_remote/)
+  })
 })

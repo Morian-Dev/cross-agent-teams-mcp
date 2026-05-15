@@ -7,6 +7,8 @@ export interface InboxMessage {
   from_team: string
   to_team: string
   from_agent_id: string
+  from_name: string | null
+  from_device: string | null
   from_role: string | null
   to_agent_id: string | null
   to_role: string | null
@@ -45,7 +47,9 @@ export class GetInboxService {
     const tx = this.db.transaction(() => {
       const rows = this.db.prepare(
         `SELECT m.id, m.event_id, m.from_team, m.to_team, m.from_agent_id, m.to_agent_id, m.to_role, m.subject, m.body, m.need_reply, m.sent_at,
-                a.role as from_role
+                a.role as from_role,
+                a.name as from_name,
+                a.device as from_device
            FROM messages m
            LEFT JOIN agents a ON a.agent_id = m.from_agent_id
           WHERE m.to_team = ?

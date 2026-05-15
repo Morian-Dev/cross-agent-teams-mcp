@@ -23,11 +23,28 @@ export class CliArgError extends Error {
   }
 }
 
-export function buildStartupHint(csid: string): { content: string; meta: { source: string; kind: string } } {
+export function buildStartupHint(
+  csid: string,
+  device?: string
+): { content: string; meta: { source: string; kind: string } } {
+  // Local default path (no --device): emit the original same-host hint with NO
+  // device-related noise. Pure-local users never need to think about device.
+  // Cross-host path (--device passed): surface the device value in both the
+  // user-facing ask and the register_agent call so the agent and the human
+  // both know it is required (daemon returns device_required_from_remote
+  // otherwise).
+  const isCrossHost = device !== undefined
+  const deviceClause = isCrossHost ? `, device: "${device}"` : ''
+  const deviceRegisterFragment = isCrossHost
+    ? ` (this proxy is running with --device "${device}", so include device: "${device}" verbatim — the daemon enforces per-origin device validation, and on a remote daemon omitting it returns device_required_from_remote)`
+    : ''
+  const ask = isCrossHost
+    ? `'To join cross-agent-teams (xats) and message other agents, reply with: Register to xats — name: your-agent-name, team: your-team-name (optional; defaults to the current working directory basename), device: ${device} (cross-host setup — keep this value verbatim).'`
+    : `'To join cross-agent-teams (xats) and message other agents, reply with: Register to xats — name: your-agent-name, team: your-team-name (optional; defaults to the current working directory basename).'`
   const content = [
     `cross-agent-teams-mcp: your channel_session_id is ${csid}.`,
-    `Do NOT register automatically. First ask the user (in English) to register this session so it can talk to other agents — use exactly this wording: 'To join cross-agent-teams (xats) and message other agents, reply with: Register to xats — name: your-agent-name, team: your-team-name (optional; defaults to the current working directory basename).'`,
-    `Once the user provides a name (and optionally a team), call register_agent({agent_type: "claude-code", name: "<name from user>", team: "<team from user, omit if not provided>", ui_pid: $PPID, project_dir: "<current working directory>"}) — do NOT pass channel_session_id here; the daemon auto-binds via ui_pid.`,
+    `Do NOT register automatically. First ask the user (in English) to register this session so it can talk to other agents — use exactly this wording: ${ask}`,
+    `Once the user provides a name (and optionally a team), call register_agent({agent_type: "claude-code", name: "<name from user>", team: "<team from user, omit if not provided>"${deviceClause}, ui_pid: $PPID, project_dir: "<current working directory>"})${deviceRegisterFragment}. Do NOT pass channel_session_id here; the daemon auto-binds via ui_pid.`,
     `bind_channel({channel_session_id: "${csid}"}) is the low-level rebind tool for an already-registered Claude host that needs to switch to a fresh csid; it is NOT the primary registration path.`,
     `Do not use curl or another external HTTP client for Claude registration here — that would create a different MCP session, and follow-up tools in Claude Code could still see unknown_agent.`
   ].join(' ')
@@ -111,7 +128,7 @@ export async function main(
       registrationEverSucceeded = true
       // Announce csid to Claude via host-facing channel notification so Claude
       // can call bind_channel({channel_session_id}) to bind its own agent row.
-      const hint = buildStartupHint(csid)
+      const hint = buildStartupHint(csid, args.device)
       relayChannelWake(hostServer, hint)
     }
   })

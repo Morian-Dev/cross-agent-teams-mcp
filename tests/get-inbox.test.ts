@@ -42,6 +42,24 @@ describe('get_inbox', () => {
     expect(r.has_more).toBe(true)
   })
 
+  it('surfaces from_name and from_device on each message so the reader can reconstruct name:device replies', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const db = openDb(join(dir, 'data.db')); applySchema(db)
+    const agents = new AgentsRepo(db)
+    insertAgent(db, { agent_id: 'A', model: 'm', role: 'backend', name: 'alice', device: 'jt' })
+    insertAgent(db, { agent_id: 'B', model: 'm', role: 'frontend', name: 'bob', device: 'mb-neo' })
+    const send = new SendMessageService(db, agents, new EventsOutbox(db))
+    await send.send({ from: 'A', to_agent_id: 'B', body: 'hi', auto_poke: false })
+    const svc = new GetInboxService(db, agents)
+    const r = svc.get({ caller: 'B', since_event_id: 0 })
+    expect(r.messages.length).toBe(1)
+    const msg = r.messages[0]
+    expect(msg.from_agent_id).toBe('A')
+    expect(msg.from_name).toBe('alice')
+    expect(msg.from_device).toBe('jt')
+    expect(msg.from_role).toBe('backend')
+  })
+
   it('applies since_event_id cursor', async () => {
     const svc = await setup(10)
     const first = svc.get({ caller: 'B', since_event_id: 0, limit: 3 })
