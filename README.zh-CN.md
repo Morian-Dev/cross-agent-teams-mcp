@@ -135,7 +135,7 @@ url = "http://127.0.0.1:9100/mcp"
 
 `experimental_use_rmcp_client = true` 必须放在**顶级**, 缺这条 streamable-http MCP 加载不了.
 
-(daemon 带了 `--token <t>` 时, 加 `[mcp_servers.cross-agent-teams-mcp.headers]` 和 `Authorization = "Bearer <t>"`.)
+daemon 带了 `--token <t>` 时: 在启动 codex 的 shell 里 `export XATS_TOKEN=<t>`, 然后在 `[mcp_servers.cross-agent-teams-mcp]` 块里加 `bearer_token_env_var = "XATS_TOKEN"`.  (Codex 0.130+ 会**静默忽略**老写法 `[mcp_servers.X.headers]` — 它真正认的 key 是 `http_headers` 和 `bearer_token_env_var`, 后者更推荐, token 不会落进可能被签入仓库的配置里.)
 
 这种最小配置下 `send_message` 给这个 codex 会写邮箱, 但需要手动调 `get_inbox` 拉读, 没有跨会话 push 唤醒.
 
@@ -185,10 +185,12 @@ free-xats-codex() {
     if [[ -n "$codex_home" ]]; then
         CODEX_HOME="$codex_home" exec codex \
             --remote ws://127.0.0.1:8799 \
+            -C "$PWD" \
             -c xats.agent_id="\"$xats_agent_id\"" "$@"
     else
         exec codex \
             --remote ws://127.0.0.1:8799 \
+            -C "$PWD" \
             -c xats.agent_id="\"$xats_agent_id\"" "$@"
     fi
 }
@@ -328,6 +330,16 @@ bearer_token_env_var = "XATS_TOKEN"
 - `get_inbox` 每条消息都带 `from_name` 和 `from_device`.  回复时如果 `from_device !== 自己 device`, 用 `from_name:from_device`; 同 device 用裸名即可.  `send_message_by_id({to_agent_id: from_agent_id, ...})` 是 device 无关的安全兜底.
 - 安全提醒: bearer token 在能连到 daemon 的所有人之间共享, 把 LAN 暴露当作可信团队边界处理 — 本模式没有 per-agent 鉴权, 没有 device 白名单, 也没有 TLS.
 - 升级说明: 引入 `device` 轴之后首次启动会自动迁移存储 schema, 把身份从 `(team, name)` 改为 `(device, team, name)`, 并用 daemon 本机的 `--device` 标签回填旧数据.  如果已经注册了多个 device 上相同 `(team, name)` 的 agent 再回滚, 可能违反旧版本的唯一性假设.
+
+### 5. 跨设备场景下 Codex 特有的坑
+
+`--token` + Codex `--remote` 模式下会暴露三个本地单设备 setup 看不到的问题:
+
+- **app-server 的 env 在启动时固化**.  `codex app-server --listen ...` 继承启动它那个 shell 的环境.  你在另一个 shell `export XATS_TOKEN=…` 之后, 已经在跑的 app-server 看不到 —— codex MCP 握手时报 `Deserialize error: data did not match any variant of untagged enum JsonRpcMessage` (codex 把 daemon 返回的 401 body 当 JSON-RPC 帧解析失败).  解决: 在已经 `export` 好 `XATS_TOKEN` 的 shell 里重启 app-server.
+
+- **`--remote` 会劫持工作目录**.  `codex --remote …` 下 session 的 cwd 是 **app-server 进程的 cwd**, 不是 TUI 的, 所以 launcher 无论在哪个目录跑都会落回 app-server 启动时的目录.  在 `codex` 命令上加 `-C "$PWD"` 覆盖 (上面 launcher 已经带了).
+
+- **项目级 `.codex/config.toml` 会覆盖全局**.  陈旧的 per-project 配置块 —— 尤其在 iCloud / Dropbox 之类跨机同步的目录里 —— 会盖掉你的全局鉴权设置, 报错形如某个 `codex mcp list` (只反映全局) 里看不到的 server 名启动失败.  审计: `find ~ -path '*/.codex/config.toml' -print`, 删掉或更新陈旧条目.
 
 ## 更多
 

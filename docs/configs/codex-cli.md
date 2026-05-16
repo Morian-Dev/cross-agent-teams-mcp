@@ -12,7 +12,7 @@ url = "http://127.0.0.1:9100/mcp"
 
 `experimental_use_rmcp_client = true` 必须放在**顶级**, 缺这条 codex 不会用 rmcp client, streamable-http 类型 MCP 加载不了.
 
-如果 daemon 启动时带了 `--token`:
+如果 daemon 启动时带了 `--token`, **不要**用老写法 `[mcp_servers.X.headers]` —— Codex 0.130+ 不认 (会静默忽略, MCP 握手时被 daemon 401 拒掉, 然后 codex 把 401 body 当 JSON-RPC 帧解析失败, 报错 `Deserialize error: data did not match any variant of untagged enum JsonRpcMessage`).  正确写法用 `bearer_token_env_var` (推荐) 或 `http_headers`:
 
 ```toml
 experimental_use_rmcp_client = true
@@ -20,9 +20,10 @@ experimental_use_rmcp_client = true
 [mcp_servers.cross-agent-teams-mcp]
 type = "streamable-http"
 url = "http://127.0.0.1:9100/mcp"
-[mcp_servers.cross-agent-teams-mcp.headers]
-Authorization = "Bearer YOUR_TOKEN"
+bearer_token_env_var = "XATS_TOKEN"  # codex 启动时会读 $XATS_TOKEN 作为 Bearer
 ```
+
+启动 codex 的 shell 里要 `export XATS_TOKEN=<daemon 的 --token 值>`.  如果 codex 在 `--remote` 模式下跑, env 要在启动 **app-server** 的那个 shell 里 export, 不是 TUI shell (见 [docs/launchers/free-xats-codex.md](../launchers/free-xats-codex.md) 的 caveats).
 
 > **--remote 模式下 MCP 是 app-server 加载的**, 不是 TUI 加载的.  如果你打算用下文的"方案 2 (codex app-server websocket delivery)", 上面这段配置必须放在 app-server 启动时读到的 `CODEX_HOME` 里 — 一般就是全局 `~/.codex/config.toml`.  仅在项目 `.codex/config.toml` 配, 或仅在 TUI 启动时覆盖 `CODEX_HOME=...`, 在 `--remote` 模式下对 MCP 不起作用.
 

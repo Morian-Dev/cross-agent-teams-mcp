@@ -34,6 +34,7 @@ free-xats-codex() {
   fi
 
   exec codex --remote ws://127.0.0.1:8799 \
+    -C "$PWD" \
     -c xats.agent_id="\"$uuid\""
 }
 ```
@@ -49,10 +50,17 @@ free-xats-codex() {
 
 ## 为什么不自动改 `~/.zshrc`
 
-以上函数是**推荐写法**, 不是强制.  `~/.zshrc` 是用户个人配置, 本仓库默认不会动它.  你可以自由调整 `ws_url` / `codex` 参数 / 是否 `exec`.  但请保留两个关键点:
+以上函数是**推荐写法**, 不是强制.  `~/.zshrc` 是用户个人配置, 本仓库默认不会动它.  你可以自由调整 `ws_url` / `codex` 参数 / 是否 `exec`.  但请保留三个关键点:
 
 1. 在 tmux 内调用 `cross-agent-teams-mcp pre-register-codex-pane --pane "$TMUX_PANE" --agent-id "$uuid"` (忽略失败)
 2. 启动 codex 时带上 `-c xats.agent_id="\"$uuid\""`, 这样 daemon 才能用 argv UUID 反向校验 pane
+3. `-C "$PWD"` 必须保留 — `codex --remote` 默认会用 app-server 的 cwd, 不是 TUI 的; 不带 `-C "$PWD"` 的话, 无论你在哪个目录跑 launcher, codex session 都会落到 app-server 启动时的那个目录
+
+## Caveats (常见坑)
+
+- **app-server 的 env 在启动那一刻固化**.  `codex app-server --listen ...` 继承启动它那个 shell 的环境变量; 之后即便在 zshrc 加了 `export CROSS_AGENT_TEAMS_MCP_TOKEN=…` (或全局 `~/.codex/config.toml` 里配了 `bearer_token_env_var = "..."` 的那个变量名), 已经在跑的 app-server 看不到, codex MCP 握手会报 `Deserialize error: data did not match any variant of untagged enum JsonRpcMessage` (实际上是 daemon 返 401, codex 把 body 当 JSON-RPC 帧解析失败).  解决: 杀掉旧 app-server, 在已经 export 过对应 env 的 shell 里重启它.
+- **project-level `.codex/config.toml` 会盖全局**.  陈旧的 per-project MCP 配置块 (尤其在 iCloud / Dropbox 之类跨机同步目录里) 会盖掉全局 `~/.codex/config.toml` 的鉴权设置, 报错形如 `codex mcp list` 里**看不到的** server 名启动失败.  审计办法: `find ~ -path '*/.codex/config.toml' -print`, 一份份检查, 删掉或对齐.
+- **不要再用 `[mcp_servers.X.headers]`**.  Codex 0.130+ 不认这个 key 名 (会静默忽略), 实际生效的是 `http_headers` 和 `bearer_token_env_var` — 推荐后者, token 不会落进可能被签入仓库的配置里.
 
 ## 调试
 

@@ -135,7 +135,7 @@ url = "http://127.0.0.1:9100/mcp"
 
 `experimental_use_rmcp_client = true` MUST sit at the top level — without it, streamable-http MCP servers fail to load.
 
-(With `--token <t>` on the daemon: add `[mcp_servers.cross-agent-teams-mcp.headers]` and `Authorization = "Bearer <t>"`.)
+When the daemon was started with `--token <t>`: `export XATS_TOKEN=<t>` in the shell that launches codex, then add `bearer_token_env_var = "XATS_TOKEN"` to the `[mcp_servers.cross-agent-teams-mcp]` block.  (Codex 0.130+ silently ignores the older `[mcp_servers.X.headers]` form — its accepted keys are `http_headers` and `bearer_token_env_var`, and `bearer_token_env_var` is preferred so the token never lands in a checked-in config.)
 
 In this minimum mode, `send_message` to this Codex still drops a row in its mailbox, but you have to call `get_inbox` yourself to read it — no push wake.
 
@@ -185,10 +185,12 @@ free-xats-codex() {
     if [[ -n "$codex_home" ]]; then
         CODEX_HOME="$codex_home" exec codex \
             --remote ws://127.0.0.1:8799 \
+            -C "$PWD" \
             -c xats.agent_id="\"$xats_agent_id\"" "$@"
     else
         exec codex \
             --remote ws://127.0.0.1:8799 \
+            -C "$PWD" \
             -c xats.agent_id="\"$xats_agent_id\"" "$@"
     fi
 }
@@ -328,6 +330,16 @@ Notes:
 - `get_inbox` returns `from_name` and `from_device` on every message.  When replying via `send_message`, if `from_device !== <your device>` use `from_name:from_device`; otherwise the bare name is correct.  `send_message_by_id({to_agent_id: from_agent_id, ...})` is the device-agnostic safe fallback.
 - Security caveat: the bearer token is shared across everyone who can reach the daemon.  Treat LAN exposure as a trusted-team boundary; there is no per-agent auth, device whitelist, or TLS in this mode.
 - Upgrade note: the first startup after introducing the `device` axis auto-migrates the storage schema from `(team, name)` identity to `(device, team, name)` identity and backfills existing rows with the daemon's local `--device` label.  Rolling back after registering multiple devices with the same `(team, name)` can violate the old uniqueness assumption.
+
+### 5. Codex-specific gotchas under cross-device setups
+
+The `--token` + Codex `--remote` combination surfaces three caveats that don't show up in loopback-only single-device setups:
+
+- **App-server env is frozen at launch.**  `codex app-server --listen ...` inherits its environment from the shell that started it.  If you set `bearer_token_env_var = "XATS_TOKEN"` and later `export XATS_TOKEN=…` in another shell, the running app-server still doesn't see it — Codex MCP startup fails with `Deserialize error: data did not match any variant of untagged enum JsonRpcMessage` (codex tries to parse the daemon's 401 body as a JSON-RPC frame).  Restart the app-server from a shell that already has `XATS_TOKEN` exported.
+
+- **`--remote` hijacks the working directory.**  Under `codex --remote …` the session cwd is the **app-server's** cwd, not the TUI's — so a launcher invoked from any directory ends up wherever the app-server was started.  Pass `-C "$PWD"` to the `codex` command (already in the launcher above) to override per-session.
+
+- **Project-level `.codex/config.toml` overlays the global one.**  A stale per-project block — especially in an iCloud / Dropbox-synced project directory shared between machines — can shadow your global auth setup and produce a failed MCP server name you don't recognize.  Symptom: codex reports a startup failure for a server that doesn't appear in `codex mcp list` (which only reflects the global config).  Audit with `find ~ -path '*/.codex/config.toml' -print` and remove or update stale entries.
 
 ## More
 
