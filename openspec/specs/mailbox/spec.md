@@ -958,23 +958,6 @@ On success, the tool SHALL return:
 - **WHEN** A calls `get_delivery_status({message_id:'m1'})`
 - **THEN** the response includes one status row for B and one status row for C
 
-### Requirement: Task creation does not provide direct notification
-
-`task_add` SHALL remain a pure task-list mutation.  It MUST NOT accept `notify_agent_id`, `assignee_agent_id`, `auto_poke`, or any equivalent parameter that directly wakes or targets a specific agent.  Its MCP description MUST NOT instruct agents to call `poke`.
-
-Agents that want another agent to notice a task MUST use normal mailbox messaging and then query that message's delivery status.
-
-#### Scenario: task_add schema has no notification parameter
-- **GIVEN** a client fetches the MCP tool list via `tools/list`
-- **WHEN** it reads the schema for `task_add`
-- **THEN** the schema includes task fields such as `title`, `description`, and `depends_on`
-- **AND** the schema does not include `notify_agent_id`, `assignee_agent_id`, `auto_poke`, or `target_agent_id`
-
-#### Scenario: task_add description does not recommend poke
-- **GIVEN** a client fetches the MCP tool list via `tools/list`
-- **WHEN** it reads the description for `task_add`
-- **THEN** the description does not contain `poke`
-
 ### Requirement: send_message tool description forbids pre-verifying the recipient via list_agents
 
 The `send_message` MCP tool description (the by-name variant; see `src/mcp/tools.ts` `SEND_MESSAGE_DESC`) SHALL explicitly direct callers not to pre-verify the recipient's existence via `list_agents` before issuing the send. The description's prose may be reworded, but it MUST contain all of:

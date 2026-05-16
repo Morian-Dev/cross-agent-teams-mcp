@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### BREAKING
+
+- Removed 9 MCP tools: `register_contract`, `subscribe_contract`, `get_contract`, `diff_contracts`, `pending_contract_events`, `task_add`, `task_claim`, `task_complete`, and `task_list`.
+- Removed the unused task/contract storage surface.  On startup, legacy SQLite tables `tasks`, `contracts`, and `contract_subscriptions` are dropped with `DROP TABLE IF EXISTS`.
+- `unregister_self` no longer checks for in-progress tasks and no longer returns the `tasks_in_progress` error branch.
+
 ## 0.5.1
 
 ### Fixed

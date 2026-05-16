@@ -8,7 +8,9 @@ Provide an append-only, team-scoped events table that underpins message, contrac
 
 The SQLite database SHALL contain an `events` table with columns `event_id INTEGER PRIMARY KEY AUTOINCREMENT`, `from_team TEXT NOT NULL`, `to_team TEXT NOT NULL`, `event_type TEXT NOT NULL`, `actor_agent_id TEXT`, `payload TEXT NOT NULL /* JSON */`, `created_at TEXT NOT NULL /* ISO8601 */`. It MUST carry two composite indexes: `idx_events_from_team_eventid (from_team, event_id)` and `idx_events_to_team_eventid (to_team, event_id)`. It MUST NOT carry any index keyed on a single `team` column.
 
-For all event types other than cross-team `send_message` (e.g. `contract_registered`, `task_added`, `task_claimed`, `task_completed`, `agent_registered`, `broadcast` messages, `broadcast_to_role` messages, same-team `send_message`), the writer MUST set `from_team = to_team`. Only cross-team `send_message` may produce rows where `from_team != to_team`.
+For all event types other than cross-team `send_message` (e.g. `agent_registered`, `broadcast` messages, `broadcast_to_role` messages, same-team `send_message`), the writer MUST set `from_team = to_team`. Only cross-team `send_message` may produce rows where `from_team != to_team`.
+
+The set of event types written by the daemon SHALL be exactly: `agent_registered`, `message_sent` (for `send_message`, `broadcast`, `broadcast_to_role`, including the cross-team variant of `send_message`), and any infrastructure events emitted by the channel/runtime layer. The daemon MUST NOT write `contract_registered`, `task_added`, `task_claimed`, or `task_completed` events. Legacy rows of those types from prior versions MAY remain in the table until the 30-day cleanup TTL reaps them, but no consumer reads them.
 
 #### Scenario: Fresh database creates events table with both team-scoped indexes
 
@@ -21,6 +23,12 @@ For all event types other than cross-team `send_message` (e.g. `contract_registe
 
 - **WHEN** the daemon appends any event with `event_type != 'message_sent'`, or a `message_sent` event from `broadcast` / `broadcast_to_role` / same-team `send_message`
 - **THEN** the inserted row has `from_team == to_team`
+
+#### Scenario: Daemon never emits task or contract event types
+
+- **GIVEN** a running daemon on the new version
+- **WHEN** any MCP tool, internal job, or boot-time migration writes to the `events` table
+- **THEN** no row is inserted with `event_type IN ('contract_registered', 'task_added', 'task_claimed', 'task_completed')`
 
 ### Requirement: Event append returns monotonically increasing event_id
 
@@ -99,35 +107,25 @@ The cleanup routine MUST NOT delete:
 - **WHEN** `runCleanup` runs
 - **THEN** those old rows are deleted regardless of any agent's cursor position
 
-#### Scenario: Cleanup leaves non-proxy agents, tasks, contracts untouched
+#### Scenario: Cleanup leaves non-proxy agents untouched
 
-- **GIVEN** a non-proxy `agents` row with `registered_at = now - 90d`, a `tasks` row with `created_at = now - 90d`, and a `contracts` row with `registered_at = now - 90d`
+- **GIVEN** a non-proxy `agents` row with `registered_at = now - 90d`
 - **WHEN** `runCleanup` runs
-- **THEN** all three rows remain
+- **THEN** the row remains
 
 ### Requirement: Cleanup does not touch current-state tables
 
-The cleanup routine SHALL only operate on `events`, `messages`, `message_delivery_status`, and `agents` rows whose `role='__channel_proxy__'`. Rows in `tasks`, `contracts`, `contract_subscriptions`, and non-proxy `agents` rows MUST NOT be affected by age-based cleanup.
+The cleanup routine SHALL only operate on `events`, `messages`, `message_delivery_status`, and `agents` rows whose `role='__channel_proxy__'`. Non-proxy `agents` rows MUST NOT be affected by age-based cleanup.
 
-The `messages` and `message_delivery_status` tables are projections of the events outbox (each `messages` row carries `event_id REFERENCES events(event_id)` and each `message_delivery_status` row is keyed by `message_id`), so cleanup deletes them in lock-step with the underlying events to preserve referential integrity. Channel proxy rows in `agents` carry no time-bounded retention contract for business semantics; they are pure infrastructure registered by the channel proxy launcher, accumulate per Claude Code session start, and SHALL be reaped under the 30-day TTL described above. Other current-state tables (`tasks`, `contracts`, `contract_subscriptions`) and non-proxy `agents` rows survive cleanup forever.
+The `messages` and `message_delivery_status` tables are projections of the events outbox (each `messages` row carries `event_id REFERENCES events(event_id)` and each `message_delivery_status` row is keyed by `message_id`), so cleanup deletes them in lock-step with the underlying events to preserve referential integrity. Channel proxy rows in `agents` carry no time-bounded retention contract for business semantics; they are pure infrastructure registered by the channel proxy launcher, accumulate per Claude Code session start, and SHALL be reaped under the 30-day TTL described above. Non-proxy `agents` rows survive cleanup forever.
 
-#### Scenario: Ancient contracts survive cleanup
-
-- **GIVEN** a contract registered 60 days ago
-- **WHEN** cleanup runs
-- **THEN** the contract row remains in the `contracts` table
+The cleanup contract MUST NOT enumerate the legacy `tasks`, `contracts`, or `contract_subscriptions` tables. Those tables no longer exist on the new version; on upgrade they are dropped during daemon boot (see `daemon-core`).
 
 #### Scenario: Ancient non-proxy agent rows survive cleanup
 
 - **GIVEN** an `agents` row with `role='default'` (or any non-`__channel_proxy__` role) and `last_seen_at = now - 90d`
 - **WHEN** `runCleanup` runs
 - **THEN** the row remains
-
-#### Scenario: Ancient tasks survive cleanup
-
-- **GIVEN** a `tasks` row with `created_at = now - 90d` and `status='completed'`
-- **WHEN** cleanup runs
-- **THEN** the row remains in the `tasks` table
 
 ### Requirement: Cleanup may prune stale channel proxy rows
 

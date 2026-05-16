@@ -30,7 +30,10 @@ describe('proxy reconnect on daemon disconnect', () => {
     })
 
     // Wait for first sequence to complete.
-    await new Promise(r => setTimeout(r, 500))
+    const firstDeadline = Date.now() + 5000
+    while (history.length < 1 && Date.now() < firstDeadline) {
+      await new Promise(r => setTimeout(r, 50))
+    }
     expect(history).toHaveLength(1)
     expect(history[0]).toEqual(['register_agent', 'subscribe_channel_wake'])
 

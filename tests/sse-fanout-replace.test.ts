@@ -2,17 +2,14 @@ import { describe, it, expect } from 'vitest'
 import { SseFanout, type SseSink } from '../src/daemon/sse-fanout.js'
 
 interface TrackedSink extends SseSink {
-  messages: Array<Record<string, unknown>>
   closed: boolean
   heartbeats: number
 }
 
 function makeSink(): TrackedSink {
   const sink: TrackedSink = {
-    messages: [],
     closed: false,
     heartbeats: 0,
-    send(msg) { sink.messages.push(msg) },
     sendHeartbeat() { sink.heartbeats += 1 },
     close() { sink.closed = true }
   }

@@ -11,15 +11,6 @@ import { SendMessageService } from './send-message.js'
 import { BroadcastService } from './broadcast.js'
 import { BroadcastToRoleService } from './broadcast-to-role.js'
 import { GetInboxService } from './get-inbox.js'
-import { TaskAddService } from './task-add.js'
-import { TaskClaimService } from './task-claim.js'
-import { TaskCompleteService } from './task-complete.js'
-import { TaskListService } from './task-list.js'
-import { RegisterContractService } from './register-contract.js'
-import { SubscribeContractService } from './subscribe-contract.js'
-import { GetContractService } from './get-contract.js'
-import { DiffContractsService } from './diff-contracts.js'
-import { PendingContractEventsService } from './pending-contract-events.js'
 import { GetDeliveryStatusService } from './delivery-status.js'
 import { poke } from './poke.js'
 import { wrapStorage } from '../daemon/errors.js'
@@ -261,15 +252,6 @@ export function registerBusinessTools(
   const broadcastToRoleSvc = new BroadcastToRoleService(db, agents, events, { poke: autoPokeImpl })
   const inboxSvc = new GetInboxService(db, agents)
   const deliveryStatusSvc = new GetDeliveryStatusService(db)
-  const taskAddSvc = new TaskAddService(db, agents, events)
-  const taskClaimSvc = new TaskClaimService(db, agents, events)
-  const taskCompleteSvc = new TaskCompleteService(db, agents, events)
-  const taskListSvc = new TaskListService(db, agents)
-  const regContractSvc = new RegisterContractService(db, agents, events)
-  const subContractSvc = new SubscribeContractService(db, agents)
-  const getContractSvc = new GetContractService(db, agents)
-  const diffContractsSvc = new DiffContractsService(db, agents)
-  const pendingEventsSvc = new PendingContractEventsService(db, agents)
   const codexPanePreRegRepo = new CodexPanePreRegRepo(db)
   const preRegisterCodexPaneSvc = new PreRegisterCodexPaneService(codexPanePreRegRepo)
 
@@ -724,8 +706,7 @@ export function registerBusinessTools(
       description: [
         'Remove the caller session\'s current agent registration.',
         'This tool only unregisters the currently bound agent identity; it does not delete other agents.',
-        'If the caller still owns any in-progress task, it returns `tasks_in_progress` and leaves all state unchanged.',
-        'On success it deletes the agent row, removes the caller\'s contract subscriptions, and immediately releases the current MCP session back to an unregistered state.'
+        'On success it deletes the agent row and immediately releases the current MCP session back to an unregistered state.'
       ].join(' '),
       inputSchema: z.object({}).strict()
     },
@@ -914,170 +895,6 @@ export function registerBusinessTools(
     }
   )
 
-  // task_add
-  server.registerTool(
-    'task_add',
-    {
-      title: 'Add task',
-      description: [
-        "Add a new task to the team's task list.  Any team member can claim it via `task_claim`",
-        'on their next turn.  The task will sit in the pending queue until someone pulls `task_list`.',
-        '`task_add` itself does not wake or target any specific agent; use normal mailbox messaging',
-        'when coordination is needed, then inspect that message with `get_delivery_status`.'
-      ].join(' '),
-      inputSchema: {
-        title: z.string(),
-        description: z.string().optional(),
-        depends_on: z.array(z.string()).optional()
-      }
-    },
-    async (args: { title: string; description?: string; depends_on?: string[] }) => {
-      const who = requireAgent()
-      if (typeof who !== 'string') return toText(who)
-      return run(() => taskAddSvc.add({ caller: who, ...args }))
-    }
-  )
-
-  // task_claim
-  server.registerTool(
-    'task_claim',
-    {
-      title: 'Claim task',
-      description: 'Claim a pending task as caller',
-      inputSchema: { task_id: z.string() }
-    },
-    async (args: { task_id: string }) => {
-      const who = requireAgent()
-      if (typeof who !== 'string') return toText(who)
-      return run(() => taskClaimSvc.claim({ caller: who, task_id: args.task_id }))
-    }
-  )
-
-  // task_complete
-  server.registerTool(
-    'task_complete',
-    {
-      title: 'Complete task',
-      description: 'Mark the caller\'s in-progress task as completed',
-      inputSchema: {
-        task_id: z.string(),
-        result: z.string().optional()
-      }
-    },
-    async (args: { task_id: string; result?: string }) => {
-      const who = requireAgent()
-      if (typeof who !== 'string') return toText(who)
-      return run(() => taskCompleteSvc.complete({ caller: who, ...args }))
-    }
-  )
-
-  // task_list
-  server.registerTool(
-    'task_list',
-    {
-      title: 'List tasks',
-      description: 'List tasks in the caller\'s team, optionally filtered by status',
-      inputSchema: {
-        status: z.enum(['pending', 'in_progress', 'completed']).optional()
-      }
-    },
-    async (args: { status?: 'pending' | 'in_progress' | 'completed' }) => {
-      const who = requireAgent()
-      if (typeof who !== 'string') return toText(who)
-      return run(() => taskListSvc.list({ caller: who, status: args.status }))
-    }
-  )
-
-  // register_contract
-  server.registerTool(
-    'register_contract',
-    {
-      title: 'Register contract',
-      description: 'Register or upgrade a contract version',
-      inputSchema: {
-        name: z.string(),
-        schema: z.record(z.unknown()),
-        format: z.literal('jsonschema').optional(),
-        note: z.string().optional()
-      }
-    },
-    async (args: { name: string; schema: Record<string, unknown>; format?: 'jsonschema'; note?: string }) => {
-      const who = requireAgent()
-      if (typeof who !== 'string') return toText(who)
-      return run(() => {
-        const res = regContractSvc.register({ caller: who, ...args })
-        if ('version' in res && res._meta && fanout) {
-          try {
-            fanout.emitContractEvent(db, {
-              to_team: res._meta.team,
-              contract_name: res.name,
-              version: res.version,
-              event_id: res._meta.event_id,
-              diff: res._meta.diff
-            })
-          } catch { /* push failure does not roll back event */ }
-        }
-        if ('version' in res) {
-          const { _meta: _omit, ...publicRes } = res
-          return publicRes
-        }
-        return res
-      })
-    }
-  )
-
-  // subscribe_contract
-  server.registerTool(
-    'subscribe_contract',
-    {
-      title: 'Subscribe contract',
-      description: 'Subscribe the caller to a contract name\'s updates',
-      inputSchema: { name: z.string() }
-    },
-    async (args: { name: string }) => {
-      const who = requireAgent()
-      if (typeof who !== 'string') return toText(who)
-      return run(() => subContractSvc.subscribe({ caller: who, name: args.name }))
-    }
-  )
-
-  // get_contract
-  server.registerTool(
-    'get_contract',
-    {
-      title: 'Get contract',
-      description: 'Fetch a contract version (latest by default)',
-      inputSchema: {
-        name: z.string(),
-        version: z.number().int().optional()
-      }
-    },
-    async (args: { name: string; version?: number }) => {
-      const who = requireAgent()
-      if (typeof who !== 'string') return toText(who)
-      return run(() => getContractSvc.get({ caller: who, ...args }))
-    }
-  )
-
-  // diff_contracts
-  server.registerTool(
-    'diff_contracts',
-    {
-      title: 'Diff contracts',
-      description: 'Compute diff between two versions of a contract',
-      inputSchema: {
-        name: z.string(),
-        from_version: z.number().int(),
-        to_version: z.number().int()
-      }
-    },
-    async (args: { name: string; from_version: number; to_version: number }) => {
-      const who = requireAgent()
-      if (typeof who !== 'string') return toText(who)
-      return run(() => diffContractsSvc.diff({ caller: who, ...args }))
-    }
-  )
-
   // bind_channel — self-binding: caller (Claude host) writes its own channel_session_id
   if (channelWakeFanout) {
     const bindSvc = new BindChannelService(db, channelWakeFanout)
@@ -1184,21 +1001,4 @@ export function registerBusinessTools(
     )
   }
 
-  // pending_contract_events
-  server.registerTool(
-    'pending_contract_events',
-    {
-      title: 'Pending contract events',
-      description: 'Poll contract_registered events not yet seen',
-      inputSchema: {
-        since_event_id: z.number().int().optional(),
-        limit: z.number().int().optional()
-      }
-    },
-    async (args: { since_event_id?: number; limit?: number }) => {
-      const who = requireAgent()
-      if (typeof who !== 'string') return toText(who)
-      return run(() => pendingEventsSvc.poll({ caller: who, ...args }))
-    }
-  )
 }

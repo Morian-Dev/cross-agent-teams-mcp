@@ -314,24 +314,6 @@ export class AgentsRepo {
     this.db.prepare(`UPDATE agents SET last_seen_at=? WHERE agent_id=?`).run(new Date().toISOString(), agent_id)
   }
 
-  listClaimedInProgressTaskIds(args: { agent_id: string; team: string }): string[] {
-    const rows = this.db.prepare(
-      `SELECT id
-       FROM tasks
-       WHERE team=? AND claimed_by=? AND status='in_progress'
-       ORDER BY id ASC`
-    ).all(args.team, args.agent_id) as Array<{ id: string }>
-    return rows.map((row) => row.id)
-  }
-
-  deleteContractSubscriptions(args: { agent_id: string; team: string }): number {
-    const result = this.db.prepare(
-      `DELETE FROM contract_subscriptions
-       WHERE agent_id=? AND team=?`
-    ).run(args.agent_id, args.team)
-    return result.changes
-  }
-
   deleteById(agent_id: string): boolean {
     const result = this.db.prepare(
       `DELETE FROM agents

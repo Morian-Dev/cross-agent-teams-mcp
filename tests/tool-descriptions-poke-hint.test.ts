@@ -95,12 +95,11 @@ describe('tool descriptions: auto-poke and delivery status', () => {
     expect(bcSchema.required ?? []).not.toContain('auto_poke')
   })
 
-  it('task_add description does not expose direct notification or manual poke', async () => {
+  it('task tools are not exposed publicly', async () => {
     const tools = await listTools()
-    const tool = tools.find(t => t.name === 'task_add')
-    expect(tool).toBeDefined()
-    expect(tool!.description).not.toMatch(/poke/i)
-    expect(tool!.description).toMatch(/get_delivery_status/)
+    expect(tools.map(tool => tool.name)).not.toEqual(
+      expect.arrayContaining(['task_add', 'task_claim', 'task_complete', 'task_list'])
+    )
   })
 
   it('get_inbox description does NOT recommend poke (poke pushes, get_inbox pulls — no self-wake)', async () => {
@@ -218,7 +217,7 @@ describe('tool descriptions: auto-poke and delivery status', () => {
     const d = tools.find(t => t.name === 'unregister_self')!.description!
     expect(d).toMatch(/current agent registration|current agent/i)
     expect(d).toMatch(/does not delete other agents|self/i)
-    expect(d).toMatch(/tasks_in_progress/)
+    expect(d).not.toMatch(/tasks_in_progress/)
     expect(d).toMatch(/unregistered state/i)
   })
 

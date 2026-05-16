@@ -4,9 +4,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openDb } from '../src/storage/db.js'
 import { applySchema } from '../src/storage/schema.js'
-import { AgentsRepo } from '../src/storage/agents-repo.js'
-import { EventsOutbox } from '../src/storage/events-outbox.js'
-import { RegisterContractService } from '../src/mcp/register-contract.js'
 import { runCleanup } from '../src/daemon/cleanup.js'
 import { insertAgent } from './helpers/insert-agent.js'
 
@@ -100,31 +97,12 @@ describe('runCleanup uniform 30-day TTL', () => {
     expect(counts(db)).toEqual({ events: 0, messages: 0, status: 0 })
   })
 
-  it('does not touch agents, tasks, contracts, contract_subscriptions', () => {
+  it('does not touch non-proxy agents', () => {
     const db = fresh()
     insertAgent(db, { agent_id: 'A' })
-    const agents = new AgentsRepo(db)
-    const reg = new RegisterContractService(db, agents, new EventsOutbox(db))
-    reg.register({ caller: 'A', name: 'X', schema: { type: 'object' } })
-    db.prepare('UPDATE contracts SET registered_at=? WHERE name=?')
-      .run(new Date(Date.now() - 90 * 86400 * 1000).toISOString(), 'X')
-    db.prepare(
-      `INSERT INTO tasks (id, team, title, status, depends_on, created_at)
-       VALUES ('t1','default','t','pending','[]',?)`
-    ).run(new Date(Date.now() - 90 * 86400 * 1000).toISOString())
-    db.prepare(
-      `INSERT INTO contract_subscriptions (agent_id, team, contract_name, subscribed_at)
-       VALUES ('A','default','X',?)`
-    ).run(new Date(Date.now() - 90 * 86400 * 1000).toISOString())
     runCleanup(db)
-    const c = (db.prepare('SELECT COUNT(*) c FROM contracts').get() as { c: number }).c
-    const t = (db.prepare('SELECT COUNT(*) c FROM tasks').get() as { c: number }).c
     const a = (db.prepare('SELECT COUNT(*) c FROM agents').get() as { c: number }).c
-    const s = (db.prepare('SELECT COUNT(*) c FROM contract_subscriptions').get() as { c: number }).c
-    expect(c).toBe(1)
-    expect(t).toBe(1)
     expect(a).toBe(1)
-    expect(s).toBe(1)
   })
 
   it('honours child→parent ordering with foreign keys ON (no transient FK violation)', () => {

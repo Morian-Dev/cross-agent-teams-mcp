@@ -1,7 +1,4 @@
-import type Database from 'better-sqlite3'
-
 export interface SseSink {
-  send(msg: Record<string, unknown>): void
   sendHeartbeat(): void
   close(): void
 }
@@ -55,29 +52,6 @@ export class SseFanout {
 
   peek(): Array<{ agent_id: string; team: string }> {
     return Array.from(this.sessions.values()).map(s => ({ agent_id: s.agent_id, team: s.team }))
-  }
-
-  emitContractEvent(
-    db: Database.Database,
-    args: { to_team: string; contract_name: string; version: number; event_id: number; diff: unknown | null }
-  ): void {
-    const subs = db.prepare(
-      `SELECT agent_id FROM contract_subscriptions WHERE team=? AND contract_name=?`
-    ).all(args.to_team, args.contract_name) as Array<{ agent_id: string }>
-    const subscribedSet = new Set(subs.map(s => s.agent_id))
-    for (const session of this.sessions.values()) {
-      if (session.team !== args.to_team) continue
-      if (!subscribedSet.has(session.agent_id)) continue
-      try {
-        session.sink.send({
-          type: 'contract_event',
-          event_id: args.event_id,
-          contract_name: args.contract_name,
-          version: args.version,
-          diff: args.diff
-        })
-      } catch { /* broken sink; swallow */ }
-    }
   }
 
   private startHeartbeat(): void {

@@ -30,7 +30,7 @@ describe('unregister_self', () => {
     detectTmuxPaneMock.mockReset()
   })
 
-  it('successfully unregisters the current agent, removes subscriptions, and clears same-session identity', async () => {
+  it('successfully unregisters the current agent and clears same-session identity', async () => {
     detectTmuxPaneMock.mockResolvedValue({ error: 'not_found', candidates: [] })
     const dir = tmp()
     cleanups.push(dir)
@@ -48,11 +48,6 @@ describe('unregister_self', () => {
     const agentId = registered.agent_id as string
 
     const db = openDb(dbPath)
-    db.prepare(
-      `INSERT INTO contract_subscriptions (agent_id, team, contract_name, subscribed_at)
-       VALUES (?, ?, ?, ?)`
-    ).run(agentId, 'default', 'agent-registry', new Date().toISOString())
-
     const unregistered = await parseTool(await client.callTool({
       name: 'unregister_self',
       arguments: {},
@@ -68,11 +63,6 @@ describe('unregister_self', () => {
       | { agent_id: string }
       | undefined
     expect(agentRow).toBeUndefined()
-
-    const subCount = db.prepare(
-      `SELECT COUNT(*) AS c FROM contract_subscriptions WHERE agent_id=? AND team=?`
-    ).get(agentId, 'default') as { c: number }
-    expect(subCount.c).toBe(0)
 
     const inbox = await parseTool(await client.callTool({
       name: 'get_inbox',
@@ -93,7 +83,7 @@ describe('unregister_self', () => {
     await app.close()
   })
 
-  it('rejects unregister when the caller still owns in-progress tasks', async () => {
+  it('unregisters even if a prior-version legacy tasks table has an owned in-progress task', async () => {
     detectTmuxPaneMock.mockResolvedValue({ error: 'not_found', candidates: [] })
     const dir = tmp()
     cleanups.push(dir)
@@ -111,6 +101,19 @@ describe('unregister_self', () => {
     const agentId = registered.agent_id as string
 
     const db = openDb(dbPath)
+    db.exec(`CREATE TABLE tasks (
+      id TEXT PRIMARY KEY,
+      team TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      status TEXT NOT NULL,
+      depends_on TEXT NOT NULL,
+      claimed_by TEXT,
+      claimed_at TEXT,
+      completed_at TEXT,
+      result TEXT,
+      created_at TEXT NOT NULL
+    )`)
     db.prepare(
       `INSERT INTO tasks (id, team, title, description, status, depends_on, claimed_by, claimed_at, completed_at, result, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -133,14 +136,16 @@ describe('unregister_self', () => {
       arguments: {},
     }))
     expect(result).toEqual({
-      error: 'tasks_in_progress',
-      task_ids: ['T1'],
+      ok: true,
+      team: 'default',
+      name: 'alice',
+      agent_id: agentId,
     })
 
     const agentRow = db.prepare(`SELECT agent_id FROM agents WHERE agent_id=?`).get(agentId) as
       | { agent_id: string }
       | undefined
-    expect(agentRow).toEqual({ agent_id: agentId })
+    expect(agentRow).toBeUndefined()
 
     db.close()
     await transport.terminateSession()

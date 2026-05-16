@@ -7,6 +7,13 @@ import { applySchema } from '../src/storage/schema.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-'))
 
+function tableExists(db: ReturnType<typeof openDb>, name: string): boolean {
+  const row = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name=?`
+  ).get(name) as { name: string } | undefined
+  return row !== undefined
+}
+
 describe('agents schema', () => {
   const cleanups: string[] = []
   afterEach(() => { cleanups.forEach(d => rmSync(d, { recursive: true, force: true })); cleanups.length = 0 })
@@ -94,6 +101,59 @@ describe('agents schema', () => {
     const info = db.pragma(`index_info(agents_identity_idx)`) as Array<{ seqno: number; name: string }>
     const ordered = info.sort((a, b) => a.seqno - b.seqno).map(i => i.name)
     expect(ordered).toEqual(['device', 'team', 'name'])
+    db.close()
+  })
+
+  it('fresh install does not create legacy task or contract tables', () => {
+    const dir = tmp(); cleanups.push(dir)
+    const db = openDb(join(dir, 'data.db'))
+    applySchema(db)
+    expect(tableExists(db, 'tasks')).toBe(false)
+    expect(tableExists(db, 'contracts')).toBe(false)
+    expect(tableExists(db, 'contract_subscriptions')).toBe(false)
+    db.close()
+  })
+
+  it('upgrade from prior version drops legacy task and contract tables', () => {
+    const dir = tmp(); cleanups.push(dir)
+    const db = openDb(join(dir, 'data.db'))
+    db.exec(`
+      CREATE TABLE tasks (
+        id TEXT PRIMARY KEY,
+        team TEXT NOT NULL,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL,
+        depends_on TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE contracts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        team TEXT NOT NULL,
+        name TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        format TEXT NOT NULL,
+        schema TEXT NOT NULL,
+        registered_by TEXT NOT NULL,
+        registered_at TEXT NOT NULL
+      );
+      CREATE TABLE contract_subscriptions (
+        agent_id TEXT NOT NULL,
+        team TEXT NOT NULL,
+        contract_name TEXT NOT NULL,
+        subscribed_at TEXT NOT NULL,
+        PRIMARY KEY (agent_id, team, contract_name)
+      );
+      INSERT INTO tasks (id, team, title, status, depends_on, created_at)
+      VALUES ('t1', 'default', 'legacy', 'pending', '[]', '2026-01-01T00:00:00Z');
+      INSERT INTO contracts (team, name, version, format, schema, registered_by, registered_at)
+      VALUES ('default', 'X', 1, 'jsonschema', '{}', 'a1', '2026-01-01T00:00:00Z');
+      INSERT INTO contract_subscriptions (agent_id, team, contract_name, subscribed_at)
+      VALUES ('a1', 'default', 'X', '2026-01-01T00:00:00Z');
+    `)
+    applySchema(db)
+    expect(tableExists(db, 'tasks')).toBe(false)
+    expect(tableExists(db, 'contracts')).toBe(false)
+    expect(tableExists(db, 'contract_subscriptions')).toBe(false)
     db.close()
   })
 })

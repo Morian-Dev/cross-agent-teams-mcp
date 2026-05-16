@@ -32,11 +32,11 @@ function parseTool(res: unknown): any {
   return JSON.parse(r.content[0].text)
 }
 
-describe('phase 2 three-agent end-to-end', () => {
+describe('three-agent end-to-end', () => {
   const cleanups: string[] = []
   afterEach(() => { cleanups.forEach(d => rmSync(d, { recursive: true, force: true })); cleanups.length = 0 })
 
-  it('three roles register, broadcast fans out, task lifecycle enforces ownership', async () => {
+  it('three roles register and broadcast fans out to inboxes', async () => {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
     const url = `http://${host}:${port}/mcp`
@@ -88,33 +88,10 @@ describe('phase 2 three-agent end-to-end', () => {
       expect(inboxB.messages.some((m: { body: string }) => m.body === 'all-hands')).toBe(true)
       expect(inboxC.messages.some((m: { body: string }) => m.body === 'all-hands')).toBe(true)
 
-      // A adds a task
-      const add = parseTool(await agentA.client.callTool({
-        name: 'task_add',
-        arguments: { title: 'ship docs' }
-      }))
-      expect(typeof add.task_id).toBe('string')
-
-      // B claims the task
-      const claim = parseTool(await agentB.client.callTool({
-        name: 'task_claim',
-        arguments: { task_id: add.task_id }
-      }))
-      expect(claim).toEqual({ ok: true })
-
-      // C tries to complete → not_owner
-      const notOwner = parseTool(await agentC.client.callTool({
-        name: 'task_complete',
-        arguments: { task_id: add.task_id, result: 'sneaky' }
-      }))
-      expect(notOwner).toEqual({ error: 'not_owner' })
-
-      // B completes successfully
-      const done = parseTool(await agentB.client.callTool({
-        name: 'task_complete',
-        arguments: { task_id: add.task_id, result: 'done' }
-      }))
-      expect(done).toEqual({ ok: true })
+      const tools = await agentA.client.listTools()
+      expect(tools.tools.map(tool => tool.name)).not.toEqual(
+        expect.arrayContaining(['task_add', 'task_claim', 'task_complete', 'task_list'])
+      )
     } finally {
       await agentA.close()
       await agentB.close()

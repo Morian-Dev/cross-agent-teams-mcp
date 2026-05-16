@@ -60,38 +60,6 @@ const DDL = [
     PRIMARY KEY (message_id, agent_id)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_message_delivery_status_message ON message_delivery_status(message_id)`,
-  `CREATE TABLE IF NOT EXISTS tasks (
-    id TEXT PRIMARY KEY,
-    team TEXT NOT NULL,
-    title TEXT NOT NULL,
-    description TEXT,
-    status TEXT NOT NULL CHECK(status IN ('pending','in_progress','completed')),
-    depends_on TEXT NOT NULL,
-    claimed_by TEXT,
-    claimed_at TEXT,
-    completed_at TEXT,
-    result TEXT,
-    created_at TEXT NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS contracts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    team TEXT NOT NULL,
-    name TEXT NOT NULL,
-    version INTEGER NOT NULL,
-    format TEXT NOT NULL CHECK(format='jsonschema'),
-    schema TEXT NOT NULL,
-    note TEXT,
-    registered_by TEXT NOT NULL,
-    registered_at TEXT NOT NULL,
-    UNIQUE(team, name, version)
-  )`,
-  `CREATE TABLE IF NOT EXISTS contract_subscriptions (
-    agent_id TEXT NOT NULL,
-    team TEXT NOT NULL,
-    contract_name TEXT NOT NULL,
-    subscribed_at TEXT NOT NULL,
-    PRIMARY KEY (agent_id, team, contract_name)
-  )`,
   `CREATE TABLE IF NOT EXISTS codex_pane_pre_registrations (
     pane_id TEXT PRIMARY KEY,
     xats_agent_id TEXT NOT NULL,
@@ -269,11 +237,18 @@ function migrateAgentsCursorWatermark(db: Database.Database): void {
   )
 }
 
+function dropLegacyTaskContractTables(db: Database.Database): void {
+  db.exec(`DROP TABLE IF EXISTS tasks`)
+  db.exec(`DROP TABLE IF EXISTS contracts`)
+  db.exec(`DROP TABLE IF EXISTS contract_subscriptions`)
+}
+
 export function applySchema(
   db: Database.Database,
   opts: { localDevice?: string } = {}
 ): void {
   for (const sql of DDL) db.exec(sql)
+  dropLegacyTaskContractTables(db)
   migrateAgentsDeliveryColumns(db)
   migrateAgentsDeviceColumns(db, opts.localDevice ?? 'local')
   migrateMessagesNeedReplyColumn(db)

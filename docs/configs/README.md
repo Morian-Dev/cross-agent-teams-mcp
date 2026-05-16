@@ -10,9 +10,6 @@ Manual scenario (broadcast replaces human relay):
 1. In each of opencode, Claude Code, Codex CLI, call `register_agent` with a distinct `role`.
 2. From opencode, call `broadcast({ body: "shared context X" })`.
 3. In Claude Code and Codex CLI, call `get_inbox({ since_event_id: 0 })`; both receive X.
-4. From opencode, call `task_add({ title: "build login API" })`.
-5. From Claude Code, `task_claim` then `task_complete` with a result.
-6. From Codex CLI, `task_list` to confirm completed state.
 
 Record stdout transcripts per agent as evidence.
 
@@ -81,7 +78,6 @@ Earlier docs recommended chaining `send_message` + `poke` manually.  That patter
 
 - You hit a `guard_failed` in `poke_skip_reasons` but need to interrupt regardless.
 - You are sending a `broadcast` with `auto_poke: false` but want to poke one specific recipient.
-- `task_add` does not auto-poke (by design — prevents task-add spam); chain `poke` per the agent you want to claim it.
 
 ## Agent 身份幂等 (agent_id reuse by identity)
 

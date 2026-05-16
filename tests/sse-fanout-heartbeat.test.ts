@@ -8,7 +8,6 @@ describe('SseFanout heartbeat', () => {
   it('ticks on every attached sink at the configured interval', () => {
     const fanout = new SseFanout({ heartbeatIntervalMs: 100 })
     const sink: SseSink = {
-      send: vi.fn(),
       sendHeartbeat: vi.fn(),
       close: vi.fn()
     }
@@ -19,7 +18,7 @@ describe('SseFanout heartbeat', () => {
 
   it('stops ticker when last sink detaches', () => {
     const fanout = new SseFanout({ heartbeatIntervalMs: 100 })
-    const sink: SseSink = { send: vi.fn(), sendHeartbeat: vi.fn(), close: vi.fn() }
+    const sink: SseSink = { sendHeartbeat: vi.fn(), close: vi.fn() }
     fanout.attach('sess-A', 'default', sink)
     vi.advanceTimersByTime(150)
     const before = (sink.sendHeartbeat as any).mock.calls.length
