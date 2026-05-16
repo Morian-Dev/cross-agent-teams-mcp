@@ -56,21 +56,7 @@ register_agent({
 
 后续 `poke` 走 `codex-appserver` transport (websocket 直接进对方 thread 里 start a turn).
 
-下面"方案 1 / 方案 2"是更底层的入口和历史用法, 一般不需要.
-
-## 方案 1, 使用 tmux 作为兜底 delivery
-
-`register_agent` 现在会在 identity 注册成功后, 对已识别的本地客户端 best-effort 自动尝试 runtime 绑定, 这样 tmux poke 通常不需要再多调一次工具。  调用方也不再向 `register_agent` 传 `tmux_pane_id`.
-
-如果注册成功但响应里仍然带了 `hint`, 说明这次自动 runtime 绑定没有收敛, 当前还没有可用的 `tmux_pane_id`.  这时调用 `bind_runtime_identity(...)` 完成显式绑定.  `detect_tmux_pane(...)` 只作为调试工具, 不再负责写 registry.
-
-如果你的 Codex 使用场景是“模型自己调用 MCP 工具”, 而不是外部客户端包装自动传参, 一个稳定的本地兜底方案是直接运行仓库里的注册脚本:
-
-```bash
-node scripts/register-codex-self.mjs --name gpt --team default --role default --model gpt-5
-```
-
-这个脚本会先读取当前 tmux pane 的 tty, 再在该 tty 上定位真实 Codex UI 进程 pid, 最后把 `ui_pid` 一起带进 `register_agent`.  对多 Codex pane 并行的场景, 这比只靠 `detect_tmux_pane({ agent: "codex" })` 更稳.
+下面的"方案 2"是更底层的入口和历史用法, 一般不需要.  Tmux pane 兜底 delivery 不再需要专门的本地脚本: `register_agent` 注册成功后会 best-effort 自动尝试 runtime 绑定; 如果响应里仍然带了 `hint`, 调用 `bind_runtime_identity(...)` 显式绑定即可.
 
 ## 方案 2, 使用 Codex app-server websocket delivery
 
