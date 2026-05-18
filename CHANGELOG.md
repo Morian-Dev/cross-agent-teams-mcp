@@ -6,6 +6,7 @@
 
 - **Orphan-session GC default grace lowered to 5 min (from 30 min).**  After 0.5.12 raised the grace to 30 min, a long-running daemon under multi-client load OOM'd (V8 "Ineffective mark-compacts near heap limit") after ~73 min, because misbehaving clients that connect-and-idle in a loop could accumulate orphan-session state for the full 30-min window.  5 min keeps the human-paced register_agent workflow protected (combined with the loopback companion that lets local clients skip the device-spoofing check entirely) while bounding worst-case orphan accumulation 6x tighter.  Override via `ORPHAN_GC_IDLE_MS` env var or `opts.orphanGcIdleMs`.
 - **未注册 MCP session 增加硬上限.**  Orphan GC 现在除了 idle 窗口外, 还会按 `ORPHAN_GC_MAX_AGE_MS` 强制关闭长期未注册但持续有心跳的 session, 并用 `ORPHAN_GC_MAX_SESSIONS` 限制同时保留的未注册 session 数量。  已完成 `register_agent` 的 session 仍然永不被该 GC 按时间或数量断开。
+- **channel proxy 注册失败不再泄漏未注册 MCP session.**  当 daemon 拒绝 proxy 的 `register_agent` 或 `subscribe_channel_wake` 调用时, proxy 现在会先发送 Streamable HTTP `DELETE` 终止 session, 再关闭本地 client/transport。  失败重试也会按指数退避递增到 `backoffMaxMs`, 避免远端全局 MCP 配置在注册失败时高频创建新 sid。
 
 ### Added
 

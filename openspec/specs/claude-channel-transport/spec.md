@@ -151,6 +151,12 @@ On startup, the channel proxy SHALL, in order:
 6. Emit a `notifications/claude/channel` JSON-RPC notification on its host stdio telling Claude: its `channel_session_id` is `<csid>` and it should call `bind_channel({channel_session_id: '<csid>'})` to complete binding.  This notification remains for backward compatibility — callers that already know how to parse and use it are unaffected — but it is no longer required for auto-binding to succeed (see `agent-registry`'s auto-bind requirement).
 7. Enter an idle loop receiving `notifications/channel_wake` from the daemon and relaying them to the host.
 
+If `register_agent` or `subscribe_channel_wake` fails after the Streamable HTTP MCP
+session has been initialized, the proxy MUST terminate the daemon-facing MCP session
+before retrying.  Termination MUST use the Streamable HTTP session termination path
+(HTTP `DELETE` via the SDK transport), not only local client close, so the daemon can
+drop the unregistered session immediately.
+
 #### Scenario: proxy generates fresh csid on every startup
 
 - **GIVEN** a proxy binary
@@ -192,6 +198,14 @@ On startup, the channel proxy SHALL, in order:
 - **THEN** the proxy exits with non-zero status
 - **AND** stderr mentions `CROSS_AGENT_TEAMS_MCP_DAEMON_URL` (so operator knows what env var to set)
 
+#### Scenario: proxy terminates daemon MCP session after registration failure
+
+- **GIVEN** the proxy has initialized a daemon-facing Streamable HTTP MCP session
+- **AND** the daemon rejects the proxy's `register_agent` call
+- **WHEN** the proxy handles that registration failure
+- **THEN** it terminates the MCP session via Streamable HTTP session termination
+- **AND** the daemon's orphan MCP session count returns to its prior value
+
 ### Requirement: Channel proxy relays channel_wake as claude/channel notification
 
 When the proxy receives a `notifications/channel_wake` notification from the daemon with params `{content, meta}`, it SHALL emit a `notifications/claude/channel` notification to its host stdio with params `{content, meta}` unchanged (no rewriting of keys or values).
@@ -210,7 +224,7 @@ When the proxy receives a `notifications/channel_wake` notification from the dae
 
 ### Requirement: Channel proxy reconnects on daemon disconnect
 
-When the proxy's MCP connection to the daemon closes unexpectedly, the proxy SHALL attempt reconnection with exponential backoff (initial 500ms, capped 30s, jittered).  On each successful reconnect the proxy MUST re-execute the registration sequence (`register_agent` → `subscribe_channel_wake` → emit host-startup notification) in order.  During disconnect periods the proxy MUST NOT emit any `notifications/claude/channel` relay to its host.
+When the proxy's MCP connection to the daemon closes unexpectedly, or when its registration sequence fails, the proxy SHALL attempt reconnection with exponential backoff (initial 500ms, capped 30s, jittered).  On each successful reconnect the proxy MUST re-execute the registration sequence (`register_agent` → `subscribe_channel_wake` → emit host-startup notification) in order.  During disconnect periods the proxy MUST NOT emit any `notifications/claude/channel` relay to its host.
 
 #### Scenario: proxy reconnects and re-subscribes after daemon disconnect
 
@@ -218,6 +232,13 @@ When the proxy's MCP connection to the daemon closes unexpectedly, the proxy SHA
 - **WHEN** the fake daemon closes the MCP transport
 - **THEN** the proxy retries the HTTP MCP connect within 2 seconds (first retry in the schedule)
 - **AND** upon reconnect, the proxy re-calls `register_agent`, `subscribe_channel_wake` in order
+
+#### Scenario: proxy backs off repeated registration failures
+
+- **GIVEN** each registration sequence attempt fails before subscription succeeds
+- **WHEN** the proxy retries
+- **THEN** consecutive attempts use exponential backoff up to the configured cap
+- **AND** the proxy does NOT create a high-frequency stream of new MCP sessions
 
 ### Requirement: End-to-end poke via channel transport
 

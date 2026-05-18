@@ -55,4 +55,35 @@ describe('proxy registration sequence (self-binding)', () => {
     await seq.close()
     await app.close()
   }, 20000)
+
+  it('closes the MCP transport when register_agent fails', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const { app, port, host } = await startServer({
+      dbPath: join(dir, 'data.db'),
+      port: 0,
+      localDevice: 'local-device'
+    })
+    const url = `http://${host}:${port}/mcp`
+
+    await expect(runRegistrationSequence({
+      daemonUrl: url,
+      channel_session_id: 'csid-fail',
+      device: 'remote-device',
+      backoffInitialMs: 10,
+      backoffMaxMs: 50
+    })).rejects.toThrow(/register_agent failed/)
+
+    await new Promise(r => setTimeout(r, 100))
+    const health = await fetch(`http://${host}:${port}/health`)
+    const body = await health.json() as {
+      mcp_sessions: { total: number; orphan: number; registered: number }
+    }
+    expect(body.mcp_sessions).toMatchObject({
+      total: 0,
+      orphan: 0,
+      registered: 0,
+    })
+
+    await app.close()
+  }, 20000)
 })

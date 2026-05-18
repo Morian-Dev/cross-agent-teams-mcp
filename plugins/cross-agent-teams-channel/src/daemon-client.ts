@@ -61,56 +61,64 @@ export async function runRegistrationSequence(
 
   await client.connect(transport)
 
-  // 1. register_agent as proxy — identity keyed on pid, stable across reconnects
-  // so the (device, team, name) ON CONFLICT upsert reuses the same row instead of spamming new rows.
-  // Only send `device` when the caller explicitly set one; otherwise let the daemon auto-fill
-  // its local label (loopback) or reject (remote, which requires explicit device).
-  const registerArgs: Record<string, unknown> = {
-    agent_type: 'custom',
-    agent_type_name: 'cross-agent-teams-channel',
-    model: 'proxy',
-    role: '__channel_proxy__',
-    name: `channel-proxy-${process.pid}`,
-    team: 'default',
-    claude_ui_pid: findClaudeUiPid(),
-    delivery: {
-      kind: 'claude-channel',
-      channel_session_id: config.channel_session_id,
-    },
-  }
-  if (config.device !== undefined) {
-    registerArgs.device = config.device
-  }
-  const registerResp = await client.callTool({
-    name: 'register_agent',
-    arguments: registerArgs,
-  })
-  order.push('register_agent')
-  const regResult = await parseToolResult(registerResp)
-  if (!('agent_id' in regResult)) {
-    throw new Error(`register_agent failed: ${JSON.stringify(regResult)}`)
-  }
-
-  // 2. subscribe_channel_wake — proxy's csid is fresh per startup
-  const subResp = await client.callTool({
-    name: 'subscribe_channel_wake',
-    arguments: { channel_session_id: config.channel_session_id }
-  })
-  order.push('subscribe_channel_wake')
-  const subResult = await parseToolResult(subResp)
-  if (!('ok' in subResult) || subResult.ok !== true) {
-    throw new Error(`subscribe_channel_wake failed: ${JSON.stringify(subResult)}`)
-  }
-
-  return {
-    order,
-    lastSubscribeResult: subResult,
-    client,
-    transport,
-    close: async () => {
-      try { await client.close() } catch { /* best-effort */ }
-      try { await transport.close() } catch { /* best-effort */ }
+  try {
+    // 1. register_agent as proxy — identity keyed on pid, stable across reconnects
+    // so the (device, team, name) ON CONFLICT upsert reuses the same row instead of spamming new rows.
+    // Only send `device` when the caller explicitly set one; otherwise let the daemon auto-fill
+    // its local label (loopback) or reject (remote, which requires explicit device).
+    const registerArgs: Record<string, unknown> = {
+      agent_type: 'custom',
+      agent_type_name: 'cross-agent-teams-channel',
+      model: 'proxy',
+      role: '__channel_proxy__',
+      name: `channel-proxy-${process.pid}`,
+      team: 'default',
+      claude_ui_pid: findClaudeUiPid(),
+      delivery: {
+        kind: 'claude-channel',
+        channel_session_id: config.channel_session_id,
+      },
     }
+    if (config.device !== undefined) {
+      registerArgs.device = config.device
+    }
+    const registerResp = await client.callTool({
+      name: 'register_agent',
+      arguments: registerArgs,
+    })
+    order.push('register_agent')
+    const regResult = await parseToolResult(registerResp)
+    if (!('agent_id' in regResult)) {
+      throw new Error(`register_agent failed: ${JSON.stringify(regResult)}`)
+    }
+
+    // 2. subscribe_channel_wake — proxy's csid is fresh per startup
+    const subResp = await client.callTool({
+      name: 'subscribe_channel_wake',
+      arguments: { channel_session_id: config.channel_session_id }
+    })
+    order.push('subscribe_channel_wake')
+    const subResult = await parseToolResult(subResp)
+    if (!('ok' in subResult) || subResult.ok !== true) {
+      throw new Error(`subscribe_channel_wake failed: ${JSON.stringify(subResult)}`)
+    }
+
+    return {
+      order,
+      lastSubscribeResult: subResult,
+      client,
+      transport,
+      close: async () => {
+        try { await transport.terminateSession() } catch { /* best-effort */ }
+        try { await client.close() } catch { /* best-effort */ }
+        try { await transport.close() } catch { /* best-effort */ }
+      }
+    }
+  } catch (err) {
+    try { await transport.terminateSession() } catch { /* best-effort */ }
+    try { await client.close() } catch { /* best-effort */ }
+    try { await transport.close() } catch { /* best-effort */ }
+    throw err
   }
 }
 
@@ -156,11 +164,16 @@ export async function waitForDisconnect(
 export function runReconnectingProxy(config: ReconnectingProxyConfig): ReconnectingProxyController {
   let stopped = false
   let currentSeq: RegistrationSequenceResult | null = null
+  const initialBackoffMs = config.backoffInitialMs ?? 500
+  const maxBackoffMs = config.backoffMaxMs ?? initialBackoffMs
+  let nextBackoffMs = initialBackoffMs
 
   async function loop(): Promise<void> {
     while (!stopped) {
+      let failed = false
       try {
         const seq = await runRegistrationSequence(config)
+        nextBackoffMs = initialBackoffMs
         currentSeq = seq
         if (config.onSequenceComplete) config.onSequenceComplete([...seq.order])
 
@@ -172,10 +185,12 @@ export function runReconnectingProxy(config: ReconnectingProxyConfig): Reconnect
         try { await seq.close() } catch { /* best-effort */ }
         currentSeq = null
       } catch {
+        failed = true
         // register/subscribe failed — wait and retry.
       }
       if (stopped) break
-      const wait = config.backoffInitialMs ?? 500
+      const wait = nextBackoffMs
+      if (failed) nextBackoffMs = Math.min(nextBackoffMs * 2, maxBackoffMs)
       await new Promise(r => setTimeout(r, wait))
     }
   }
