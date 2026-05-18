@@ -104,3 +104,12 @@ KEEP_ALIVE_TIMEOUT_MS=60000 HEARTBEAT_INTERVAL_MS=15000 node dist/cli.js daemon
 ```
 
 **Honest limitation**: these mitigations widen the window but do NOT fully fix the codex rmcp idle-transport collapse ("error decoding response body").  The root cause is in codex's HTTP connection pool lacking retry-on-decode-error; it's outside this daemon's control.  If codex still crashes after `KEEP_ALIVE_TIMEOUT_MS` seconds of idle, restart codex and re-register.
+
+## Daemon shutdown drain deadline
+
+`SIGTERM` / `SIGINT` triggers a graceful drain bounded by a deadline:
+
+- `XATS_SHUTDOWN_GRACE_MS` (default `5000`, 5s) — maximum time the daemon will wait for in-flight requests (including long-lived SSE / channel-proxy streams) to drain before force-closing remaining sockets via `server.closeAllConnections()` and exiting `0`.  Negative values clamp to `0`.  `0` skips the drain entirely (useful for restart scripts that hold a long-lived client and accept abrupt disconnect).
+- A second `SIGTERM` / `SIGINT` received before the first drain completes skips the remaining wait, removes the pid file, and exits `0` within ~200 ms.  Useful when an operator gets impatient.
+
+The pid file at `~/.cross-agent-teams-mcp/daemon.pid` is removed on every exit path (clean drain, deadline timeout, second-signal fast-exit).

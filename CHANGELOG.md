@@ -11,6 +11,8 @@
 ### Fixed
 
 - **Orphan-session GC is now idle-based, not age-based.**  The reaper in `src/mcp/transport.ts` previously closed any pre-registration session older than 60 s, which evicted Claude Code's HTTP MCP session before a human-paced `register_agent` could land and returned `unknown_session` on the call.  The reaper now tracks `lastActivityAt` per session (bumped on every POST/GET/DELETE that matches an existing session) and closes only sessions whose idle time exceeds `graceMs`.  Default grace raised to 30 min, overridable via `opts.orphanGcIdleMs` / env `ORPHAN_GC_IDLE_MS`.  Crashed clients (no traffic at all) are still reaped; clients that send any request inside the window stay alive.
+- **Daemon SIGTERM no longer hangs when long-lived clients are attached.**  The graceful shutdown handler in `src/daemon/shutdown.ts` now bounds `app.close()` with a deadline (default `5000 ms`, overridable via `XATS_SHUTDOWN_GRACE_MS`).  When the deadline expires, the handler calls `app.server.closeAllConnections()` to terminate stragglers (typically channel-proxy SSE streams and Claude Code MCP subscription streams), releases the pid file, and exits `0`.  Previously the daemon could be left in a half-dead state (listener gone, process alive) until `kill -9`.
+- **Second SIGTERM / SIGINT is now a fast exit.**  Receiving a repeat signal during drain skips the remaining wait, still releases the pid file, and exits `0` within ~200 ms.  Signal handlers moved from `process.once` to `process.on` with an internal `shuttingDown` flag so repeat signals are observed instead of falling through to Node's default terminator (which previously skipped pid-file cleanup and exited `143`/`130`).
 
 ## 0.5.1
 
