@@ -70,10 +70,10 @@ describe('mcp-transport orphan-session GC', () => {
     const sid = t.sessionId!
     expect(typeof sid).toBe('string')
 
-    // Run GC at a virtual `now` 60 001 ms after the createdAt was recorded.
-    // The session was just created (Date.now() is millisecond-fresh), so
-    // pretending `now = Date.now() + 60_001` is past the grace period.
-    h.reapOrphanSessions(Date.now() + 60_001)
+    // Idle-based reap: the session has had no activity since the initialize
+    // request, so a virtual `now` 60 001 ms after the last bump exceeds the
+    // 60 s explicit grace and reaps it.
+    h.reapOrphanSessions(Date.now() + 60_001, 60_000)
 
     // After reap, raw POST with the orphan's sid returns unknown_session.
     await new Promise(r => setTimeout(r, 100))
@@ -123,13 +123,38 @@ describe('mcp-transport orphan-session GC', () => {
     const h = await bootHarness(join(dir, 'data.db'))
     const { c, t } = await connectAndInit(h.host, h.port)
 
-    // Only 30 seconds elapsed virtually — within 60 s grace.
-    h.reapOrphanSessions(Date.now() + 30_000)
+    // Only 30 seconds elapsed virtually — within the explicit 60 s grace.
+    h.reapOrphanSessions(Date.now() + 30_000, 60_000)
     await new Promise(r => setTimeout(r, 50))
 
     // Session should still be alive — call a tool over it.
     const echo = await c.callTool({ name: 'echo', arguments: { msg: 'hb' } }) as { content: Array<{ text: string }> }
     expect(echo.content[0].text).toContain('hb')
+
+    await c.close()
+    await t.close()
+    await h.close()
+  }, 15000)
+
+  it('activity bumps the idle clock and prevents reap', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const h = await bootHarness(join(dir, 'data.db'))
+    const { c, t } = await connectAndInit(h.host, h.port)
+
+    // Simulate a human-paced workflow: client initialized minutes ago, then
+    // issues a tool call (any POST counts as activity), then takes another
+    // minute before calling register_agent. With createdAt-based reaping the
+    // first GC tick would have killed the session; idle-based reaping keeps
+    // it alive because the echo call bumped lastActivityAt.
+    await new Promise(r => setTimeout(r, 50))
+    await c.callTool({ name: 'echo', arguments: { msg: 'still working' } })
+
+    // GC at 5 s past the echo: well within a 60 s idle grace.
+    h.reapOrphanSessions(Date.now() + 5_000, 60_000)
+    await new Promise(r => setTimeout(r, 50))
+
+    const echo = await c.callTool({ name: 'echo', arguments: { msg: 'survived' } }) as { content: Array<{ text: string }> }
+    expect(echo.content[0].text).toContain('survived')
 
     await c.close()
     await t.close()
@@ -149,7 +174,7 @@ describe('mcp-transport orphan-session GC', () => {
     h.channelWakeFanout.attach(csid, () => { /* sink */ }, sid)
     expect(h.channelWakeFanout.has(csid)).toBe(true)
 
-    h.reapOrphanSessions(Date.now() + 60_001)
+    h.reapOrphanSessions(Date.now() + 60_001, 60_000)
     await new Promise(r => setTimeout(r, 100))
 
     expect(h.channelWakeFanout.has(csid)).toBe(false)

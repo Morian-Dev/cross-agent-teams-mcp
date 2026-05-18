@@ -16,6 +16,7 @@ export interface ServerOpts {
   localDevice?: string
   cleanupIntervalMs?: number
   orphanGcIntervalMs?: number
+  orphanGcIdleMs?: number
   fanout?: SseFanout
   channelWakeFanout?: ChannelWakeFanout
 }
@@ -23,6 +24,7 @@ export interface StartOpts extends ServerOpts { port: number; host?: string }
 
 const DEFAULT_KEEP_ALIVE_TIMEOUT_MS = 120_000
 const DEFAULT_ORPHAN_GC_INTERVAL_MS = 60_000
+const DEFAULT_ORPHAN_GC_IDLE_MS = 1_800_000
 
 export interface DaemonContext {
   localDevice: string
@@ -63,8 +65,10 @@ export async function buildServer(opts: ServerOpts): Promise<FastifyInstance> {
 
   const orphanGcIntervalMs = opts.orphanGcIntervalMs
     ?? parsePositiveInt(process.env.ORPHAN_GC_INTERVAL_MS, DEFAULT_ORPHAN_GC_INTERVAL_MS)
+  const orphanGcIdleMs = opts.orphanGcIdleMs
+    ?? parsePositiveInt(process.env.ORPHAN_GC_IDLE_MS, DEFAULT_ORPHAN_GC_IDLE_MS)
   const orphanGcInterval = setInterval(() => {
-    try { mcp.reapOrphanSessions(Date.now()) } catch { /* best-effort */ }
+    try { mcp.reapOrphanSessions(Date.now(), orphanGcIdleMs) } catch { /* best-effort */ }
   }, orphanGcIntervalMs)
   if (typeof orphanGcInterval.unref === 'function') orphanGcInterval.unref()
 

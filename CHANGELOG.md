@@ -8,6 +8,10 @@
 - Removed the unused task/contract storage surface.  On startup, legacy SQLite tables `tasks`, `contracts`, and `contract_subscriptions` are dropped with `DROP TABLE IF EXISTS`.
 - `unregister_self` no longer checks for in-progress tasks and no longer returns the `tasks_in_progress` error branch.
 
+### Fixed
+
+- **Orphan-session GC is now idle-based, not age-based.**  The reaper in `src/mcp/transport.ts` previously closed any pre-registration session older than 60 s, which evicted Claude Code's HTTP MCP session before a human-paced `register_agent` could land and returned `unknown_session` on the call.  The reaper now tracks `lastActivityAt` per session (bumped on every POST/GET/DELETE that matches an existing session) and closes only sessions whose idle time exceeds `graceMs`.  Default grace raised to 30 min, overridable via `opts.orphanGcIdleMs` / env `ORPHAN_GC_IDLE_MS`.  Crashed clients (no traffic at all) are still reaped; clients that send any request inside the window stay alive.
+
 ## 0.5.1
 
 ### Fixed

@@ -17,6 +17,7 @@ interface Session {
   sessionId: string
   agentIdHolder: AgentIdHolder
   createdAt: number
+  lastActivityAt: number
   clientInfo?: {
     name?: string
     version?: string
@@ -27,8 +28,12 @@ interface Session {
 export interface MountMcpResult {
   /**
    * Force-close any session whose `agentIdHolder.current === undefined` and
-   * `now - session.createdAt >= graceMs`. Calling `transport.close()` on each
-   * orphan triggers the existing onclose chain. Default `graceMs` is 60_000.
+   * `now - session.lastActivityAt >= graceMs`. `lastActivityAt` is bumped on
+   * every POST/GET/DELETE that matches an existing session, so this reaps only
+   * truly idle pre-registration sessions (typical cause: a client initialized
+   * but crashed before calling register_agent). Default `graceMs` is 1_800_000
+   * (30 min), large enough that a human-paced register_agent issued minutes
+   * after MCP initialize is not reaped out from under the client.
    */
   reapOrphanSessions: (now: number, graceMs?: number) => void
 }
@@ -124,12 +129,14 @@ export function mountMcp(
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sid: string) => {
         sessionIdForCaller = sid
+        const now = Date.now()
         sessions.set(sid, {
           transport,
           server,
           sessionId: sid,
           agentIdHolder,
-          createdAt: Date.now(),
+          createdAt: now,
+          lastActivityAt: now,
           clientInfo: undefined,
           originInfo: { origin: 'local', remote_addr: null },
         })
@@ -178,12 +185,14 @@ export function mountMcp(
       registerSvc
     )
     server.connect(transport)
+    const now = Date.now()
     return {
       transport,
       server,
       sessionId: '',
       agentIdHolder,
-      createdAt: Date.now(),
+      createdAt: now,
+      lastActivityAt: now,
       originInfo: { origin: 'local', remote_addr: null },
     }
   }
@@ -239,6 +248,7 @@ export function mountMcp(
     if (!session) { session = createSession() }
     if (session) {
       session.originInfo = originInfo
+      session.lastActivityAt = Date.now()
     }
 
     if (body?.method === 'initialize') {
@@ -263,6 +273,7 @@ export function mountMcp(
     const sid = req.headers['mcp-session-id'] as string | undefined
     const session = sid ? sessions.get(sid) : undefined
     if (!session) return reply.code(400).send({ error: 'unknown_session' })
+    session.lastActivityAt = Date.now()
     await session.transport.handleRequest(req.raw, reply.raw)
     return reply
   })
@@ -271,15 +282,16 @@ export function mountMcp(
     const sid = req.headers['mcp-session-id'] as string | undefined
     const session = sid ? sessions.get(sid) : undefined
     if (!session) return reply.code(400).send({ error: 'unknown_session' })
+    session.lastActivityAt = Date.now()
     await session.transport.handleRequest(req.raw, reply.raw)
     return reply
   })
 
-  function reapOrphanSessions(now: number, graceMs = 60_000): void {
+  function reapOrphanSessions(now: number, graceMs = 1_800_000): void {
     for (const session of sessions.values()) {
       if (session.agentIdHolder.current !== undefined) continue
-      const ageMs = now - session.createdAt
-      if (ageMs < graceMs) continue
+      const idleMs = now - session.lastActivityAt
+      if (idleMs < graceMs) continue
       try { void session.transport.close() } catch { /* best-effort */ }
     }
   }
