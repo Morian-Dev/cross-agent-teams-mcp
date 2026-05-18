@@ -160,13 +160,29 @@ When any SQLite operation raises an error indicating I/O failure, WAL lock, or d
 
 ### Requirement: Health endpoint
 
-The daemon SHALL expose `GET /health` returning HTTP 200 with JSON body `{ "ok": true, "version": <package-version>, "uptime_seconds": <number> }`. This endpoint MUST NOT require the bearer token even when auth is configured.
+The daemon SHALL expose `GET /health` returning HTTP 200 with JSON body containing `{ "ok": true, "version": <package-version>, "uptime_seconds": <number>, "mcp_sessions": <metrics> }`. This endpoint MUST NOT require the bearer token even when auth is configured.
+
+`mcp_sessions` MUST contain numeric fields:
+
+- `total`: current MCP sessions retained by the daemon.
+- `registered`: sessions that have completed `register_agent`.
+- `orphan`: sessions that have not completed `register_agent`.
+- `fanout`: active SSE fanout bindings.
 
 #### Scenario: Health check without token
 
 - **GIVEN** daemon started with `--token s3cret`
 - **WHEN** a GET request is made to `/health` without Authorization header
 - **THEN** response status is 200 and body has `ok: true`
+
+#### Scenario: Health reports MCP session metrics
+
+- **GIVEN** the daemon has one registered MCP session
+- **AND** the daemon has one unregistered MCP session
+- **WHEN** a GET request is made to `/health`
+- **THEN** response body has `mcp_sessions.total: 2`
+- **AND** response body has `mcp_sessions.registered: 1`
+- **AND** response body has `mcp_sessions.orphan: 1`
 
 ### Requirement: HTTP keep-alive timeout default and env override
 
@@ -286,4 +302,3 @@ The drop MUST be idempotent and silent: on fresh installs the statements are no-
 - **WHEN** the daemon boots on the new version
 - **THEN** all three tables are absent from the database afterwards
 - **AND** the daemon completes startup without warnings
-

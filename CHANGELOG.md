@@ -5,10 +5,12 @@
 ### Fixed
 
 - **Orphan-session GC default grace lowered to 5 min (from 30 min).**  After 0.5.12 raised the grace to 30 min, a long-running daemon under multi-client load OOM'd (V8 "Ineffective mark-compacts near heap limit") after ~73 min, because misbehaving clients that connect-and-idle in a loop could accumulate orphan-session state for the full 30-min window.  5 min keeps the human-paced register_agent workflow protected (combined with the loopback companion that lets local clients skip the device-spoofing check entirely) while bounding worst-case orphan accumulation 6x tighter.  Override via `ORPHAN_GC_IDLE_MS` env var or `opts.orphanGcIdleMs`.
+- **未注册 MCP session 增加硬上限.**  Orphan GC 现在除了 idle 窗口外, 还会按 `ORPHAN_GC_MAX_AGE_MS` 强制关闭长期未注册但持续有心跳的 session, 并用 `ORPHAN_GC_MAX_SESSIONS` 限制同时保留的未注册 session 数量。  已完成 `register_agent` 的 session 仍然永不被该 GC 按时间或数量断开。
 
 ### Added
 
 - **Loopback companion listener.**  When the daemon binds to a non-loopback-covering host (e.g. a LAN IP like `192.168.1.102`), `startServer` now also binds a second HTTP listener on `127.0.0.1` at the same port that reuses the primary Fastify request handler.  This lets same-host clients connect via `http://127.0.0.1:<port>/mcp` and be classified as `local` origin (auto-filling the daemon's local device label, bypassing the remote spoofing check), while LAN peers still connect via the primary host.  Avoids the alternative of `--host 0.0.0.0`, which would also expose the daemon on every other interface (VPN, public IPs).  Skipped automatically when the primary host already covers `127.0.0.1` (`127.0.0.1`, `localhost`, `0.0.0.0`).  Opt out with `--no-loopback-companion` / `loopbackCompanion: false`.  Companion bind failure is fatal — if a local client config relies on `127.0.0.1:<port>`, silently starting only the LAN listener would leave it broken.
+- **`/health` exposes MCP session metrics.**  The health response now includes `mcp_sessions.total`, `registered`, `orphan`, and `fanout`, so daemon-side session growth can be observed without heap snapshots.
 
 ### BREAKING
 

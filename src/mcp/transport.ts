@@ -25,19 +25,27 @@ interface Session {
   originInfo: SessionOriginInfo
 }
 
+export interface OrphanSessionGcOptions {
+  idleMs?: number
+  maxAgeMs?: number
+  maxSessions?: number
+}
+
+export interface McpSessionMetrics {
+  total: number
+  registered: number
+  orphan: number
+  fanout: number
+}
+
 export interface MountMcpResult {
   /**
-   * Force-close any session whose `agentIdHolder.current === undefined` and
-   * `now - session.lastActivityAt >= graceMs`. `lastActivityAt` is bumped on
-   * every POST/GET/DELETE that matches an existing session, so this reaps only
-   * truly idle pre-registration sessions (typical cause: a client initialized
-   * but crashed before calling register_agent). Default `graceMs` is 300_000
-   * (5 min). Large enough that a human-paced register_agent issued a couple
-   * minutes after MCP initialize is not reaped out from under the client, but
-   * tight enough to bound memory accumulation from misbehaving clients that
-   * connect-and-idle in a loop.
+   * Force-close unregistered sessions that cross the configured idle window,
+   * max-age window, or orphan-session count limit. Registered sessions are
+   * intentionally exempt so long-idle user-facing clients remain attached.
    */
-  reapOrphanSessions: (now: number, graceMs?: number) => void
+  reapOrphanSessions: (now: number, opts?: number | OrphanSessionGcOptions) => void
+  sessionMetrics: () => McpSessionMetrics
 }
 
 export function mountMcp(
@@ -45,7 +53,11 @@ export function mountMcp(
   db: Database.Database,
   fanout: SseFanout,
   channelWakeFanout?: ChannelWakeFanout,
-  opts: { log?: (line: string) => void; context?: DaemonContext } = {}
+  opts: {
+    log?: (line: string) => void
+    context?: DaemonContext
+    orphanSessionLimit?: number
+  } = {}
 ): MountMcpResult {
   const sessions = new Map<string, Session>()
   const log = opts.log ?? ((line: string) => { console.debug(line) })
@@ -71,6 +83,38 @@ export function mountMcp(
   // Once register_agent succeeds for a session id, pin the owning Authorization hash.
   // A later register_agent presenting a different Authorization triggers HTTP 409.
   const sessionOwners = new Map<string, string>()
+
+  function normalizeGcOptions(opts: number | OrphanSessionGcOptions | undefined): Required<OrphanSessionGcOptions> {
+    if (typeof opts === 'number') {
+      return { idleMs: opts, maxAgeMs: opts, maxSessions: Number.POSITIVE_INFINITY }
+    }
+    const idleMs = opts?.idleMs ?? 300_000
+    return {
+      idleMs,
+      maxAgeMs: opts?.maxAgeMs ?? idleMs,
+      maxSessions: opts?.maxSessions ?? Number.POSITIVE_INFINITY,
+    }
+  }
+
+  function closeOrphanSession(session: Session, now: number, reason: string): void {
+    const ageS = Math.floor((now - session.createdAt) / 1000)
+    const idleS = Math.floor((now - session.lastActivityAt) / 1000)
+    try {
+      log(`mcp orphan session reap: sid=${session.sessionId} age_s=${ageS} idle_s=${idleS} reason=${reason}`)
+    } catch { /* best-effort */ }
+    try { void session.transport.close() } catch { /* best-effort */ }
+  }
+
+  function enforceOrphanSessionLimit(now: number, maxSessions: number, candidates?: Session[]): void {
+    if (!Number.isFinite(maxSessions)) return
+    const orphans = (candidates ?? Array.from(sessions.values()))
+      .filter(session => session.agentIdHolder.current === undefined)
+      .sort((a, b) => a.createdAt - b.createdAt)
+    if (orphans.length <= maxSessions) return
+    for (const session of orphans.slice(0, orphans.length - maxSessions)) {
+      closeOrphanSession(session, now, 'max_sessions')
+    }
+  }
 
   function createSession(): Session {
     const server = new McpServer(
@@ -142,6 +186,9 @@ export function mountMcp(
           clientInfo: undefined,
           originInfo: { origin: 'local', remote_addr: null },
         })
+        if (opts.orphanSessionLimit !== undefined) {
+          enforceOrphanSessionLimit(now, opts.orphanSessionLimit)
+        }
       }
     })
     transport.onclose = () => {
@@ -289,14 +336,40 @@ export function mountMcp(
     return reply
   })
 
-  function reapOrphanSessions(now: number, graceMs = 300_000): void {
+  function reapOrphanSessions(now: number, opts?: number | OrphanSessionGcOptions): void {
+    const gc = normalizeGcOptions(opts)
+    const survivors: Session[] = []
     for (const session of sessions.values()) {
       if (session.agentIdHolder.current !== undefined) continue
       const idleMs = now - session.lastActivityAt
-      if (idleMs < graceMs) continue
-      try { void session.transport.close() } catch { /* best-effort */ }
+      const ageMs = now - session.createdAt
+      if (idleMs >= gc.idleMs) {
+        closeOrphanSession(session, now, 'idle')
+        continue
+      }
+      if (ageMs >= gc.maxAgeMs) {
+        closeOrphanSession(session, now, 'max_age')
+        continue
+      }
+      survivors.push(session)
+    }
+    enforceOrphanSessionLimit(now, gc.maxSessions, survivors)
+  }
+
+  function sessionMetrics(): McpSessionMetrics {
+    let registered = 0
+    let orphan = 0
+    for (const session of sessions.values()) {
+      if (session.agentIdHolder.current === undefined) orphan += 1
+      else registered += 1
+    }
+    return {
+      total: sessions.size,
+      registered,
+      orphan,
+      fanout: fanout.peek().length,
     }
   }
 
-  return { reapOrphanSessions }
+  return { reapOrphanSessions, sessionMetrics }
 }

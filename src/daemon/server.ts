@@ -18,6 +18,8 @@ export interface ServerOpts {
   cleanupIntervalMs?: number
   orphanGcIntervalMs?: number
   orphanGcIdleMs?: number
+  orphanGcMaxAgeMs?: number
+  orphanGcMaxSessions?: number
   fanout?: SseFanout
   channelWakeFanout?: ChannelWakeFanout
 }
@@ -34,6 +36,8 @@ export interface StartOpts extends ServerOpts {
 const DEFAULT_KEEP_ALIVE_TIMEOUT_MS = 120_000
 const DEFAULT_ORPHAN_GC_INTERVAL_MS = 60_000
 const DEFAULT_ORPHAN_GC_IDLE_MS = 300_000
+const DEFAULT_ORPHAN_GC_MAX_AGE_MS = 300_000
+const DEFAULT_ORPHAN_GC_MAX_SESSIONS = 100
 
 export interface DaemonContext {
   localDevice: string
@@ -62,8 +66,18 @@ export async function buildServer(opts: ServerOpts): Promise<FastifyInstance> {
     ;(req as typeof req & { xatsPeer?: SessionOriginInfo }).xatsPeer =
       classifyPeerAddress(req.raw.socket.remoteAddress)
   })
-  app.get('/health', async () => ({ ok: true, version, uptime_seconds: Math.floor((Date.now() - startedAt) / 1000) }))
-  const mcp = mountMcp(app, db, fanout, channelWakeFanout, { context })
+  const orphanGcMaxSessions = opts.orphanGcMaxSessions
+    ?? parsePositiveInt(process.env.ORPHAN_GC_MAX_SESSIONS, DEFAULT_ORPHAN_GC_MAX_SESSIONS)
+  const mcp = mountMcp(app, db, fanout, channelWakeFanout, {
+    context,
+    orphanSessionLimit: orphanGcMaxSessions,
+  })
+  app.get('/health', async () => ({
+    ok: true,
+    version,
+    uptime_seconds: Math.floor((Date.now() - startedAt) / 1000),
+    mcp_sessions: mcp.sessionMetrics(),
+  }))
 
   const cleanupIntervalMs = opts.cleanupIntervalMs
     ?? Number(process.env.CLEANUP_INTERVAL_MS ?? 60 * 60 * 1000)
@@ -76,8 +90,16 @@ export async function buildServer(opts: ServerOpts): Promise<FastifyInstance> {
     ?? parsePositiveInt(process.env.ORPHAN_GC_INTERVAL_MS, DEFAULT_ORPHAN_GC_INTERVAL_MS)
   const orphanGcIdleMs = opts.orphanGcIdleMs
     ?? parsePositiveInt(process.env.ORPHAN_GC_IDLE_MS, DEFAULT_ORPHAN_GC_IDLE_MS)
+  const orphanGcMaxAgeMs = opts.orphanGcMaxAgeMs
+    ?? parsePositiveInt(process.env.ORPHAN_GC_MAX_AGE_MS, DEFAULT_ORPHAN_GC_MAX_AGE_MS)
   const orphanGcInterval = setInterval(() => {
-    try { mcp.reapOrphanSessions(Date.now(), orphanGcIdleMs) } catch { /* best-effort */ }
+    try {
+      mcp.reapOrphanSessions(Date.now(), {
+        idleMs: orphanGcIdleMs,
+        maxAgeMs: orphanGcMaxAgeMs,
+        maxSessions: orphanGcMaxSessions,
+      })
+    } catch { /* best-effort */ }
   }, orphanGcIntervalMs)
   if (typeof orphanGcInterval.unref === 'function') orphanGcInterval.unref()
 

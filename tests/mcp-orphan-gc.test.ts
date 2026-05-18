@@ -8,6 +8,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { openDb } from '../src/storage/db.js'
 import { applySchema } from '../src/storage/schema.js'
 import { mountMcp } from '../src/mcp/transport.js'
+import type { OrphanSessionGcOptions } from '../src/mcp/transport.js'
 import { SseFanout } from '../src/daemon/sse-fanout.js'
 import { ChannelWakeFanout } from '../src/daemon/channel-wake-fanout.js'
 
@@ -19,17 +20,20 @@ interface Harness {
   host: string
   channelWakeFanout: ChannelWakeFanout
   fanout: SseFanout
-  reapOrphanSessions: (now: number, graceMs?: number) => void
+  reapOrphanSessions: (now: number, opts?: number | OrphanSessionGcOptions) => void
   close: () => Promise<void>
 }
 
-async function bootHarness(dbPath: string): Promise<Harness> {
+async function bootHarness(
+  dbPath: string,
+  opts: { orphanSessionLimit?: number } = {}
+): Promise<Harness> {
   const app = Fastify({ logger: false })
   const db = openDb(dbPath)
   applySchema(db)
   const fanout = new SseFanout()
   const channelWakeFanout = new ChannelWakeFanout()
-  const mcp = mountMcp(app, db, fanout, channelWakeFanout)
+  const mcp = mountMcp(app, db, fanout, channelWakeFanout, opts)
   await app.listen({ port: 0, host: '127.0.0.1' })
   const addr = app.server.address()
   const port = addr && typeof addr === 'object' ? addr.port : 0
@@ -56,6 +60,20 @@ async function connectAndInit(host: string, port: number): Promise<{ c: Client; 
   return { c, t }
 }
 
+async function expectUnknownSession(host: string, port: number, sid: string): Promise<void> {
+  const probe = await fetch(`http://${host}:${port}/mcp`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'accept': 'application/json, text/event-stream',
+      'mcp-session-id': sid,
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })
+  })
+  expect(probe.status).toBe(400)
+  expect(await probe.json()).toEqual({ error: 'unknown_session' })
+}
+
 describe('mcp-transport orphan-session GC', () => {
   const cleanups: string[] = []
   afterEach(() => {
@@ -77,17 +95,7 @@ describe('mcp-transport orphan-session GC', () => {
 
     // After reap, raw POST with the orphan's sid returns unknown_session.
     await new Promise(r => setTimeout(r, 100))
-    const probe = await fetch(`http://${h.host}:${h.port}/mcp`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'accept': 'application/json, text/event-stream',
-        'mcp-session-id': sid,
-      },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })
-    })
-    expect(probe.status).toBe(400)
-    expect(await probe.json()).toEqual({ error: 'unknown_session' })
+    await expectUnknownSession(h.host, h.port, sid)
 
     try { await t.close() } catch { /* already gone */ }
     await c.close().catch(() => { /* already closed */ })
@@ -158,6 +166,83 @@ describe('mcp-transport orphan-session GC', () => {
 
     await c.close()
     await t.close()
+    await h.close()
+  }, 15000)
+
+  it('active orphan past max age is reaped despite recent activity', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const h = await bootHarness(join(dir, 'data.db'))
+    const { c, t } = await connectAndInit(h.host, h.port)
+    const sid = t.sessionId!
+
+    await c.callTool({ name: 'echo', arguments: { msg: 'hb' } })
+
+    h.reapOrphanSessions(Date.now() + 45_000, {
+      idleMs: 60_000,
+      maxAgeMs: 40_000,
+      maxSessions: 100,
+    })
+    await new Promise(r => setTimeout(r, 100))
+
+    await expectUnknownSession(h.host, h.port, sid)
+
+    try { await c.close() } catch { /* already gone */ }
+    try { await t.close() } catch { /* already gone */ }
+    await h.close()
+  }, 15000)
+
+  it('orphan cap reaps oldest unregistered sessions only', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const h = await bootHarness(join(dir, 'data.db'))
+    const first = await connectAndInit(h.host, h.port)
+    await new Promise(r => setTimeout(r, 5))
+    const second = await connectAndInit(h.host, h.port)
+    await new Promise(r => setTimeout(r, 5))
+    const third = await connectAndInit(h.host, h.port)
+
+    await third.c.callTool({
+      name: 'register_agent',
+      arguments: { agent_type: 'custom', name: 'registered', model: 'm', role: 'r' }
+    })
+
+    h.reapOrphanSessions(Date.now(), {
+      idleMs: 60_000,
+      maxAgeMs: 60_000,
+      maxSessions: 1,
+    })
+    await new Promise(r => setTimeout(r, 100))
+
+    await expectUnknownSession(h.host, h.port, first.t.sessionId!)
+    const echo = await second.c.callTool({ name: 'echo', arguments: { msg: 'kept' } }) as { content: Array<{ text: string }> }
+    expect(echo.content[0].text).toContain('kept')
+    const registeredEcho = await third.c.callTool({ name: 'echo', arguments: { msg: 'registered kept' } }) as { content: Array<{ text: string }> }
+    expect(registeredEcho.content[0].text).toContain('registered kept')
+
+    try { await first.c.close() } catch { /* already gone */ }
+    try { await first.t.close() } catch { /* already gone */ }
+    await second.c.close()
+    await second.t.close()
+    await third.c.close()
+    await third.t.close()
+    await h.close()
+  }, 15000)
+
+  it('session initialization enforces the orphan cap immediately', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const h = await bootHarness(join(dir, 'data.db'), { orphanSessionLimit: 1 })
+    const first = await connectAndInit(h.host, h.port)
+    await new Promise(r => setTimeout(r, 5))
+    const second = await connectAndInit(h.host, h.port)
+    await new Promise(r => setTimeout(r, 100))
+
+    await expectUnknownSession(h.host, h.port, first.t.sessionId!)
+    const echo = await second.c.callTool({ name: 'echo', arguments: { msg: 'kept' } }) as { content: Array<{ text: string }> }
+    expect(echo.content[0].text).toContain('kept')
+
+    try { await first.c.close() } catch { /* already gone */ }
+    try { await first.t.close() } catch { /* already gone */ }
+    await second.c.close()
+    await second.t.close()
     await h.close()
   }, 15000)
 

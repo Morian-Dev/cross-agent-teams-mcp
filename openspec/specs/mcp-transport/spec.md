@@ -170,16 +170,25 @@ The directive SHALL appear as part of the existing single `instructions` string 
 
 ### Requirement: Orphan session garbage collection
 
-The daemon SHALL run a periodic ticker that walks the in-memory `sessions` Map maintained by `mountMcp` and force-closes any session whose `agentIdHolder.current` is still `undefined` and whose idle time exceeds the configured grace window.
+The daemon SHALL run a periodic ticker that walks the in-memory `sessions` Map maintained by `mountMcp` and force-closes unregistered sessions that exceed the configured idle window, max-age window, or unregistered-session count limit. The daemon MUST also enforce the unregistered-session count limit immediately after a new MCP session is initialized.
 
 Each session MUST track a `lastActivityAt` timestamp. `lastActivityAt` MUST be initialized to the value of `createdAt` inside `onsessioninitialized`, and MUST be set to `Date.now()` whenever a POST, GET, or DELETE request matches that session (i.e. on every successful transport-level interaction). Requests that fail session lookup with `unknown_session` MUST NOT bump any timestamp.
 
-A session is "orphan" if and only if BOTH:
+A session is "orphan" if and only if:
 
-1. `agentIdHolder.current === undefined` (no successful `register_agent` has bound an agent_id to the session yet), AND
-2. `Date.now() - session.lastActivityAt >= graceMs` (no transport-level activity within the grace window).
+1. `agentIdHolder.current === undefined` (no successful `register_agent` has bound an agent_id to the session yet).
 
-The default grace window SHALL be `300_000 ms` (5 minutes). The default MUST be overridable via the `ORPHAN_GC_IDLE_MS` environment variable or the `orphanGcIdleMs` `ServerOpts` field, both of which accept a positive integer (millisecond) value. The default is a tradeoff: large enough that human-paced workflows (for example, a Claude Code user who initializes an MCP session at editor startup and runs `register_agent` a couple of minutes later) survive, small enough that misbehaving clients which connect-and-idle in a loop cannot accumulate unbounded orphan-session state on the daemon.
+An orphan session MUST be reaped when any of these conditions is true:
+
+1. `Date.now() - session.lastActivityAt >= idleMs` (no transport-level activity within the idle grace window).
+2. `Date.now() - session.createdAt >= maxAgeMs` (the session has remained unregistered beyond the max-age window, even if heartbeats keep it active).
+3. The number of orphan sessions exceeds `maxSessions`; the daemon MUST reap the oldest orphan sessions first until the number of remaining orphans is at most `maxSessions`.
+
+The default idle window SHALL be `300_000 ms` (5 minutes). The default MUST be overridable via the `ORPHAN_GC_IDLE_MS` environment variable or the `orphanGcIdleMs` `ServerOpts` field, both of which accept a positive integer (millisecond) value.
+
+The default max-age window SHALL be `300_000 ms` (5 minutes). The default MUST be overridable via the `ORPHAN_GC_MAX_AGE_MS` environment variable or the `orphanGcMaxAgeMs` `ServerOpts` field, both of which accept a positive integer (millisecond) value.
+
+The default orphan-session limit SHALL be `100`. The default MUST be overridable via the `ORPHAN_GC_MAX_SESSIONS` environment variable or the `orphanGcMaxSessions` `ServerOpts` field, both of which accept a positive integer value.
 
 Force-closing an orphan session MUST invoke `session.transport.close()`. Closing the transport MUST propagate to the existing `onclose` chain so the session is removed from `sessions` Map, the SSE fanout binding is detached (if any), the channel-wake fanout binding is detached (if any), and the `sessionOwners` Authorization-hash binding is removed.
 
@@ -189,7 +198,7 @@ The GC tick interval MUST be at least 30 seconds (long enough that the GC itself
 
 The GC ticker MUST be cleared when the Fastify app emits `onClose`, alongside the existing cleanup ticker registered in `buildServer`.
 
-The GC MUST emit a debug-level log line for each orphan it reaps, including the orphan's MCP session id and the idle duration in seconds at reap time.
+The GC MUST emit a debug-level log line for each orphan it reaps, including the orphan's MCP session id, age in seconds, idle duration in seconds, and reap reason.
 
 #### Scenario: Orphan session past idle grace is reaped
 
@@ -204,9 +213,35 @@ The GC MUST emit a debug-level log line for each orphan it reaps, including the 
 
 - **GIVEN** session `sess-W` was created and `agentIdHolder.current` is still `undefined`
 - **AND** the client issues any matching POST/GET/DELETE on `sess-W` (e.g. a tool call) shortly before the GC tick
-- **WHEN** the GC tick fires within `graceMs` of that activity
+- **AND** `sess-W` is younger than `maxAgeMs`
+- **AND** the orphan count is at or below `maxSessions`
+- **WHEN** the GC tick fires within `idleMs` of that activity
 - **THEN** `sess-W` is NOT force-closed
 - **AND** `sess-W` remains in the `sessions` Map
+
+#### Scenario: Active orphan past max age is reaped
+
+- **GIVEN** session `sess-A` was created more than `maxAgeMs` ago
+- **AND** `sess-A` has not completed `register_agent`
+- **AND** the client recently issued a matching POST/GET/DELETE so `sess-A` is still within `idleMs`
+- **WHEN** the GC tick fires
+- **THEN** `sess-A` is force-closed
+- **AND** the reap log reason is `max_age`
+
+#### Scenario: Orphan cap reaps oldest unregistered sessions only
+
+- **GIVEN** the daemon has more than `maxSessions` orphan sessions
+- **AND** it also has registered sessions that may be long idle
+- **WHEN** the GC tick fires
+- **THEN** the daemon force-closes the oldest orphan sessions until at most `maxSessions` orphans remain
+- **AND** registered sessions are not force-closed by this cap
+
+#### Scenario: New orphan creation enforces cap immediately
+
+- **GIVEN** the daemon already has `maxSessions` orphan sessions
+- **WHEN** a new MCP session is initialized and remains unregistered
+- **THEN** the daemon force-closes the oldest orphan session without waiting for the next GC tick
+- **AND** the newly initialized session remains available
 
 #### Scenario: Registered session is exempt from GC
 
@@ -220,6 +255,7 @@ The GC MUST emit a debug-level log line for each orphan it reaps, including the 
 
 - **GIVEN** session `sess-Z` was created 10 seconds ago with no subsequent activity
 - **AND** `sess-Z`'s `agentIdHolder.current` is `undefined`
+- **AND** the orphan count is at or below `maxSessions`
 - **WHEN** the GC tick fires with the default 5-minute grace
 - **THEN** `sess-Z` is NOT force-closed
 - **AND** `sess-Z` remains in the `sessions` Map
@@ -230,4 +266,3 @@ The GC MUST emit a debug-level log line for each orphan it reaps, including the 
 - **WHEN** the GC reaps `sess-O`
 - **THEN** the SSE fanout no longer holds a sink for `sess-O`
 - **AND** the channel-wake fanout no longer holds a sink for `sess-O`'s session id
-
