@@ -33,7 +33,7 @@ export interface StartOpts extends ServerOpts {
 
 const DEFAULT_KEEP_ALIVE_TIMEOUT_MS = 120_000
 const DEFAULT_ORPHAN_GC_INTERVAL_MS = 60_000
-const DEFAULT_ORPHAN_GC_IDLE_MS = 1_800_000
+const DEFAULT_ORPHAN_GC_IDLE_MS = 300_000
 
 export interface DaemonContext {
   localDevice: string

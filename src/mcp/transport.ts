@@ -31,9 +31,11 @@ export interface MountMcpResult {
    * `now - session.lastActivityAt >= graceMs`. `lastActivityAt` is bumped on
    * every POST/GET/DELETE that matches an existing session, so this reaps only
    * truly idle pre-registration sessions (typical cause: a client initialized
-   * but crashed before calling register_agent). Default `graceMs` is 1_800_000
-   * (30 min), large enough that a human-paced register_agent issued minutes
-   * after MCP initialize is not reaped out from under the client.
+   * but crashed before calling register_agent). Default `graceMs` is 300_000
+   * (5 min). Large enough that a human-paced register_agent issued a couple
+   * minutes after MCP initialize is not reaped out from under the client, but
+   * tight enough to bound memory accumulation from misbehaving clients that
+   * connect-and-idle in a loop.
    */
   reapOrphanSessions: (now: number, graceMs?: number) => void
 }
@@ -287,7 +289,7 @@ export function mountMcp(
     return reply
   })
 
-  function reapOrphanSessions(now: number, graceMs = 1_800_000): void {
+  function reapOrphanSessions(now: number, graceMs = 300_000): void {
     for (const session of sessions.values()) {
       if (session.agentIdHolder.current !== undefined) continue
       const idleMs = now - session.lastActivityAt

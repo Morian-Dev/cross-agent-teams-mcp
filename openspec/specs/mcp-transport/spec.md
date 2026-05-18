@@ -179,7 +179,7 @@ A session is "orphan" if and only if BOTH:
 1. `agentIdHolder.current === undefined` (no successful `register_agent` has bound an agent_id to the session yet), AND
 2. `Date.now() - session.lastActivityAt >= graceMs` (no transport-level activity within the grace window).
 
-The default grace window SHALL be `1_800_000 ms` (30 minutes). The default MUST be overridable via the `ORPHAN_GC_IDLE_MS` environment variable or the `orphanGcIdleMs` `ServerOpts` field, both of which accept a positive integer (millisecond) value. The grace MUST be large enough that human-paced workflows — for example, a Claude Code user who initializes an MCP session at editor startup and runs `register_agent` minutes later — are not evicted before they can register.
+The default grace window SHALL be `300_000 ms` (5 minutes). The default MUST be overridable via the `ORPHAN_GC_IDLE_MS` environment variable or the `orphanGcIdleMs` `ServerOpts` field, both of which accept a positive integer (millisecond) value. The default is a tradeoff: large enough that human-paced workflows (for example, a Claude Code user who initializes an MCP session at editor startup and runs `register_agent` a couple of minutes later) survive, small enough that misbehaving clients which connect-and-idle in a loop cannot accumulate unbounded orphan-session state on the daemon.
 
 Force-closing an orphan session MUST invoke `session.transport.close()`. Closing the transport MUST propagate to the existing `onclose` chain so the session is removed from `sessions` Map, the SSE fanout binding is detached (if any), the channel-wake fanout binding is detached (if any), and the `sessionOwners` Authorization-hash binding is removed.
 
@@ -220,7 +220,7 @@ The GC MUST emit a debug-level log line for each orphan it reaps, including the 
 
 - **GIVEN** session `sess-Z` was created 10 seconds ago with no subsequent activity
 - **AND** `sess-Z`'s `agentIdHolder.current` is `undefined`
-- **WHEN** the GC tick fires with the default 30-minute grace
+- **WHEN** the GC tick fires with the default 5-minute grace
 - **THEN** `sess-Z` is NOT force-closed
 - **AND** `sess-Z` remains in the `sessions` Map
 
