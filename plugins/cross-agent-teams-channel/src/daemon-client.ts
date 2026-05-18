@@ -9,6 +9,7 @@ export interface RegistrationConfig {
   channel_session_id: string
   backoffInitialMs?: number
   backoffMaxMs?: number
+  backoffScheduleMs?: readonly number[]
   notificationHandler?: (payload: unknown) => void
 }
 
@@ -32,11 +33,32 @@ export interface RegistrationSequenceResult {
 
 type ToolResult = Record<string, unknown>
 
+const DEFAULT_BACKOFF_SCHEDULE_MS = [1_000, 10_000, 60_000, 600_000] as const
+
 async function parseToolResult(resp: unknown): Promise<ToolResult> {
   const r = resp as { content?: Array<{ text?: string }> }
   const text = r.content?.[0]?.text
   if (typeof text !== 'string') return {}
   try { return JSON.parse(text) as ToolResult } catch { return {} }
+}
+
+function resolveBackoffSchedule(config: ReconnectingProxyConfig): readonly number[] {
+  if (config.backoffScheduleMs && config.backoffScheduleMs.length > 0) {
+    return config.backoffScheduleMs.map(ms => Math.max(1, ms))
+  }
+  if (config.backoffInitialMs !== undefined || config.backoffMaxMs !== undefined) {
+    const initial = config.backoffInitialMs ?? DEFAULT_BACKOFF_SCHEDULE_MS[0]
+    const max = config.backoffMaxMs
+      ?? DEFAULT_BACKOFF_SCHEDULE_MS[DEFAULT_BACKOFF_SCHEDULE_MS.length - 1]
+    const schedule: number[] = []
+    let next = Math.max(1, initial)
+    while (schedule.length < DEFAULT_BACKOFF_SCHEDULE_MS.length) {
+      schedule.push(Math.min(next, max))
+      next *= 2
+    }
+    return schedule
+  }
+  return DEFAULT_BACKOFF_SCHEDULE_MS
 }
 
 export async function runRegistrationSequence(
@@ -164,16 +186,15 @@ export async function waitForDisconnect(
 export function runReconnectingProxy(config: ReconnectingProxyConfig): ReconnectingProxyController {
   let stopped = false
   let currentSeq: RegistrationSequenceResult | null = null
-  const initialBackoffMs = config.backoffInitialMs ?? 500
-  const maxBackoffMs = config.backoffMaxMs ?? initialBackoffMs
-  let nextBackoffMs = initialBackoffMs
+  const backoffScheduleMs = resolveBackoffSchedule(config)
+  let backoffIndex = 0
 
   async function loop(): Promise<void> {
     while (!stopped) {
       let failed = false
       try {
         const seq = await runRegistrationSequence(config)
-        nextBackoffMs = initialBackoffMs
+        backoffIndex = 0
         currentSeq = seq
         if (config.onSequenceComplete) config.onSequenceComplete([...seq.order])
 
@@ -189,8 +210,8 @@ export function runReconnectingProxy(config: ReconnectingProxyConfig): Reconnect
         // register/subscribe failed — wait and retry.
       }
       if (stopped) break
-      const wait = nextBackoffMs
-      if (failed) nextBackoffMs = Math.min(nextBackoffMs * 2, maxBackoffMs)
+      const wait = backoffScheduleMs[Math.min(backoffIndex, backoffScheduleMs.length - 1)]
+      if (failed) backoffIndex += 1
       await new Promise(r => setTimeout(r, wait))
     }
   }

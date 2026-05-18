@@ -188,7 +188,7 @@ The default idle window SHALL be `300_000 ms` (5 minutes). The default MUST be o
 
 The default max-age window SHALL be `300_000 ms` (5 minutes). The default MUST be overridable via the `ORPHAN_GC_MAX_AGE_MS` environment variable or the `orphanGcMaxAgeMs` `ServerOpts` field, both of which accept a positive integer (millisecond) value.
 
-The default orphan-session limit SHALL be `100`. The default MUST be overridable via the `ORPHAN_GC_MAX_SESSIONS` environment variable or the `orphanGcMaxSessions` `ServerOpts` field, both of which accept a positive integer value.
+The default orphan-session limit SHALL be `500`. The default MUST be overridable via the `ORPHAN_GC_MAX_SESSIONS` environment variable or the `orphanGcMaxSessions` `ServerOpts` field, both of which accept a positive integer value.
 
 Force-closing an orphan session MUST invoke `session.transport.close()`. Closing the transport MUST propagate to the existing `onclose` chain so the session is removed from `sessions` Map, the SSE fanout binding is detached (if any), the channel-wake fanout binding is detached (if any), and the `sessionOwners` Authorization-hash binding is removed.
 

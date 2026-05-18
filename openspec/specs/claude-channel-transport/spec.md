@@ -224,7 +224,7 @@ When the proxy receives a `notifications/channel_wake` notification from the dae
 
 ### Requirement: Channel proxy reconnects on daemon disconnect
 
-When the proxy's MCP connection to the daemon closes unexpectedly, or when its registration sequence fails, the proxy SHALL attempt reconnection with exponential backoff (initial 500ms, capped 30s, jittered).  On each successful reconnect the proxy MUST re-execute the registration sequence (`register_agent` → `subscribe_channel_wake` → emit host-startup notification) in order.  During disconnect periods the proxy MUST NOT emit any `notifications/claude/channel` relay to its host.
+When the proxy's MCP connection to the daemon closes unexpectedly, or when its registration sequence fails, the proxy SHALL attempt reconnection using the default delay schedule `1s -> 10s -> 60s -> 600s`, then keep retrying every 600s.  On each successful reconnect the proxy MUST re-execute the registration sequence (`register_agent` → `subscribe_channel_wake` → emit host-startup notification) in order.  During disconnect periods the proxy MUST NOT emit any `notifications/claude/channel` relay to its host.
 
 #### Scenario: proxy reconnects and re-subscribes after daemon disconnect
 
@@ -233,11 +233,12 @@ When the proxy's MCP connection to the daemon closes unexpectedly, or when its r
 - **THEN** the proxy retries the HTTP MCP connect within 2 seconds (first retry in the schedule)
 - **AND** upon reconnect, the proxy re-calls `register_agent`, `subscribe_channel_wake` in order
 
-#### Scenario: proxy backs off repeated registration failures
+#### Scenario: proxy backs off repeated registration failures with fixed schedule
 
 - **GIVEN** each registration sequence attempt fails before subscription succeeds
 - **WHEN** the proxy retries
-- **THEN** consecutive attempts use exponential backoff up to the configured cap
+- **THEN** consecutive attempts use the default delay schedule `1s`, `10s`, `60s`, and `600s`
+- **AND** attempts after the fourth failure continue at `600s` intervals
 - **AND** the proxy does NOT create a high-frequency stream of new MCP sessions
 
 ### Requirement: End-to-end poke via channel transport
