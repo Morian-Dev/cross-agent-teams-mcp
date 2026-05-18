@@ -39,6 +39,16 @@ describe('daemon CLI args', () => {
     expect(parsed.token).toBe('ENV-T')
   })
 
+  it('defaults loopbackCompanion to true and honors --no-loopback-companion', () => {
+    const on = parseDaemonCliArgs(['node', 'cli.js', 'daemon', '--device', 'jt'])
+    expect(on.loopbackCompanion).toBe(true)
+
+    const off = parseDaemonCliArgs([
+      'node', 'cli.js', 'daemon', '--device', 'jt', '--no-loopback-companion',
+    ])
+    expect(off.loopbackCompanion).toBe(false)
+  })
+
   it('rejects invalid device labels', () => {
     expect(() => parseDaemonCliArgs([
       'node',

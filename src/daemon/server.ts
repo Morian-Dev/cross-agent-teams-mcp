@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify'
+import { createServer as createHttpServer, type Server as HttpServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { openDb } from '../storage/db.js'
 import { applySchema } from '../storage/schema.js'
 import { makeAuthHook } from './auth.js'
@@ -8,7 +9,7 @@ import { SseFanout } from './sse-fanout.js'
 import { ChannelWakeFanout } from './channel-wake-fanout.js'
 import { clearAllRetries } from '../mcp/poke-retry.js'
 import { resolveLocalDeviceLabel } from './local-device.js'
-import { classifyPeerAddress, type SessionOriginInfo } from './network-origin.js'
+import { bindHostCoversIpv4Loopback, classifyPeerAddress, type SessionOriginInfo } from './network-origin.js'
 
 export interface ServerOpts {
   dbPath: string
@@ -20,7 +21,15 @@ export interface ServerOpts {
   fanout?: SseFanout
   channelWakeFanout?: ChannelWakeFanout
 }
-export interface StartOpts extends ServerOpts { port: number; host?: string }
+export interface StartOpts extends ServerOpts {
+  port: number
+  host?: string
+  // When primary host is not loopback-covering, also bind 127.0.0.1 on the
+  // same port so same-host clients can connect via loopback and get the
+  // 'local' origin classification (which auto-fills the local device label
+  // and skips the remote spoofing check). Default true. Set false to opt out.
+  loopbackCompanion?: boolean
+}
 
 const DEFAULT_KEEP_ALIVE_TIMEOUT_MS = 120_000
 const DEFAULT_ORPHAN_GC_INTERVAL_MS = 60_000
@@ -82,11 +91,61 @@ export async function buildServer(opts: ServerOpts): Promise<FastifyInstance> {
   return app
 }
 
-export async function startServer(opts: StartOpts): Promise<{ app: FastifyInstance; port: number; host: string }> {
+export interface StartServerResult {
+  app: FastifyInstance
+  port: number
+  host: string
+  loopbackCompanion?: HttpServer
+}
+
+export async function startServer(opts: StartOpts): Promise<StartServerResult> {
   const app = await buildServer(opts)
   const host = opts.host ?? '127.0.0.1'
+
+  // Hook for the loopback companion's graceful close. Registered BEFORE
+  // app.listen (Fastify seals hooks once listening). The ref is filled in
+  // after the companion successfully binds; if no companion is created the
+  // hook is a no-op.
+  const companionRef: { server: HttpServer | undefined } = { server: undefined }
+  app.addHook('onClose', async () => {
+    const server = companionRef.server
+    if (!server) return
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve())
+    })
+  })
+
   await app.listen({ port: opts.port, host })
   const addr = app.server.address()
   const port = addr && typeof addr === 'object' ? addr.port : opts.port
-  return { app, port, host }
+
+  const companionEnabled = opts.loopbackCompanion !== false
+  if (companionEnabled && !bindHostCoversIpv4Loopback(host)) {
+    const handler = app.server.listeners('request')[0] as
+      | ((req: IncomingMessage, res: ServerResponse) => void)
+      | undefined
+    if (!handler) {
+      await app.close()
+      throw new Error('loopback_companion_no_handler: Fastify did not expose a request handler')
+    }
+    const companion = createHttpServer(handler)
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onErr = (err: Error): void => reject(err)
+        companion.once('error', onErr)
+        companion.listen(port, '127.0.0.1', () => {
+          companion.removeListener('error', onErr)
+          resolve()
+        })
+      })
+    } catch (err) {
+      try { companion.close() } catch { /* best-effort */ }
+      await app.close()
+      const detail = err instanceof Error ? err.message : String(err)
+      throw new Error(`loopback_companion_bind_failed: ${detail}`)
+    }
+    companionRef.server = companion
+  }
+
+  return { app, port, host, loopbackCompanion: companionRef.server }
 }

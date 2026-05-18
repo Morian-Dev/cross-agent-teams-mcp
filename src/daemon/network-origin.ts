@@ -24,3 +24,15 @@ export function classifyPeerAddress(address: string | null | undefined): Session
 export function isLoopbackHost(host: string): boolean {
   return host === 'localhost' || isLoopbackAddress(host)
 }
+
+// Bind-host predicate: does listening on `host` already accept connections
+// arriving on 127.0.0.1? Used to decide whether the loopback companion
+// listener should be skipped (it would collide on the same port if so).
+//
+// Specifically: 127.0.0.1, localhost (resolves to 127.0.0.1), and 0.0.0.0
+// (catch-all IPv4) all cover loopback connections. 127.0.0.2 and similar
+// alternate loopback addresses do NOT — they bind a different socket and
+// 127.0.0.1 traffic still needs a separate listener.
+export function bindHostCoversIpv4Loopback(host: string): boolean {
+  return host === '127.0.0.1' || host === 'localhost' || host === '0.0.0.0'
+}

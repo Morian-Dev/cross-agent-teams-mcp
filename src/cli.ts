@@ -28,6 +28,7 @@ export interface DaemonCliArgs {
   requestedPort: number
   host: string
   localDevice: string
+  loopbackCompanion: boolean
 }
 
 export function parseDaemonCliArgs(
@@ -43,6 +44,7 @@ export function parseDaemonCliArgs(
     const host = parseArg('--host', '127.0.0.1') ?? '127.0.0.1'
     const localDevice = resolveLocalDeviceLabel(parseArg('--device'))
     const requestedPort = Number(parseArg('--port', '9100'))
+    const loopbackCompanion = !process.argv.includes('--no-loopback-companion')
     return {
       pidPath: parseArg('--pid-file', join(home, 'daemon.pid'))!,
       dbPath: parseArg('--db', join(home, 'data.db'))!,
@@ -50,6 +52,7 @@ export function parseDaemonCliArgs(
       requestedPort,
       host,
       localDevice,
+      loopbackCompanion,
     }
   } finally {
     process.argv = originalArgv
@@ -72,9 +75,16 @@ async function runDaemon(): Promise<void> {
     port,
     host: args.host,
     localDevice: args.localDevice,
+    loopbackCompanion: args.loopbackCompanion,
   })
-  wireShutdown(started.app, args.pidPath)
-  console.log(`listening on ${started.host}:${started.port} device=${args.localDevice}`)
+  const companion = started.loopbackCompanion
+  wireShutdown(started.app, args.pidPath, {
+    extraForceClose: companion
+      ? () => { try { companion.closeAllConnections() } catch { /* best-effort */ } }
+      : undefined,
+  })
+  const companionSuffix = companion ? ` (+ 127.0.0.1:${started.port} loopback companion)` : ''
+  console.log(`listening on ${started.host}:${started.port}${companionSuffix} device=${args.localDevice}`)
 }
 
 function resolveDaemonPort(explicit: string | undefined): number | undefined {

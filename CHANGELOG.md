@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **Loopback companion listener.**  When the daemon binds to a non-loopback-covering host (e.g. a LAN IP like `192.168.1.102`), `startServer` now also binds a second HTTP listener on `127.0.0.1` at the same port that reuses the primary Fastify request handler.  This lets same-host clients connect via `http://127.0.0.1:<port>/mcp` and be classified as `local` origin (auto-filling the daemon's local device label, bypassing the remote spoofing check), while LAN peers still connect via the primary host.  Avoids the alternative of `--host 0.0.0.0`, which would also expose the daemon on every other interface (VPN, public IPs).  Skipped automatically when the primary host already covers `127.0.0.1` (`127.0.0.1`, `localhost`, `0.0.0.0`).  Opt out with `--no-loopback-companion` / `loopbackCompanion: false`.  Companion bind failure is fatal — if a local client config relies on `127.0.0.1:<port>`, silently starting only the LAN listener would leave it broken.
+
 ### BREAKING
 
 - Removed 9 MCP tools: `register_contract`, `subscribe_contract`, `get_contract`, `diff_contracts`, `pending_contract_events`, `task_add`, `task_claim`, `task_complete`, and `task_list`.
