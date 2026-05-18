@@ -4,15 +4,73 @@
 
 Run the agent-teams MCP daemon as a local-only HTTP service with lifecycle management (PID file, port fallback, graceful shutdown), optional bearer auth, consistent storage error mapping, and a health endpoint.
 ## Requirements
-### Requirement: Daemon binds only to 127.0.0.1
+### Requirement: Daemon bind host configuration
 
-The daemon SHALL bind its HTTP listener only to `127.0.0.1`. It MUST refuse any configuration that exposes the port on `0.0.0.0` or external interfaces.
+The daemon SHALL bind its primary HTTP listener to the host specified by `--host` (default `127.0.0.1`). Non-loopback bind hosts (any value that is not `127.x`, `::1`, or `localhost`) MUST require an explicit bearer token (`--token` or the `CROSS_AGENT_TEAMS_MCP_TOKEN` environment variable). If `--host` is non-loopback and no token is configured, the daemon MUST exit with non-zero status and print `token_required_for_non_loopback_bind` to stderr without binding.
 
 #### Scenario: Default bind address
 
 - **WHEN** the daemon is started with `npx cross-agent-teams-mcp daemon` without any host override
 - **THEN** the HTTP server listens on `127.0.0.1:9100`
 - **AND** a request from a non-loopback address (e.g. `192.168.x.x`) fails to connect
+
+#### Scenario: Non-loopback bind without token is refused
+
+- **GIVEN** the daemon is started with `--host 192.168.1.5` and no `--token` and no `CROSS_AGENT_TEAMS_MCP_TOKEN`
+- **WHEN** startup proceeds
+- **THEN** the process exits with status `1`
+- **AND** stderr contains `token_required_for_non_loopback_bind`
+- **AND** no listener is bound
+
+#### Scenario: Non-loopback bind with token
+
+- **GIVEN** the daemon is started with `--host 192.168.1.5 --token <secret>`
+- **WHEN** startup completes
+- **THEN** the HTTP server listens on `192.168.1.5:<port>`
+- **AND** LAN peers can reach the daemon via that address (subject to the token check)
+
+### Requirement: Loopback companion listener for non-loopback primary bind
+
+When the daemon's primary listener is bound to a host that does NOT already cover IPv4 `127.0.0.1` (i.e. the host is not `127.0.0.1`, `localhost`, or `0.0.0.0`), `startServer` SHALL additionally bind a second `http.Server` on `127.0.0.1` at the same port that reuses the primary Fastify request handler. Same-host clients can then connect via `http://127.0.0.1:<port>/mcp` and be classified as `local` origin (which auto-fills the daemon's local device label and skips the remote-device spoofing check) without forcing operators to expose the daemon on every interface via `--host 0.0.0.0`.
+
+The companion listener MUST be skipped when the primary host already covers `127.0.0.1` (matching any of `127.0.0.1`, `localhost`, `0.0.0.0`), because the OS already routes loopback traffic to the primary listener and a second bind would collide on the same port.
+
+The companion behavior MUST be enabled by default and MUST be opt-out via the `--no-loopback-companion` flag (or `loopbackCompanion: false` on `StartOpts`).
+
+Companion bind failure (e.g. port already held by another process on `127.0.0.1`) MUST be fatal: `startServer` MUST close the already-bound primary listener and throw `loopback_companion_bind_failed: <detail>`. Silently starting with only the primary listener would leave any local client configuration targeting `127.0.0.1:<port>` broken in a way that is hard to diagnose.
+
+Lifecycle: the companion listener MUST be closed gracefully as part of the Fastify `onClose` hook chain so `app.close()` drains it alongside the primary listener. On shutdown-deadline expiry (see the `Graceful shutdown` requirement), the companion MUST be force-closed via `closeAllConnections()` alongside the primary, wired through `wireShutdown`'s `extraForceClose` hook.
+
+#### Scenario: Companion bound when primary is non-loopback-covering
+
+- **GIVEN** `startServer` is called with `host` set to a value that does not cover IPv4 loopback (for example, IPv6 loopback `::1` or a LAN IP like `192.168.1.5`)
+- **AND** `loopbackCompanion` is left at its default
+- **WHEN** primary bind succeeds on `<host>:<port>`
+- **THEN** a second `http.Server` is also bound on `127.0.0.1:<port>` sharing the primary's request handler
+- **AND** `startServer` returns with `loopbackCompanion` defined
+- **AND** both `GET http://<host>:<port>/health` and `GET http://127.0.0.1:<port>/health` return `{ "ok": true }`
+
+#### Scenario: Companion skipped when primary already covers 127.0.0.1
+
+- **GIVEN** `startServer` is called with `host: '127.0.0.1'` (or `'localhost'` or `'0.0.0.0'`)
+- **WHEN** startup completes
+- **THEN** no second listener is created
+- **AND** `loopbackCompanion` in the return value is `undefined`
+
+#### Scenario: Companion disabled via opt-out
+
+- **GIVEN** `startServer` is called with `host: '::1'` and `loopbackCompanion: false`
+- **WHEN** startup completes
+- **THEN** no companion listener is bound
+- **AND** `loopbackCompanion` in the return value is `undefined`
+
+#### Scenario: Companion bind failure is fatal
+
+- **GIVEN** another process already holds `127.0.0.1:<port>`
+- **AND** `startServer` is called with `host: '::1'` and `port: <port>` and the default companion enabled
+- **WHEN** primary bind succeeds on `[::1]:<port>` but the companion bind on `127.0.0.1:<port>` fails with `EADDRINUSE`
+- **THEN** `startServer` closes the primary listener
+- **AND** rejects with an error whose message starts with `loopback_companion_bind_failed:`
 
 ### Requirement: Port selection with fallback
 
