@@ -149,7 +149,7 @@ export class RegisterAgentService {
       if (this.deps.closeSessionByConnectionId) {
         try { closed = this.deps.closeSessionByConnectionId(bound) } catch { /* best-effort */ }
       }
-      const log = this.deps.log ?? ((line: string) => { console.debug(line) })
+      const log = this.deps.log ?? (() => {})
       try {
         log(`register_agent takeover: old=${bound} new=${input.connection_id} device=${resolvedDevice.ok} team=${team} name=${input.name} closed=${closed}`)
       } catch { /* best-effort */ }

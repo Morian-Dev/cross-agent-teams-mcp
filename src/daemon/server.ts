@@ -20,6 +20,7 @@ export interface ServerOpts {
   orphanGcIdleMs?: number
   orphanGcMaxAgeMs?: number
   orphanGcMaxSessions?: number
+  mcpLog?: (line: string) => void
   fanout?: SseFanout
   channelWakeFanout?: ChannelWakeFanout
 }
@@ -70,6 +71,7 @@ export async function buildServer(opts: ServerOpts): Promise<FastifyInstance> {
     ?? parsePositiveInt(process.env.ORPHAN_GC_MAX_SESSIONS, DEFAULT_ORPHAN_GC_MAX_SESSIONS)
   const mcp = mountMcp(app, db, fanout, channelWakeFanout, {
     context,
+    log: opts.mcpLog,
     orphanSessionLimit: orphanGcMaxSessions,
   })
   app.get('/health', async () => ({

@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -77,6 +77,7 @@ async function expectUnknownSession(host: string, port: number, sid: string): Pr
 describe('mcp-transport orphan-session GC', () => {
   const cleanups: string[] = []
   afterEach(() => {
+    vi.restoreAllMocks()
     cleanups.forEach(d => rmSync(d, { recursive: true, force: true }))
     cleanups.length = 0
   })
@@ -96,6 +97,22 @@ describe('mcp-transport orphan-session GC', () => {
     // After reap, raw POST with the orphan's sid returns unknown_session.
     await new Promise(r => setTimeout(r, 100))
     await expectUnknownSession(h.host, h.port, sid)
+
+    try { await t.close() } catch { /* already gone */ }
+    await c.close().catch(() => { /* already closed */ })
+    await h.close()
+  }, 15000)
+
+  it('orphan reap is silent by default', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {})
+    const dir = tmp(); cleanups.push(dir)
+    const h = await bootHarness(join(dir, 'data.db'))
+    const { c, t } = await connectAndInit(h.host, h.port)
+
+    h.reapOrphanSessions(Date.now() + 60_001, 60_000)
+    await new Promise(r => setTimeout(r, 100))
+
+    expect(debug).not.toHaveBeenCalled()
 
     try { await t.close() } catch { /* already gone */ }
     await c.close().catch(() => { /* already closed */ })

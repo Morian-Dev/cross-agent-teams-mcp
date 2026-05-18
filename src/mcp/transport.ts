@@ -60,7 +60,7 @@ export function mountMcp(
   } = {}
 ): MountMcpResult {
   const sessions = new Map<string, Session>()
-  const log = opts.log ?? ((line: string) => { console.debug(line) })
+  const log = opts.log ?? (() => {})
   const context = opts.context ?? { localDevice: 'local' }
 
   function closeSessionByConnectionId(connectionId: string): boolean {

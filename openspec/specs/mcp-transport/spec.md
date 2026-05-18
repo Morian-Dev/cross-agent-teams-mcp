@@ -198,7 +198,7 @@ The GC tick interval MUST be at least 30 seconds (long enough that the GC itself
 
 The GC ticker MUST be cleared when the Fastify app emits `onClose`, alongside the existing cleanup ticker registered in `buildServer`.
 
-The GC MUST emit a debug-level log line for each orphan it reaps, including the orphan's MCP session id, age in seconds, idle duration in seconds, and reap reason.
+The GC MUST NOT emit orphan-reap log lines by default. When an explicit MCP transport logger is configured by the embedding daemon or test harness, the GC MAY emit a debug-level log line for each orphan it reaps, including the orphan's MCP session id, age in seconds, idle duration in seconds, and reap reason.
 
 #### Scenario: Orphan session past idle grace is reaped
 
@@ -226,7 +226,7 @@ The GC MUST emit a debug-level log line for each orphan it reaps, including the 
 - **AND** the client recently issued a matching POST/GET/DELETE so `sess-A` is still within `idleMs`
 - **WHEN** the GC tick fires
 - **THEN** `sess-A` is force-closed
-- **AND** the reap log reason is `max_age`
+- **AND** no console output is emitted unless an explicit MCP transport logger was configured
 
 #### Scenario: Orphan cap reaps oldest unregistered sessions only
 

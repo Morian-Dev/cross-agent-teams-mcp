@@ -9,6 +9,7 @@
 - **未注册 MCP session 默认上限调整为 500.**  `ORPHAN_GC_MAX_SESSIONS` 的默认值从 100 调整为 500, 让上限更像异常保险丝, 避免正常全局 MCP 配置连接峰值过早触发 cap。
 - **channel proxy 注册失败不再泄漏未注册 MCP session.**  当 daemon 拒绝 proxy 的 `register_agent` 或 `subscribe_channel_wake` 调用时, proxy 现在会先发送 Streamable HTTP `DELETE` 终止 session, 再关闭本地 client/transport。  失败重试会走低频退避, 避免远端全局 MCP 配置在注册失败时高频创建新 sid。
 - **channel proxy 默认失败重试改为固定低频档位.**  proxy 注册失败后默认按 `1s -> 10s -> 60s -> 600s` 重试, 后续保持 10 分钟间隔。  远端全局 MCP 配置注册失败时仍会自恢复, 但不会持续制造高频连接 churn。
+- **Orphan session reap 日志默认静默.**  daemon 不再默认把 `mcp orphan session reap ...` debug 行写到 console, 避免后台 `&` 启动时污染当前 shell。  测试或嵌入式调用仍可显式传入 MCP logger 观察这些事件。
 
 ### Added
 

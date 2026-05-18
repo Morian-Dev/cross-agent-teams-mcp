@@ -82,86 +82,78 @@ describe('register_agent cross-session takeover', () => {
   it('clean reconnect after explicit close does NOT log takeover (registerSvc binding released on session close)', async () => {
     const dir = tmp(); cleanups.push(dir)
     const lines: string[] = []
-    const origDebug = console.debug
-    console.debug = ((...args: unknown[]): void => {
-      lines.push(args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' '))
-    }) as typeof console.debug
-    try {
-      const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+    const { app, port, host } = await startServer({
+      dbPath: join(dir, 'data.db'),
+      port: 0,
+      mcpLog: line => lines.push(line)
+    })
 
-      // Session A registers, then closes cleanly via DELETE.
-      const a = await connectClient(host, port)
-      await a.c.callTool({
-        name: 'register_agent',
-        arguments: { agent_type: 'custom', name: 'alice', model: 'm', role: 'r' }
-      })
-      await a.t.terminateSession()
-      await a.c.close()
+    // Session A registers, then closes cleanly via DELETE.
+    const a = await connectClient(host, port)
+    await a.c.callTool({
+      name: 'register_agent',
+      arguments: { agent_type: 'custom', name: 'alice', model: 'm', role: 'r' }
+    })
+    await a.t.terminateSession()
+    await a.c.close()
 
-      // Allow onclose chain (and our new releaseConnection call) to settle.
-      await new Promise(r => setTimeout(r, 200))
+    // Allow onclose chain (and our new releaseConnection call) to settle.
+    await new Promise(r => setTimeout(r, 200))
 
-      // Reset captured lines so we only assert on the second register attempt.
-      lines.length = 0
+    // Reset captured lines so we only assert on the second register attempt.
+    lines.length = 0
 
-      // Session B re-registers same (device, team, name) — should be a clean reuse,
-      // not a takeover, because A's connection_id was released on close.
-      const b = await connectClient(host, port)
-      await b.c.callTool({
-        name: 'register_agent',
-        arguments: { agent_type: 'custom', name: 'alice', model: 'm', role: 'r' }
-      })
+    // Session B re-registers same (device, team, name) — should be a clean reuse,
+    // not a takeover, because A's connection_id was released on close.
+    const b = await connectClient(host, port)
+    await b.c.callTool({
+      name: 'register_agent',
+      arguments: { agent_type: 'custom', name: 'alice', model: 'm', role: 'r' }
+    })
 
-      const takeoverLine = lines.find(l => l.includes('register_agent takeover'))
-      expect(
-        takeoverLine,
-        `did NOT expect takeover log on clean reconnect; lines=${JSON.stringify(lines)}`
-      ).toBeUndefined()
+    const takeoverLine = lines.find(l => l.includes('register_agent takeover'))
+    expect(
+      takeoverLine,
+      `did NOT expect takeover log on clean reconnect; lines=${JSON.stringify(lines)}`
+    ).toBeUndefined()
 
-      await b.c.close()
-      await app.close()
-    } finally {
-      console.debug = origDebug
-    }
+    await b.c.close()
+    await app.close()
   }, 15000)
 
   it('emits a debug-level takeover log identifying old/new sids and (device, team, name)', async () => {
     const dir = tmp(); cleanups.push(dir)
     const lines: string[] = []
-    const origDebug = console.debug
-    console.debug = ((...args: unknown[]): void => {
-      lines.push(args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' '))
-    }) as typeof console.debug
-    try {
-      const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+    const { app, port, host } = await startServer({
+      dbPath: join(dir, 'data.db'),
+      port: 0,
+      mcpLog: line => lines.push(line)
+    })
 
-      const a = await connectClient(host, port)
-      await a.c.callTool({
-        name: 'register_agent',
-        arguments: { agent_type: 'custom', name: 'alice', model: 'm', role: 'r' }
-      })
-      const sidA = a.t.sessionId!
+    const a = await connectClient(host, port)
+    await a.c.callTool({
+      name: 'register_agent',
+      arguments: { agent_type: 'custom', name: 'alice', model: 'm', role: 'r' }
+    })
+    const sidA = a.t.sessionId!
 
-      const b = await connectClient(host, port)
-      await b.c.callTool({
-        name: 'register_agent',
-        arguments: { agent_type: 'custom', name: 'alice', model: 'm', role: 'r' }
-      })
-      const sidB = b.t.sessionId!
+    const b = await connectClient(host, port)
+    await b.c.callTool({
+      name: 'register_agent',
+      arguments: { agent_type: 'custom', name: 'alice', model: 'm', role: 'r' }
+    })
+    const sidB = b.t.sessionId!
 
-      const takeoverLine = lines.find(l => l.includes('register_agent takeover'))
-      expect(takeoverLine, `expected takeover log; lines=${JSON.stringify(lines)}`).toBeDefined()
-      expect(takeoverLine!).toContain(`old=${sidA}`)
-      expect(takeoverLine!).toContain(`new=${sidB}`)
-      expect(takeoverLine!).toMatch(/device=[^\s]+/)
-      expect(takeoverLine!).toContain('team=default')
-      expect(takeoverLine!).toContain('name=alice')
+    const takeoverLine = lines.find(l => l.includes('register_agent takeover'))
+    expect(takeoverLine, `expected takeover log; lines=${JSON.stringify(lines)}`).toBeDefined()
+    expect(takeoverLine!).toContain(`old=${sidA}`)
+    expect(takeoverLine!).toContain(`new=${sidB}`)
+    expect(takeoverLine!).toMatch(/device=[^\s]+/)
+    expect(takeoverLine!).toContain('team=default')
+    expect(takeoverLine!).toContain('name=alice')
 
-      try { await a.t.close() } catch { /* already closed */ }
-      await b.c.close()
-      await app.close()
-    } finally {
-      console.debug = origDebug
-    }
+    try { await a.t.close() } catch { /* already closed */ }
+    await b.c.close()
+    await app.close()
   }, 15000)
 })
