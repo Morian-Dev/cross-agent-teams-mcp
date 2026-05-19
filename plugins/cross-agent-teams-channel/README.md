@@ -14,6 +14,15 @@ cross-agent-teams-proxy --daemon-url http://localhost:8787 --device host-a
 
 或通过环境变量 `CROSS_AGENT_TEAMS_MCP_DAEMON_URL` 提供 daemon URL.  如果 daemon 启动时带了 token, 用 `--token <t>` 或 `CROSS_AGENT_TEAMS_MCP_TOKEN` 传给 proxy.
 
+### `--device` 的判定
+
+`--device` 没有环境变量等价物, 只能通过 flag 传.  当 `--daemon-url` 指向非 loopback 地址时, daemon 端 `register_agent` 强制要求 device (远程缺 device 会返回 `device_required_from_remote`, 把 proxy 推入 register/fail/respawn 循环).  proxy 启动时按以下顺序决定 device:
+
+1. 显式传了 `--device <label>` → 用该值 (经过 lowercase + `[^a-z0-9_-]` 替换为 `-` 的规范化).
+2. 没传 `--device` 且 daemon 是 loopback (`127.0.0.0/8`, `localhost`, `::1`, `0.0.0.0`) → 不传 device, 让 daemon 自己用 localDevice 兜底 (零配置).
+3. 没传 `--device` 但 daemon 非 loopback → 用 `os.hostname()` 自动派生一个 device label, stderr 打一行 notice 提醒.  这是兜底, 不是推荐 — hostname 派生可能与 daemon 的 localDevice 撞 (触发 `device_spoofing_local_label_from_remote`), 强烈建议跨主机部署里把 `--device` 显式写到启动配置里.
+4. 没传 `--device`, daemon 非 loopback, 且 `os.hostname()` 也无法派生 (空 / 全是非法字符) → fail-fast, 退出码 2.
+
 ## Session model
 
 - proxy 每次启动都会生成新的 `channel_session_id`, 不做持久化。

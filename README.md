@@ -270,7 +270,9 @@ Use a specific LAN IP (e.g. `10.0.0.10`) or a tailscale CGNAT IP (`100.x.x.x`) i
 
 ### 2. Peer-side: `.mcp.json` updates
 
-Each remote teammate's Claude Code needs **two** changes from the default loopback config: the HTTP entry must carry an `Authorization: Bearer …` header, and the channel proxy must pass `--token` AND `--device`:
+Each remote teammate's Claude Code needs **two** changes from the default loopback config: the HTTP entry must carry an `Authorization: Bearer …` header, and the channel proxy must pass `--token` AND `--device`.
+
+> **`--device` is critical for cross-host setups.**  The daemon rejects any remote `register_agent` without a `device` field (`device_required_from_remote`), so a proxy spawned without `--device` ends up in a register/fail/respawn loop and never wakes the agent — auto-poke silently degrades to `no_pane`.  Since v0.5.18 the proxy auto-derives a label from `os.hostname()` and writes a stderr notice when `--device` is missing on a non-loopback daemon, but the derived value can still collide with the daemon-host's own label (triggering `device_spoofing_local_label_from_remote`).  Always pin `--device` explicitly per host:
 
 ```json
 {

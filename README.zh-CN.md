@@ -270,7 +270,9 @@ npx -y cross-agent-teams-mcp@latest daemon \
 
 ### 2. 远端机器侧: 改 `.mcp.json`
 
-每台远端同事的 Claude Code 相对默认 loopback 配置都要改两处 — HTTP 入口加 `Authorization: Bearer …` 头, channel proxy 加 `--token` 和 `--device`:
+每台远端同事的 Claude Code 相对默认 loopback 配置都要改两处 — HTTP 入口加 `Authorization: Bearer …` 头, channel proxy 加 `--token` 和 `--device`.
+
+> **`--device` 对跨主机场景是关键配置.**  daemon 端会拒掉任何不带 device 的远程 `register_agent` (返回 `device_required_from_remote`), 因此 channel proxy 缺 `--device` 时会陷入 register/fail/respawn 死循环, 永远叫不醒目标 agent — auto-poke 会静默退化成 `no_pane`.  v0.5.18 起 proxy 在 daemon 非 loopback 且未传 `--device` 时会用 `os.hostname()` 自动派生一个 label 并 stderr 打 notice, 但派生值仍可能与 daemon 本机标签撞 (触发 `device_spoofing_local_label_from_remote`), 跨主机部署务必为每台机器在配置里显式钉死 `--device`:
 
 ```json
 {

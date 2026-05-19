@@ -10,10 +10,21 @@ import { runReconnectingProxy } from './daemon-client.js'
 interface CliArgs {
   daemonUrl: string
   token?: string
-  // Omitted when the user did not pass --device. The daemon then auto-fills
-  // its own local label on loopback registrations, which keeps zero-config
-  // proxies working against a daemon whose operator chose a custom --device.
+  // Omitted when the user did not pass --device AND the daemon is on loopback.
+  // The daemon then auto-fills its own local label on loopback registrations,
+  // which keeps zero-config proxies working against a daemon whose operator
+  // chose a custom --device.  For non-loopback daemons the proxy auto-derives
+  // a label from os.hostname() (see deviceAutoDerivedNotice).
   device?: string
+  // Set when --device was not supplied and we auto-derived one because the
+  // daemon is non-loopback.  Surfaced so main() can emit a one-line stderr
+  // notice; daemon-side validation may still reject the derived label
+  // (e.g. device_spoofing_local_label_from_remote).
+  deviceAutoDerivedNotice?: string
+}
+
+export interface ParseCliArgsDeps {
+  hostname?: () => string
 }
 
 export class CliArgError extends Error {
@@ -21,6 +32,35 @@ export class CliArgError extends Error {
     super(message)
     this.name = 'CliArgError'
   }
+}
+
+const LOOPBACK_HOSTS = new Set(['localhost', '0.0.0.0', '::', '::1'])
+
+export function isNonLoopbackDaemonUrl(daemonUrl: string): boolean {
+  try {
+    const parsed = new URL(daemonUrl)
+    // WHATWG URL keeps IPv6 literals wrapped in brackets in `hostname` —
+    // strip them so `::1` matches the loopback set.
+    const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+    if (host === '') return false
+    if (LOOPBACK_HOSTS.has(host)) return false
+    if (host.startsWith('127.')) return false
+    return true
+  } catch {
+    // Unparseable URL: assume remote so we still try to derive a device label;
+    // daemon-client will surface the real connect error shortly.
+    return true
+  }
+}
+
+export function deriveHostnameDeviceLabel(hostnameValue: string): string | null {
+  const normalized = hostnameValue
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '-')
+    .replace(/^-+|-+$/g, '')
+  if (normalized.length === 0 || normalized.length > 64) return null
+  return normalized
 }
 
 export function buildStartupHint(
@@ -54,7 +94,11 @@ export function buildStartupHint(
   }
 }
 
-export function parseCliArgs(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): CliArgs {
+export function parseCliArgs(
+  argv: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+  deps: ParseCliArgsDeps = {}
+): CliArgs {
   let daemonUrl: string | undefined
   let token: string | undefined
   let explicitDevice: string | undefined
@@ -88,12 +132,32 @@ export function parseCliArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
       'missing --daemon-url (or CROSS_AGENT_TEAMS_MCP_DAEMON_URL env var)'
     )
   }
-  // Only validate / pass the device when the user explicitly provided one.
-  // Leaving it undefined lets daemon-client omit the field on register_agent
-  // so the daemon's loopback auto-fill resolves it to the daemon's localDevice.
-  const device =
-    explicitDevice !== undefined ? resolveDeviceLabel(explicitDevice) : undefined
-  return { daemonUrl, token, device }
+
+  // Explicit --device wins. Otherwise: loopback daemons let the daemon
+  // auto-fill its own localDevice (zero-config); non-loopback daemons require
+  // a device on register_agent — the daemon returns device_required_from_remote
+  // when it is missing, which would put the proxy in a register/fail/respawn
+  // loop. Auto-derive from os.hostname() with a stderr notice; fail-fast when
+  // the hostname yields nothing usable.
+  let device: string | undefined
+  let deviceAutoDerivedNotice: string | undefined
+  if (explicitDevice !== undefined) {
+    device = resolveDeviceLabel(explicitDevice)
+  } else if (isNonLoopbackDaemonUrl(daemonUrl)) {
+    const hostnameFn = deps.hostname ?? hostname
+    const derived = deriveHostnameDeviceLabel(hostnameFn())
+    if (derived === null) {
+      throw new CliArgError(
+        `--device is required when --daemon-url is non-loopback (got ${daemonUrl}); ` +
+        `os.hostname() did not yield a usable label`
+      )
+    }
+    device = derived
+    deviceAutoDerivedNotice =
+      `--device not supplied; auto-derived "${derived}" from os.hostname() for remote daemon ${daemonUrl}. ` +
+      `Pass --device <label> explicitly to silence this notice and pin the device label.`
+  }
+  return { daemonUrl, token, device, deviceAutoDerivedNotice }
 }
 
 export async function main(
@@ -107,6 +171,9 @@ export async function main(
     const msg = err instanceof Error ? err.message : String(err)
     process.stderr.write(`cross-agent-teams-proxy: ${msg}\n`)
     process.exit(2)
+  }
+  if (args.deviceAutoDerivedNotice !== undefined) {
+    process.stderr.write(`cross-agent-teams-proxy: ${args.deviceAutoDerivedNotice}\n`)
   }
 
   // Fresh csid per startup — no persistence. Multi-instance safe.
