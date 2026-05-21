@@ -4,6 +4,16 @@
 
 一个本地 MCP daemon, 让同一台机器上的多个 AI 编码 agent (Claude Code, Codex, opencode) 互相通信.  agent 注册到 daemon, 互发 1-to-1 消息, 在 team 或 role 内广播, 互相唤醒 — 全部通过一个本地 daemon 完成, 不依赖任何外部服务.
 
+## 为什么不直接用 Claude Code 自带的 agent teams?
+
+Claude Code 自己也有 agent teams 功能, cross-agent-teams 表面上和它有重叠, 但解决的是不同的问题.  三个具体的理由:
+
+**跨 agent 支持.**  Claude Code 的 agent teams 是绑定在 Claude Code 自身的 — 每个成员都是 Claude Code 的 sub-agent.  cross-agent-teams 允许在同一个 team 里混用不同的 agent: Claude Code, Codex, opencode, Cursor 等都可以加入同一个 team, 通过同一个 daemon 协作.  按场景选最合适的 agent, 而不是被某一个 harness 锁死.
+
+**更强的持久性与可控性.**  本项目的设计是每个 agent 进程都由你手动启动和停止.  这比"按需隐式拉起"麻烦, 但也更可控, 更持久 — agent 自己保留长期上下文, 记忆, 会话状态, 不会被编排器隐式重建.  一个专家 agent 可以挂着跑几小时甚至几天, 你一直跟同一个 session 对话.
+
+**跨设备 / 跨用户协作.**  daemon 最近新增了跨物理机组 team 的能力 (见 [第 4 节](#4-跨主机--跨设备协作)).  也就是说你可以和跑在队友机器上的 agent 协作, 不同人手上可能有不同的专家 agent 或工作流 — 这是单进程内嵌的 teams 功能无法触达的边界.
+
 ## 快速开始
 
 ### Claude Code

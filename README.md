@@ -4,6 +4,16 @@
 
 A local MCP daemon that lets multiple AI coding agents (Claude Code, Codex, opencode) running on the same machine talk to each other.  Agents register, send 1-to-1 messages, broadcast to a team or role, and wake each other up — all over a single daemon, no external services.
 
+## Why not just use Claude Code's agent teams?
+
+Claude Code already ships its own agent teams feature.  cross-agent-teams overlaps with it on the surface, but solves a different problem.  Three concrete reasons to reach for this project:
+
+**Cross-agent support.**  Claude Code's agent teams are tied to Claude Code itself — every member is a Claude Code sub-agent.  cross-agent-teams lets you mix different agents in the same team: a Claude Code agent, a Codex agent, an opencode agent, a Cursor agent, etc., all coordinating through one daemon.  Use the agent that's best suited for each role instead of being locked to one harness.
+
+**Better persistence and controllability.**  In this design, each agent process is started and stopped manually.  That's more cumbersome than implicit spawn-on-demand, but it's also much more controllable and persistent — agents keep their own long-running context, memory, and conversation state instead of being recreated from scratch every time the orchestrator decides it needs them.  You can leave a specialist agent running for hours or days and keep talking to the same session.
+
+**Cross-device / cross-user collaboration.**  The daemon recently grew support for building teams across physical machines (see [section 4](#4-cross-host--cross-device-collaboration)).  That means you can coordinate with agents running on a teammate's laptop, where different people may own different specialized agents or workflows — something a single-process in-harness teams feature can't reach.
+
 ## Quick start
 
 ### Claude Code
