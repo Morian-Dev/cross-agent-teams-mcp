@@ -110,6 +110,37 @@ describe('RegisterAgentService device resolution', () => {
     })).toEqual({ error: 'invalid_name_label' })
   })
 
+  it('rejects names containing parentheses (name(team) shorthand passed literally)', () => {
+    const { svc } = setup('local')
+    expect(svc.register({
+      connection_id: 'c1',
+      agent_type: 'custom',
+      name: 'skills-creator(default)',
+    })).toEqual({ error: 'invalid_name_label' })
+  })
+
+  it('rejects an explicit team containing parentheses', () => {
+    const { svc } = setup('local')
+    expect(svc.register({
+      connection_id: 'c1',
+      agent_type: 'custom',
+      name: 'alice',
+      team: 'default)',
+    })).toEqual({ error: 'invalid_team_label' })
+  })
+
+  it('still derives a team from project_dir basename even if it contains parentheses (explicit-only guard)', () => {
+    const { svc } = setup('local')
+    const res = svc.register({
+      connection_id: 'c1',
+      agent_type: 'custom',
+      name: 'alice',
+      project_dir: '/tmp/my(proj)',
+    })
+    expect('agent_id' in res).toBe(true)
+    if ('agent_id' in res) expect(res.team).toBe('my(proj)')
+  })
+
   it('normalizes remote-supplied device labels using the same rules as local', () => {
     const { db, svc } = setup('remote')
     const res = svc.register({

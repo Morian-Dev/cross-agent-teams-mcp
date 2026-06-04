@@ -41,6 +41,7 @@ export type RegisterCodexSelfResult =
   | { error: 'device_spoofing_local_label_from_remote' }
   | { error: 'invalid_device_label' }
   | { error: 'invalid_name_label' }
+  | { error: 'invalid_team_label' }
   | { error: 'missing_auth_token'; detail: { ref: string } }
   | { error: 'unsupported_client'; detail: { expected: 'codex'; reason: 'codex_appserver_unreachable' | 'codex_protocol_unavailable'; ws_url: string; cause?: unknown } }
   | { error: 'codex_connect_failed'; detail?: unknown }

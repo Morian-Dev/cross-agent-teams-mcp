@@ -36,16 +36,24 @@ export type RegisterResult =
   | { error: 'device_spoofing_local_label_from_remote' }
   | { error: 'invalid_device_label' }
   | { error: 'invalid_name_label' }
+  | { error: 'invalid_team_label' }
 
 function identityKey(device: string, team: string, name: string): string {
   return `${device}\u0000${team}\u0000${name}`
 }
 
 export function validateNameLabel(name: string): { ok: string } | { error: 'invalid_name_label' } {
-  if (name.includes(':')) {
+  if (name.includes(':') || name.includes('(') || name.includes(')')) {
     return { error: 'invalid_name_label' }
   }
   return { ok: name }
+}
+
+export function validateTeamLabel(team: string): { ok: string } | { error: 'invalid_team_label' } {
+  if (team.includes('(') || team.includes(')')) {
+    return { error: 'invalid_team_label' }
+  }
+  return { ok: team }
 }
 
 export function resolveEffectiveDevice(args: {
@@ -128,6 +136,10 @@ export class RegisterAgentService {
     }
     const validName = validateNameLabel(input.name)
     if ('error' in validName) return validName
+    if (input.team !== undefined) {
+      const validTeam = validateTeamLabel(input.team)
+      if ('error' in validTeam) return validTeam
+    }
     const resolvedDevice = resolveEffectiveDevice({
       requestedDevice: input.device,
       originInfo: this.deps.getSessionOrigin?.(input.connection_id),
