@@ -21,6 +21,7 @@ import { BindChannelService } from './bind-channel.js'
 import { AutoBindChannelService } from './auto-bind-channel.js'
 import { BindRuntimeIdentityService } from './bind-runtime-identity.js'
 import { RegisterCodexSelfService } from './register-codex-self.js'
+import { resolveReconnect } from './reconnect.js'
 import { UnregisterSelfService } from './unregister-self.js'
 import { toPublicAgentRow } from './agent-public-row.js'
 import { detectTmuxPane } from '../daemon/tmux-pane-detect.js'
@@ -134,6 +135,18 @@ const BROADCAST_TO_ROLE_DESC = [
   'For cross-team private 1→1 use send_message({to_team}).',
   'Auto-poke default true with quiet-guard + 30s/180s/600s retry (auto_poke:false opts out); injects only a SHORT wake-up hint, not the message body.  Recipients read via get_inbox.',
   'Returns unknown_recipient when no same-team agent matches to_role.'
+].join(' ')
+
+const RECONNECT_DESC = [
+  'Recover this session\'s prior xats identity after a context clear, when you no longer remember your own (team, name) but the Claude UI process is unchanged.',
+  'Invoke this when the user asks to "reconnect xats", "re-register xats", "重连 xats", or "重新注册 xats".',
+  '`ui_pid` is the Claude UI process id — pass `$PPID` from a Bash tool call inside Claude Code (the same value register_agent takes as `ui_pid`).',
+  'The daemon reverse-looks-up the most recent local claude-code agent row whose runtime_ui_pid matches `ui_pid`, then re-establishes that identity (cross-session takeover + channel/pane auto-bind) reusing the existing agent_id.',
+  'On a single match: returns { ok, agent_id, name, team, channel_session_id, last_seen_at }.',
+  'On zero matches: returns { need_register, reason } — reconnect does NOT auto-register; call register_agent to create a new identity.',
+  'On multiple matches (e.g. the same UI process previously registered under two names): returns { ambiguous, candidates } ordered by last_seen_at descending — surface them so the user can pick, then register_agent with the chosen name.',
+  'Each candidate/match carries last_seen_at; if it looks stale the matched ui_pid may have been reused by an unrelated process — surface it to the user before trusting the recovered identity.',
+  'Scope is device=local claude-code only; codex (thread_id-based) reconnect is out of scope.',
 ].join(' ')
 
 function suppressTmuxHint(
@@ -696,6 +709,72 @@ export function registerBusinessTools(
       delivery?: { kind: string; [key: string]: unknown }
     }) => {
       return run(async () => executeRegister(registerAgentArgsSchema.parse(args)))
+    }
+  )
+
+  const reconnectInputSchema = z.object({
+    ui_pid: z.number().int().positive().describe(
+      'The Claude UI process id (`$PPID` from a Bash tool call inside Claude Code). The daemon reverse-looks-up the prior local claude-code identity registered under this runtime_ui_pid.'
+    ),
+  }).strict()
+
+  async function executeReconnect(ui_pid: number): Promise<unknown> {
+    const resolution = resolveReconnect(agents, ui_pid)
+    if (resolution.kind === 'need_register') {
+      return { need_register: true, reason: resolution.reason }
+    }
+    if (resolution.kind === 'ambiguous') {
+      return {
+        ambiguous: true,
+        candidates: resolution.candidates.map(c => ({
+          agent_id: c.agent_id,
+          name: c.name,
+          team: c.team,
+          device: c.device,
+          role: c.role,
+          last_seen_at: c.last_seen_at,
+        })),
+      }
+    }
+    // Single match: drive the existing register/takeover/auto-bind path using the
+    // recovered identity. The recovered (device, team, name) replaces any
+    // caller-provided name, and ui_pid re-arms channel + runtime-pane auto-bind.
+    const match = resolution.match
+    const res = await executeRegister({
+      agent_type: 'claude-code',
+      name: match.name,
+      team: match.team,
+      device: match.device,
+      role: match.role,
+      ui_pid,
+    })
+    if (typeof res !== 'object' || res === null || !('agent_id' in res)) {
+      return res
+    }
+    const envelope = res as {
+      agent_id: string
+      team: string
+      channel_session_id?: string
+    }
+    return {
+      ok: true,
+      agent_id: envelope.agent_id,
+      name: match.name,
+      team: envelope.team,
+      channel_session_id: envelope.channel_session_id ?? null,
+      last_seen_at: match.last_seen_at,
+    }
+  }
+
+  server.registerTool(
+    'reconnect',
+    {
+      title: 'Reconnect to xats by ui_pid',
+      description: RECONNECT_DESC,
+      inputSchema: reconnectInputSchema,
+    },
+    async (args: { ui_pid: number }) => {
+      return run(async () => executeReconnect(reconnectInputSchema.parse(args).ui_pid))
     }
   )
 

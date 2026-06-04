@@ -42,6 +42,15 @@ export interface AgentListRow extends AgentRow {
   online: boolean
 }
 
+export interface RuntimeUiPidMatch {
+  agent_id: string
+  device: string
+  team: string
+  name: string
+  role: string
+  last_seen_at: string
+}
+
 export const ONLINE_MS = 5 * 60 * 1000
 
 type DbAgentRow = {
@@ -88,6 +97,18 @@ export class AgentsRepo {
     return this.db.prepare(
       `SELECT agent_id FROM agents WHERE device=? AND team=? AND name=?`
     ).get(args.device, args.team, args.name) as { agent_id: string } | undefined
+  }
+
+  findByRuntimeUiPid(ui_pid: number): RuntimeUiPidMatch[] {
+    return this.db.prepare(
+      `SELECT agent_id, device, team, name, role, last_seen_at
+       FROM agents
+       WHERE device = 'local'
+         AND role != '__channel_proxy__'
+         AND runtime_ui_pid IS NOT NULL
+         AND runtime_ui_pid = ?
+       ORDER BY last_seen_at DESC`
+    ).all(ui_pid) as RuntimeUiPidMatch[]
   }
 
   register(input: RegisterInput): {
