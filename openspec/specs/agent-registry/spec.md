@@ -296,6 +296,31 @@ The hint-on-missing-pane-id semantics (see Requirement "register_agent response 
 - **THEN** response is `{ agent_id: 'X', team: 'default' }`
 - **AND** the agents row's `tmux_pane_id` is now `'%99'`
 
+### Requirement: Identity label character constraints
+
+`register_agent` SHALL reject reserved characters in the identity labels before writing any agents row, so that conversational shorthand (e.g. the `name(team)` form like `skills-creator(default)`) cannot leak into a stored identity. The `name` label MUST NOT contain `:`, `(`, or `)`; a violation returns `{error: 'invalid_name_label'}`. An explicitly supplied `team` MUST NOT contain `(` or `)`; a violation returns `{error: 'invalid_team_label'}`. A `team` derived from the `project_dir` basename (when no explicit `team` is given) is NOT character-validated, because the shorthand accident only arrives through explicit arguments. These checks apply uniformly across `agent_type` values (claude-code, codex, custom) via the shared registration path.
+
+#### Scenario: name containing a colon is rejected
+
+- **WHEN** a caller invokes `register_agent({ agent_type: 'custom', name: 'bad:name' })`
+- **THEN** the call returns `{error: 'invalid_name_label'}` without writing any row
+
+#### Scenario: name containing parentheses is rejected
+
+- **WHEN** a caller invokes `register_agent({ agent_type: 'custom', name: 'skills-creator(default)' })`
+- **THEN** the call returns `{error: 'invalid_name_label'}` without writing any row
+
+#### Scenario: explicit team containing parentheses is rejected
+
+- **WHEN** a caller invokes `register_agent({ agent_type: 'custom', name: 'alice', team: 'default)' })`
+- **THEN** the call returns `{error: 'invalid_team_label'}` without writing any row
+
+#### Scenario: team derived from a parenthesized project_dir basename is allowed
+
+- **GIVEN** no explicit `team` is supplied
+- **WHEN** a caller invokes `register_agent({ agent_type: 'custom', name: 'alice', project_dir: '/tmp/my(proj)' })`
+- **THEN** the registration succeeds with team `my(proj)` (the derived basename is not character-validated)
+
 ### Requirement: Sentinel migration advances stale zero cursors on schema apply
 
 `applySchema` SHALL run an idempotent one-shot migration that advances every `agents` row whose `last_processed_event_id = 0` to the current `MAX(event_id)` of the events table:
