@@ -5,7 +5,7 @@ export type AcquireResult =
   | { ok: true }
   | { ok: false; reason: 'already_running'; pid: number; port: number }
 
-function isAlive(pid: number): boolean {
+export function isAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true } catch (e) {
     const err = e as NodeJS.ErrnoException
     // EPERM means the process exists but we lack permission to signal it; still alive.

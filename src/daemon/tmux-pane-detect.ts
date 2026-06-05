@@ -1,8 +1,7 @@
 import { execFile } from 'node:child_process'
 import { normalize, sep } from 'node:path'
 import { promisify } from 'node:util'
-
-const pExecFile = promisify(execFile)
+import { listTmuxPaneRows, type TmuxPaneRow as PaneRow } from './tmux-pane-list.js'
 
 export type DetectAgentKind = 'codex' | 'claude-code' | 'opencode' | 'custom'
 
@@ -38,19 +37,6 @@ export interface DetectTmuxPaneDeps {
   execFile?: typeof execFile
 }
 
-interface PaneRow {
-  pane_id: string
-  session_name: string
-  window_index: number
-  pane_index: number
-  active: boolean
-  tty: string
-  current_path: string
-  current_command: string
-  title: string
-}
-
-const TMUX_LIST_TIMEOUT_MS = 3_000
 const PS_LIST_TIMEOUT_MS = 3_000
 
 function normalizeTty(raw: string | undefined): string | undefined {
@@ -101,52 +87,6 @@ function isHelperProcess(agent: DetectAgentKind, command: string): boolean {
   return /codex\s+app-server/i.test(command) ||
     /Codex Computer Use\.app/i.test(command) ||
     /SkyComputerUseClient/i.test(command)
-}
-
-function parsePaneRows(stdout: string): PaneRow[] {
-  return stdout
-    .split('\n')
-    .map(line => line.trimEnd())
-    .filter(Boolean)
-    .map((line) => {
-      const [
-        pane_id,
-        session_name,
-        window_index,
-        pane_index,
-        pane_active,
-        pane_tty,
-        pane_current_path,
-        pane_current_command,
-        pane_title,
-      ] = line.split('\t')
-      return {
-        pane_id,
-        session_name,
-        window_index: Number(window_index),
-        pane_index: Number(pane_index),
-        active: pane_active === '1',
-        tty: normalizeTty(pane_tty) ?? '',
-        current_path: pane_current_path ?? '',
-        current_command: pane_current_command ?? '',
-        title: pane_title ?? '',
-      }
-    })
-  }
-
-async function listPanes(execLike: typeof execFile): Promise<PaneRow[]> {
-  const exec = promisify(execLike)
-  const { stdout } = await exec(
-    'tmux',
-    [
-      'list-panes',
-      '-a',
-      '-F',
-      '#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_active}\t#{pane_tty}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_title}',
-    ],
-    { timeout: TMUX_LIST_TIMEOUT_MS }
-  )
-  return parsePaneRows(stdout)
 }
 
 async function ttyProcesses(execLike: typeof execFile, tty: string): Promise<string[]> {
@@ -229,7 +169,7 @@ export async function detectTmuxPane(
   const execLike = deps.execFile ?? execFile
   let panes: PaneRow[]
   try {
-    panes = await listPanes(execLike)
+    panes = await listTmuxPaneRows(execLike)
   } catch (error) {
     return {
       error: 'tmux_unavailable',

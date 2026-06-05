@@ -33,7 +33,7 @@ describe('AgentsRepo.findByRuntimeUiPid', () => {
       team: 'default',
       runtime_ui_pid: 25079,
     })
-    expect(repo.findByRuntimeUiPid(99999)).toEqual([])
+    expect(repo.findByRuntimeUiPid(99999, 'local')).toEqual([])
     db.close()
   })
 
@@ -47,7 +47,7 @@ describe('AgentsRepo.findByRuntimeUiPid', () => {
       team: 'default',
       runtime_ui_pid: 25079,
     })
-    const matches = repo.findByRuntimeUiPid(25079)
+    const matches = repo.findByRuntimeUiPid(25079, 'local')
     expect(matches).toHaveLength(1)
     expect(matches[0]).toMatchObject({
       agent_id: r.agent_id,
@@ -81,12 +81,33 @@ describe('AgentsRepo.findByRuntimeUiPid', () => {
     setLastSeen(db, older.agent_id, '2024-01-01T00:00:00.000Z')
     setLastSeen(db, newer.agent_id, '2024-06-01T00:00:00.000Z')
 
-    const matches = repo.findByRuntimeUiPid(25079)
+    const matches = repo.findByRuntimeUiPid(25079, 'local')
     expect(matches.map(m => m.name)).toEqual(['xats-creator', 'xats-tester'])
     db.close()
   })
 
-  it('does not match rows on a non-local device', () => {
+  it('returns rows on the configured local device label', () => {
+    const { dir, db, repo } = freshRepo(); cleanups.push(dir)
+    const r = repo.register({
+      agent_type: 'claude-code',
+      device: 'jt',
+      model: 'opus',
+      role: 'worker',
+      name: 'local-jt-alice',
+      team: 'default',
+      runtime_ui_pid: 25079,
+    })
+    const matches = repo.findByRuntimeUiPid(25079, 'jt')
+    expect(matches).toHaveLength(1)
+    expect(matches[0]).toMatchObject({
+      agent_id: r.agent_id,
+      device: 'jt',
+      name: 'local-jt-alice',
+    })
+    db.close()
+  })
+
+  it('does not match rows on a different device label', () => {
     const { dir, db, repo } = freshRepo(); cleanups.push(dir)
     repo.register({
       agent_type: 'claude-code',
@@ -97,7 +118,7 @@ describe('AgentsRepo.findByRuntimeUiPid', () => {
       team: 'default',
       runtime_ui_pid: 25079,
     })
-    expect(repo.findByRuntimeUiPid(25079)).toEqual([])
+    expect(repo.findByRuntimeUiPid(25079, 'local')).toEqual([])
     db.close()
   })
 
@@ -114,7 +135,7 @@ describe('AgentsRepo.findByRuntimeUiPid', () => {
       team: 'default',
       runtime_ui_pid: 100,
     })
-    expect(repo.findByRuntimeUiPid(100).map(m => m.name)).toEqual(['xats-creator'])
+    expect(repo.findByRuntimeUiPid(100, 'local').map(m => m.name)).toEqual(['xats-creator'])
 
     const second = repo.register({
       agent_type: 'claude-code',
@@ -128,8 +149,8 @@ describe('AgentsRepo.findByRuntimeUiPid', () => {
     expect(second.agent_id).toBe(first.agent_id)
 
     // Old ppid no longer resolves; new ppid is now authoritative.
-    expect(repo.findByRuntimeUiPid(100)).toEqual([])
-    const matches = repo.findByRuntimeUiPid(200)
+    expect(repo.findByRuntimeUiPid(100, 'local')).toEqual([])
+    const matches = repo.findByRuntimeUiPid(200, 'local')
     expect(matches).toHaveLength(1)
     expect(matches[0].agent_id).toBe(first.agent_id)
     db.close()
@@ -156,7 +177,7 @@ describe('AgentsRepo.findByRuntimeUiPid', () => {
       team: 'default',
       // no runtime_ui_pid
     })
-    const matches = repo.findByRuntimeUiPid(100)
+    const matches = repo.findByRuntimeUiPid(100, 'local')
     expect(matches).toHaveLength(1)
     expect(matches[0].agent_id).toBe(first.agent_id)
     db.close()
@@ -172,7 +193,7 @@ describe('AgentsRepo.findByRuntimeUiPid', () => {
       team: 'default',
       runtime_ui_pid: 25079,
     })
-    expect(repo.findByRuntimeUiPid(25079)).toEqual([])
+    expect(repo.findByRuntimeUiPid(25079, 'local')).toEqual([])
     db.close()
   })
 })

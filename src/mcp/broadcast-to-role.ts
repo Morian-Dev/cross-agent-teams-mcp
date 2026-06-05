@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
-import { ONLINE_MS, type AgentsRepo } from '../storage/agents-repo.js'
+import type { AgentsRepo } from '../storage/agents-repo.js'
 import type { EventsOutbox } from '../storage/events-outbox.js'
 import type { FanoutDeps, AutoPokeSkipReason } from './auto-poke-fanout.js'
 import { runFanoutWithRetry } from './fanout-with-retry.js'
@@ -40,7 +40,6 @@ export class BroadcastToRoleService {
   async broadcast(input: BroadcastToRoleInput): Promise<BroadcastToRoleResult> {
     const fromRow = this.agents.findById(input.from)
     if (!fromRow) return { error: 'unknown_recipient' }
-    const cutoffIso = new Date(Date.now() - ONLINE_MS).toISOString()
     const rawRows = this.db.prepare(
       `SELECT
          agent_id,
@@ -48,8 +47,8 @@ export class BroadcastToRoleService {
          delivery_kind,
          delivery_payload
        FROM agents
-       WHERE team=? AND role=? AND agent_id != ? AND last_seen_at > ?`
-    ).all(fromRow.team, input.to_role, input.from, cutoffIso) as Array<{
+       WHERE team=? AND role=? AND agent_id != ?`
+    ).all(fromRow.team, input.to_role, input.from) as Array<{
       agent_id: string
       tmux_pane_id: string | null
       delivery_kind: string

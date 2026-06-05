@@ -4,30 +4,90 @@
 
 Run the agent-teams MCP daemon as a local-only HTTP service with lifecycle management (PID file, port fallback, graceful shutdown), optional bearer auth, consistent storage error mapping, and a health endpoint.
 ## Requirements
-### Requirement: Daemon bind host configuration
+### Requirement: Daemon binds only to 127.0.0.1 by default and gates non-loopback binds on a bearer token
 
-The daemon SHALL bind its primary HTTP listener to the host specified by `--host` (default `127.0.0.1`). Non-loopback bind hosts (any value that is not `127.x`, `::1`, or `localhost`) MUST require an explicit bearer token (`--token` or the `CROSS_AGENT_TEAMS_MCP_TOKEN` environment variable). If `--host` is non-loopback and no token is configured, the daemon MUST exit with non-zero status and print `token_required_for_non_loopback_bind` to stderr without binding.
+The daemon SHALL bind its HTTP listener to `127.0.0.1` by default. A `--host <addr>` flag SHALL allow binding to a different address (e.g. a LAN IP or `0.0.0.0`).
 
-#### Scenario: Default bind address
+When the resolved bind address is not a loopback address, the daemon MUST require a non-empty `--token <t>` value (or the equivalent `CROSS_AGENT_TEAMS_MCP_TOKEN` environment variable). Without it, the daemon MUST refuse to start, write `token_required_for_non_loopback_bind` to stderr, and exit with a non-zero status. Loopback addresses are: any IPv4 address in `127.0.0.0/8`, the IPv6 address `::1`, and `::ffff:127.0.0.0/8`.
+
+The legacy guarantee that loopback-only deployments need no token is preserved: when `--host` is omitted or resolves to a loopback address, `--token` remains optional.
+
+#### Scenario: Default bind address still loopback
 
 - **WHEN** the daemon is started with `npx cross-agent-teams-mcp daemon` without any host override
 - **THEN** the HTTP server listens on `127.0.0.1:9100`
-- **AND** a request from a non-loopback address (e.g. `192.168.x.x`) fails to connect
+- **AND** the daemon starts even when `--token` is omitted
 
-#### Scenario: Non-loopback bind without token is refused
+#### Scenario: Explicit loopback host with no token is accepted
 
-- **GIVEN** the daemon is started with `--host 192.168.1.5` and no `--token` and no `CROSS_AGENT_TEAMS_MCP_TOKEN`
-- **WHEN** startup proceeds
-- **THEN** the process exits with status `1`
+- **WHEN** the daemon is started with `--host 127.0.0.1`
+- **THEN** the daemon binds to `127.0.0.1:9100` and starts even when `--token` is omitted
+
+#### Scenario: Non-loopback host without token refuses to start
+
+- **WHEN** the daemon is started with `--host 0.0.0.0` and no `--token`
+- **THEN** the daemon exits with a non-zero status
 - **AND** stderr contains `token_required_for_non_loopback_bind`
-- **AND** no listener is bound
+- **AND** no port is bound
 
-#### Scenario: Non-loopback bind with token
+#### Scenario: Non-loopback host with token starts and binds the requested address
 
-- **GIVEN** the daemon is started with `--host 192.168.1.5 --token <secret>`
-- **WHEN** startup completes
-- **THEN** the HTTP server listens on `192.168.1.5:<port>`
-- **AND** LAN peers can reach the daemon via that address (subject to the token check)
+- **WHEN** the daemon is started with `--host 10.0.0.10 --token T`
+- **THEN** the HTTP server listens on `10.0.0.10:9100`
+- **AND** the startup log includes the bound host and port
+
+#### Scenario: Token via env variable satisfies the non-loopback guard
+
+- **GIVEN** the environment has `CROSS_AGENT_TEAMS_MCP_TOKEN=T`
+- **WHEN** the daemon is started with `--host 0.0.0.0` and no `--token` flag
+- **THEN** the daemon starts and binds the requested address
+- **AND** stderr does NOT contain `token_required_for_non_loopback_bind`
+
+### Requirement: Daemon accepts a device label via --device
+
+The daemon SHALL accept an optional `--device <label>` flag that sets the local device label used to namespace this host's agents in the `agents` table.
+
+When `--device` is omitted, the daemon SHALL derive the default value from `os.hostname()` by lowercasing and replacing any character outside `[a-z0-9_-]` with `-`. The result MUST be non-empty after derivation; if `os.hostname()` is empty or fully replaced, the daemon SHALL fall back to the literal `local`.
+
+The resolved label MUST be non-empty, MUST NOT contain `:`, and MUST be 64 characters or fewer. If `--device` is supplied with a value violating these rules, the daemon SHALL refuse to start with stderr `invalid_device_label` and a non-zero exit status.
+
+The resolved label is the authoritative local device identifier consumed by `agent-registry` (for `register_agent` device validation and for the startup migration's backfill).
+
+#### Scenario: Default device label derived from hostname
+
+- **GIVEN** `os.hostname()` returns `Host-A.local`
+- **WHEN** the daemon is started without `--device`
+- **THEN** the resolved local device label is `host-a.local`
+- **AND** the startup log includes the resolved label
+
+#### Scenario: Hostname containing disallowed characters is normalised
+
+- **GIVEN** `os.hostname()` returns `Host@A`
+- **WHEN** the daemon is started without `--device`
+- **THEN** the resolved local device label is `host-a` (the `@` is replaced with `-`)
+
+#### Scenario: --device flag overrides the derived default
+
+- **WHEN** the daemon is started with `--device host-b`
+- **THEN** the resolved local device label is `host-b`
+
+#### Scenario: --device with colon is rejected
+
+- **WHEN** the daemon is started with `--device has:colon`
+- **THEN** the daemon exits with a non-zero status
+- **AND** stderr contains `invalid_device_label`
+
+#### Scenario: --device exceeding 64 characters is rejected
+
+- **WHEN** the daemon is started with `--device <65-char string>`
+- **THEN** the daemon exits with a non-zero status
+- **AND** stderr contains `invalid_device_label`
+
+#### Scenario: Empty hostname falls back to literal "local"
+
+- **GIVEN** `os.hostname()` returns an empty string
+- **WHEN** the daemon is started without `--device`
+- **THEN** the resolved local device label is `local`
 
 ### Requirement: Loopback companion listener for non-loopback primary bind
 
@@ -116,15 +176,39 @@ The daemon SHALL write its process id to `~/.cross-agent-teams-mcp/daemon.pid` o
 
 ### Requirement: Graceful shutdown
 
-The daemon SHALL handle `SIGTERM` and `SIGINT` by (a) stopping accept of new connections, (b) flushing the SQLite WAL checkpoint, (c) closing all open SSE streams, and (d) removing the pid file before exiting `0`.
+The daemon SHALL handle `SIGTERM` and `SIGINT` by (a) stopping accept of new connections, (b) draining in-flight requests up to a configurable deadline (default `5000 ms`, overridable via the `XATS_SHUTDOWN_GRACE_MS` environment variable), (c) when the deadline expires, force-closing any remaining open sockets via the underlying HTTP server, (d) flushing the SQLite WAL checkpoint, (e) removing the pid file, and (f) exiting `0`. A second `SIGTERM` or `SIGINT` received before the first handler completes MUST skip the deadline, still remove the pid file, and exit `0` immediately.
 
-#### Scenario: SIGTERM triggers clean shutdown
+#### Scenario: SIGTERM with no long-lived clients
 
-- **GIVEN** a running daemon with one SSE client connected
+- **GIVEN** a running daemon with no SSE / long-lived clients attached
 - **WHEN** SIGTERM is sent
-- **THEN** the SSE client receives a connection close
+- **THEN** the daemon stops accepting new connections within 1 second
 - **AND** the pid file is removed
-- **AND** daemon exits `0`
+- **AND** the daemon exits `0` well before the shutdown deadline
+
+#### Scenario: SIGTERM with long-lived client still attached
+
+- **GIVEN** a running daemon with at least one long-lived SSE / channel-proxy client holding an ESTABLISHED connection
+- **WHEN** SIGTERM is sent
+- **AND** the client does not voluntarily close its connection
+- **THEN** the daemon stops accepting new connections immediately
+- **AND** within `XATS_SHUTDOWN_GRACE_MS + 500 ms` of the signal, the daemon force-closes the remaining socket, removes the pid file, and exits `0`
+
+#### Scenario: Second signal triggers fast exit
+
+- **GIVEN** a running daemon that has already received SIGTERM and is mid-drain
+- **WHEN** a second `SIGTERM` or `SIGINT` is sent
+- **THEN** the daemon skips the remaining drain window
+- **AND** removes the pid file
+- **AND** exits `0` within 200 ms of the second signal
+
+#### Scenario: XATS_SHUTDOWN_GRACE_MS=0 skips drain
+
+- **GIVEN** a running daemon launched with `XATS_SHUTDOWN_GRACE_MS=0` in the environment
+- **WHEN** SIGTERM is sent
+- **THEN** the daemon force-closes any remaining sockets immediately without waiting
+- **AND** removes the pid file
+- **AND** exits `0`
 
 ### Requirement: Optional bearer token authentication
 

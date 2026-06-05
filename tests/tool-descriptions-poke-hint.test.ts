@@ -225,7 +225,8 @@ describe('tool descriptions: auto-poke and delivery status', () => {
     const tools = await listTools()
     const tool = tools.find(t => t.name === 'send_message')
     const d = tool!.description!
-    expect(d).toMatch(/offline|5 min|idle|not filtered/i)
+    expect(d).toMatch(/offline|idle|not filtered/i)
+    expect(d).not.toMatch(/5 min/i)
   })
 
   it('send_message_by_id is registered with id-based addressing', async () => {
@@ -237,11 +238,13 @@ describe('tool descriptions: auto-poke and delivery status', () => {
     expect(d).toMatch(/offline|not filtered/i)
   })
 
-  it('broadcast description documents the fan-out online filter', async () => {
+  it('broadcast description documents all-member fan-out', async () => {
     const tools = await listTools()
     const tool = tools.find(t => t.name === 'broadcast')
     const d = tool!.description!
-    expect(d).toMatch(/offline|5 min|idle/i)
+    expect(d).toMatch(/every team member|except the sender/i)
+    expect(d).toMatch(/not filtered|offline|idle/i)
+    expect(d).not.toMatch(/5 min/i)
   })
 
   it('send_message description mentions broadcast/broadcast_to_role and cross-team constraint', async () => {

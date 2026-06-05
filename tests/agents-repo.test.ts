@@ -53,12 +53,12 @@ describe('agents repo', () => {
     expect(out.map(a => a.agent_id).sort()).toEqual([a1.agent_id, a2.agent_id].sort())
   })
 
-  it('online flag is true when last_seen_at within 5 minutes', () => {
+  it('online flag uses the reachable fallback when process liveness is unavailable', () => {
     const dir = tmp(); cleanups.push(dir)
     const db = openDb(join(dir, 'data.db')); applySchema(db)
     const repo = new AgentsRepo(db)
     const fresh = repo.register({ model: 'm', role: 'r', name: 'fresh' })
-    const stale = new Date(Date.now() - 10 * 60 * 1000).toISOString()
+    const stale = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString()
     db.prepare(`INSERT INTO agents (agent_id, device, team, role, name, registered_at, last_seen_at) VALUES (?,?,?,?,?,?,?)`)
       .run('stale', 'local', 'default', 'r', 'stale-name', stale, stale)
     const out = repo.list({ team: 'default' })

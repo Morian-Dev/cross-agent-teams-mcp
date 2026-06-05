@@ -36,9 +36,10 @@ function toCandidate(row: RuntimeUiPidMatch): ReconnectCandidate {
  */
 export function resolveReconnect(
   repo: AgentsRepo,
-  ui_pid: number
+  ui_pid: number,
+  localDevice: string
 ): ReconnectResolution {
-  const rows = repo.findByRuntimeUiPid(ui_pid)
+  const rows = repo.findByRuntimeUiPid(ui_pid, localDevice)
   if (rows.length === 0) {
     return {
       kind: 'need_register',

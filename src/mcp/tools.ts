@@ -25,6 +25,7 @@ import { resolveReconnect } from './reconnect.js'
 import { UnregisterSelfService } from './unregister-self.js'
 import { toPublicAgentRow } from './agent-public-row.js'
 import { detectTmuxPane } from '../daemon/tmux-pane-detect.js'
+import { listTmuxPaneIds } from '../daemon/tmux-pane-list.js'
 import { bindRuntimeIdentity } from '../daemon/runtime-identity.js'
 import type { DetectAgentKind } from '../daemon/tmux-pane-detect.js'
 import type { AgentType } from '../lib/agent-type.js'
@@ -109,7 +110,7 @@ const SEND_MESSAGE_DESC = [
   '除非用户明确指定 to_team, 不要跨 team 沟通 (explicitly set to_team only when user asks).',
   'Reports poked, poke_skip_reasons (no_pane, guard_failed, tmux_unavailable, self); on guard_failed daemon retries at 30s/180s/600s (retry_scheduled, retry_delays_s); stops early on poked.',
   'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender>, 请调 get_inbox 查看), NOT the body — read bodies via get_inbox.',
-  'Delivery is NOT filtered by online/idle (unlike broadcast\'s 5 min idle skip) — offline targets still receive the mailbox row.',
+  'Delivery is NOT filtered by online/idle; direct and fan-out deliveries write mailbox rows for offline targets. The list_agents `online` flag reflects process liveness.',
   'DO NOT pre-verify the recipient via list_agents before calling send_message — this rule applies to BOTH same-team and cross-team sends (list_agents is caller-team scoped and CANNOT see cross-team agents, so a cross-team pre-check always falsely reports "missing"; for same-team sends the pre-check is pure waste).',
   'On miss send_message returns unknown_recipient cleanly with no side effects, so the correct pattern is "try send, then handle unknown_recipient" — never "list_agents first, then send".'
 ].join(' ')
@@ -124,15 +125,15 @@ const SEND_MESSAGE_BY_ID_DESC = [
 ].join(' ')
 
 const BROADCAST_DESC = [
-  'Same-team broadcast to every other agent in the caller team across all devices.',
+  'Same-team broadcast to every other agent in the caller team across all devices; delivers to every team member except the sender.',
   'Auto-poke default true (quiet-guard + 30s/180s/600s retry; reports poked, poke_skip_reasons, retry_scheduled, retry_delays_s).  auto_poke:false opts out.',
   'For role filter use broadcast_to_role.  For cross-team 1→1 use send_message({to_team}).',
   'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender>, 请调 get_inbox 查看) — never the body.  Read via get_inbox.',
-  'Skips agents idle > 5 min (offline).'
+  'Delivery is NOT filtered by online/idle; offline targets still receive mailbox rows. The list_agents `online` flag reflects process liveness.'
 ].join(' ')
 
 const BROADCAST_TO_ROLE_DESC = [
-  'Same-team broadcast filtered by role across all devices.  Strictly same-team — no cross-team variant.',
+  'Same-team broadcast filtered by role across all devices; delivers to every matching team member.  Strictly same-team — no cross-team variant.',
   'For cross-team private 1→1 use send_message({to_team}).',
   'Auto-poke default true with quiet-guard + 30s/180s/600s retry (auto_poke:false opts out); injects only a SHORT wake-up hint, not the message body.  Recipients read via get_inbox.',
   'Returns unknown_recipient when no same-team agent matches to_role.'
@@ -147,7 +148,7 @@ const RECONNECT_DESC = [
   'On zero matches: returns { need_register, reason } — reconnect does NOT auto-register; call register_agent to create a new identity.',
   'On multiple matches (e.g. the same UI process previously registered under two names): returns { ambiguous, candidates } ordered by last_seen_at descending — surface them so the user can pick, then register_agent with the chosen name.',
   'Each candidate/match carries last_seen_at; if it looks stale the matched ui_pid may have been reused by an unrelated process — surface it to the user before trusting the recovered identity.',
-  'Scope is device=local claude-code only; codex (thread_id-based) reconnect is out of scope.',
+  'Scope is the daemon\'s configured local device label for claude-code only; codex (thread_id-based) reconnect is out of scope.',
 ].join(' ')
 
 function suppressTmuxHint(
@@ -721,7 +722,7 @@ export function registerBusinessTools(
   }).strict()
 
   async function executeReconnect(ui_pid: number): Promise<unknown> {
-    const resolution = resolveReconnect(agents, ui_pid)
+    const resolution = resolveReconnect(agents, ui_pid, context?.localDevice ?? 'local')
     if (resolution.kind === 'need_register') {
       return { need_register: true, reason: resolution.reason }
     }
@@ -827,9 +828,15 @@ export function registerBusinessTools(
       const who = requireAgent()
       if (typeof who !== 'string') return toText(who)
       const row = agents.findById(who)!
+      const livePanes = await listTmuxPaneIds()
       return run(() => ({
         agents: agents
-          .list({ team: row.team, excludeRoles: ['__channel_proxy__'] })
+          .list({
+            team: row.team,
+            excludeRoles: ['__channel_proxy__'],
+            localDevice: context?.localDevice ?? 'local',
+            livePanes,
+          })
           .map(toPublicAgentRow),
       }))
     }

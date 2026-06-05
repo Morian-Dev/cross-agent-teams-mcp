@@ -184,7 +184,7 @@ describe('broadcast auto_poke default-on integration', () => {
     expect(r.retry_delays_s).toEqual([30, 180, 600])
   })
 
-  it('excludes agents with last_seen_at older than ONLINE_MS from fan-out', async () => {
+  it('includes idle agents in fan-out and writes mailbox rows', async () => {
     const { svc, db, cleanup } = setupService()
     cleanups.push(cleanup)
     insertAgent(db, { agent_id: 'A', model: 'm', role: 'backend', name: 'A' })
@@ -198,18 +198,18 @@ describe('broadcast auto_poke default-on integration', () => {
 
     const r = await svc.broadcast({ from: 'A', body: 'x', auto_poke: false })
     if ('error' in r) throw new Error('expected success')
-    expect([...r.recipients].sort()).toEqual(['B', 'D'])
+    expect([...r.recipients].sort()).toEqual(['B', 'C', 'D'])
 
     const cRows = db.prepare('SELECT id FROM messages WHERE to_agent_id=?').all('C') as unknown[]
-    expect(cRows.length).toBe(0)
+    expect(cRows.length).toBe(1)
 
     const ev = db.prepare('SELECT payload FROM events WHERE event_id=?').get(r.event_id) as
       { payload: string }
     const payload = JSON.parse(ev.payload) as { recipients: string[] }
-    expect([...payload.recipients].sort()).toEqual(['B', 'D'])
+    expect([...payload.recipients].sort()).toEqual(['B', 'C', 'D'])
   })
 
-  it('returns unknown_recipient when all non-sender agents are offline', async () => {
+  it('does not treat an idle non-sender as unknown_recipient', async () => {
     const { svc, db, cleanup } = setupService()
     cleanups.push(cleanup)
     insertAgent(db, { agent_id: 'A', model: 'm', role: 'backend', name: 'A' })
@@ -221,11 +221,12 @@ describe('broadcast auto_poke default-on integration', () => {
     const msgsBefore = (db.prepare('SELECT COUNT(*) as c FROM messages').get() as { c: number }).c
 
     const r = await svc.broadcast({ from: 'A', body: 'x', auto_poke: false })
-    expect(r).toEqual({ error: 'unknown_recipient' })
+    if ('error' in r) throw new Error('expected success')
+    expect(r.recipients).toEqual(['B'])
 
     const eventsAfter = (db.prepare('SELECT COUNT(*) as c FROM events').get() as { c: number }).c
     const msgsAfter = (db.prepare('SELECT COUNT(*) as c FROM messages').get() as { c: number }).c
-    expect(eventsAfter).toBe(eventsBefore)
-    expect(msgsAfter).toBe(msgsBefore)
+    expect(eventsAfter).toBe(eventsBefore + 1)
+    expect(msgsAfter).toBe(msgsBefore + 1)
   })
 })

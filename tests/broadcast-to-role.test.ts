@@ -168,7 +168,7 @@ describe('broadcast_to_role', () => {
     expect(r.retry_delays_s).toEqual([30, 180, 600])
   })
 
-  it('excludes role members with last_seen_at older than ONLINE_MS', async () => {
+  it('includes idle role members in fan-out and writes mailbox rows', async () => {
     const { svc, db, cleanup } = setup()
     cleanups.push(cleanup)
     insertAgent(db, { agent_id: 'A', team: 'default', role: 'backend', name: 'A' })
@@ -180,12 +180,12 @@ describe('broadcast_to_role', () => {
 
     const r = await svc.broadcast({ from: 'A', to_role: 'frontend', body: 'hi', auto_poke: false })
     if ('error' in r) throw new Error('expected success')
-    expect([...r.recipients].sort()).toEqual(['F1', 'F3'])
+    expect([...r.recipients].sort()).toEqual(['F1', 'F2', 'F3'])
     const f2Rows = db.prepare('SELECT id FROM messages WHERE to_agent_id=?').all('F2') as unknown[]
-    expect(f2Rows.length).toBe(0)
+    expect(f2Rows.length).toBe(1)
   })
 
-  it('returns unknown_recipient when all role members are offline', async () => {
+  it('does not treat an idle role member as unknown_recipient', async () => {
     const { svc, db, cleanup } = setup()
     cleanups.push(cleanup)
     insertAgent(db, { agent_id: 'A', team: 'default', role: 'backend', name: 'A' })
@@ -194,6 +194,7 @@ describe('broadcast_to_role', () => {
     db.prepare('UPDATE agents SET last_seen_at=? WHERE agent_id=?').run(sixMinAgo, 'F1')
 
     const r = await svc.broadcast({ from: 'A', to_role: 'frontend', body: 'hi', auto_poke: false })
-    expect(r).toEqual({ error: 'unknown_recipient' })
+    if ('error' in r) throw new Error('expected success')
+    expect(r.recipients).toEqual(['F1'])
   })
 })

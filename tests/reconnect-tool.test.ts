@@ -33,11 +33,12 @@ async function parseTool(resp: unknown): Promise<Record<string, unknown>> {
   return JSON.parse(r.content[0].text)
 }
 
-async function setup() {
+async function setup(opts: { localDevice?: string } = {}) {
   const dir = tmp()
   const dbPath = join(dir, 'data.db')
   const db = openDb(dbPath)
-  applySchema(db)
+  const localDevice = opts.localDevice ?? 'local'
+  applySchema(db, { localDevice })
   const server = new McpServer({ name: 'test-server', version: '0.0.0' })
   const holder: { current: string | undefined } = { current: undefined }
   const sessionId = 'session-reconnect'
@@ -48,6 +49,11 @@ async function setup() {
     undefined,
     (agentId) => { holder.current = agentId },
     () => sessionId,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { localDevice },
   )
   const [ct, st] = InMemoryTransport.createLinkedPair()
   await server.connect(st)
@@ -135,6 +141,36 @@ describe('reconnect tool', () => {
       `SELECT COUNT(*) AS c FROM agents WHERE name='xats-creator'`
     ).get() as { c: number }
     expect(count.c).toBe(1)
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it('resolves a row stored under the configured local device label', async () => {
+    const { dir, db, server, client, transport } = await setup({ localDevice: 'jt' })
+    cleanups.push(dir)
+    seedAgent(db, {
+      agent_id: 'J',
+      device: 'jt',
+      name: 'xats-creator',
+      runtime_ui_pid: 25079,
+      last_seen_at: '2024-01-02T00:00:00.000Z',
+    })
+
+    const resp = await client.callTool({ name: 'reconnect', arguments: { ui_pid: 25079 } })
+    const obj = await parseTool(resp)
+
+    expect(obj.ok).toBe(true)
+    expect(obj.agent_id).toBe('J')
+    expect(obj.name).toBe('xats-creator')
+    expect(obj.team).toBe('default')
+
+    const row = db.prepare(
+      `SELECT device FROM agents WHERE agent_id='J'`
+    ).get() as { device: string }
+    expect(row.device).toBe('jt')
 
     await transport.close()
     await client.close()

@@ -7,6 +7,7 @@ import {
   type DeliveryRow,
 } from '../lib/delivery-spec.js'
 import type { AgentType } from '../lib/agent-type.js'
+import { isAlive } from '../daemon/pid.js'
 
 export interface RegisterInput {
   agent_type?: AgentType
@@ -33,6 +34,7 @@ export interface AgentRow {
   name: string
   model: string | null
   tmux_pane_id: string | null
+  runtime_ui_pid: number | null
   delivery: DeliverySpec
   channel_session_id: string | null
   last_seen_at: string
@@ -51,7 +53,7 @@ export interface RuntimeUiPidMatch {
   last_seen_at: string
 }
 
-export const ONLINE_MS = 5 * 60 * 1000
+export const REACHABLE_MS = 4 * 24 * 60 * 60 * 1000
 
 type DbAgentRow = {
   agent_id: string
@@ -63,8 +65,25 @@ type DbAgentRow = {
   name: string
   model: string | null
   tmux_pane_id: string | null
+  runtime_ui_pid: number | null
   last_seen_at: string
 } & DeliveryRow
+
+export function isAgentLive(
+  agent: Pick<AgentRow, 'device' | 'runtime_ui_pid' | 'tmux_pane_id' | 'last_seen_at'>,
+  args: { localDevice: string; livePanes: Set<string> | null }
+): boolean {
+  const local = agent.device === args.localDevice
+  if (local && agent.runtime_ui_pid !== null && agent.runtime_ui_pid > 0) {
+    return isAlive(agent.runtime_ui_pid)
+  }
+  if (local && agent.tmux_pane_id !== null && args.livePanes !== null) {
+    return args.livePanes.has(agent.tmux_pane_id)
+  }
+  const lastSeenMs = new Date(agent.last_seen_at).getTime()
+  if (!Number.isFinite(lastSeenMs)) return false
+  return Date.now() - lastSeenMs <= REACHABLE_MS
+}
 
 function toAgentRow(row: DbAgentRow): AgentRow {
   const delivery = parseDeliveryRow(row)
@@ -78,6 +97,7 @@ function toAgentRow(row: DbAgentRow): AgentRow {
     name: row.name,
     model: row.model,
     tmux_pane_id: row.tmux_pane_id,
+    runtime_ui_pid: row.runtime_ui_pid,
     delivery,
     channel_session_id:
       delivery.kind === 'claude-channel' ? delivery.channel_session_id : null,
@@ -99,16 +119,16 @@ export class AgentsRepo {
     ).get(args.device, args.team, args.name) as { agent_id: string } | undefined
   }
 
-  findByRuntimeUiPid(ui_pid: number): RuntimeUiPidMatch[] {
+  findByRuntimeUiPid(ui_pid: number, localDevice: string): RuntimeUiPidMatch[] {
     return this.db.prepare(
       `SELECT agent_id, device, team, name, role, last_seen_at
        FROM agents
-       WHERE device = 'local'
+       WHERE device = ?
          AND role != '__channel_proxy__'
          AND runtime_ui_pid IS NOT NULL
          AND runtime_ui_pid = ?
        ORDER BY last_seen_at DESC`
-    ).all(ui_pid) as RuntimeUiPidMatch[]
+    ).all(localDevice, ui_pid) as RuntimeUiPidMatch[]
   }
 
   register(input: RegisterInput): {
@@ -293,7 +313,12 @@ export class AgentsRepo {
     )
   }
 
-  list(args: { team: string; excludeRoles?: string[] }): AgentListRow[] {
+  list(args: {
+    team: string
+    excludeRoles?: string[]
+    localDevice?: string
+    livePanes?: Set<string> | null
+  }): AgentListRow[] {
     const exclude = args.excludeRoles ?? []
     const baseSelect =
       `SELECT
@@ -306,6 +331,7 @@ export class AgentsRepo {
          name,
          model,
          tmux_pane_id,
+         runtime_ui_pid,
          delivery_kind,
          delivery_payload,
          last_seen_at
@@ -321,12 +347,13 @@ export class AgentsRepo {
     } else {
       rows = this.db.prepare(`${baseSelect}${orderBy}`).all(args.team) as DbAgentRow[]
     }
-    const nowMs = Date.now()
+    const localDevice = args.localDevice ?? 'local'
+    const livePanes = args.livePanes ?? null
     return rows.map((row) => {
       const agent = toAgentRow(row)
       return {
         ...agent,
-        online: nowMs - new Date(agent.last_seen_at).getTime() < ONLINE_MS,
+        online: isAgentLive(agent, { localDevice, livePanes }),
       }
     })
   }
@@ -355,6 +382,7 @@ export class AgentsRepo {
          name,
          model,
          tmux_pane_id,
+         runtime_ui_pid,
          delivery_kind,
          delivery_payload,
          last_seen_at
