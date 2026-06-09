@@ -76,7 +76,7 @@ When the MCP session transport closes, the daemon MUST call `ChannelWakeFanout.d
 
 The daemon SHALL register an MCP tool `bind_channel({channel_session_id: string})` for self-binding a Claude Code host to its proxy's channel session.  The caller identity is resolved from the session (the MCP session is already bound to an `agent_id` via `register_agent`); `bind_channel` does NOT accept `team` or `name` arguments.  When invoked:
 
-1. The caller MUST be a registered agent (session bound to an `agent_id`); otherwise return `{error: 'unknown_agent'}`.
+1. The caller MUST be a registered agent (session bound to an `agent_id`); otherwise return `{error: 'unknown_agent'}`. A fresh or resumed MCP session is not yet bound to its agent, so `bind_channel` returns `unknown_agent` there; the caller SHOULD use `reconnect({ui_pid})` instead, which resolves identity by process id rather than from the session binding.
 2. The caller's `role` MUST NOT be `'__channel_proxy__'` (proxies never bind themselves as channel owners); non-proxy roles are all accepted.
 3. `channel_session_id` MUST be a trimmed non-empty string; otherwise return `{error: 'invalid_channel_session_id'}`.
 4. The `channel_session_id` MUST correspond to a currently-attached sink in `ChannelWakeFanout` (i.e. a live proxy session already called `subscribe_channel_wake` with this csid); otherwise return `{error: 'unknown_channel_session'}`.  This guards against Claude typing a random string and catches races where Claude tries to bind after the proxy session already closed.
@@ -148,7 +148,7 @@ On startup, the channel proxy SHALL, in order:
 3. Open an MCP Streamable HTTP client to `<daemon-url>`.
 4. Call `register_agent({agent_type: 'custom', agent_type_name: 'cross-agent-teams-channel', role: '__channel_proxy__', name: 'channel-proxy-<pid>', team: 'default', model: 'proxy', claude_ui_pid: <process.ppid>, delivery: {kind: 'claude-channel', channel_session_id: <csid>}})` to establish its own MCP session identity AND persist both the parent Claude Code UI pid and the current csid on the proxy's own agents row.  The `claude_ui_pid` value SHALL be the proxy process's parent pid at startup.  The `delivery` field reuses the existing `register_agent` delivery contract to persist the csid without adding a new column.
 5. Call `subscribe_channel_wake({channel_session_id: <csid>})` to attach its notification sink.
-6. Emit a `notifications/claude/channel` JSON-RPC notification on its host stdio telling Claude: its `channel_session_id` is `<csid>` and it should call `bind_channel({channel_session_id: '<csid>'})` to complete binding.  This notification remains for backward compatibility — callers that already know how to parse and use it are unaffected — but it is no longer required for auto-binding to succeed (see `agent-registry`'s auto-bind requirement).
+6. Emit a `notifications/claude/channel` JSON-RPC notification on its host stdio telling Claude its `channel_session_id` is `<csid>` and how to (re)establish on this session. The notification SHALL route re-establishment by case: for a host that was already registered earlier in the same Claude process (unchanged `$PPID`) reconnecting after a context clear, resume, or channel re-attach, it MUST guide `reconnect({ui_pid: $PPID})` (recovers the prior identity and rebinds the new csid in one step); it MUST state that `bind_channel({channel_session_id: '<csid>'})` only rebinds when the caller's current MCP session is already bound to its agent and otherwise returns `unknown_agent`. This notification remains for backward compatibility — callers that already know how to parse and use it are unaffected — but it is no longer required for auto-binding to succeed (see `agent-registry`'s auto-bind requirement).
 7. Enter an idle loop receiving `notifications/channel_wake` from the daemon and relaying them to the host.
 
 If `register_agent` or `subscribe_channel_wake` fails after the Streamable HTTP MCP
@@ -181,6 +181,7 @@ drop the unregistered session immediately.
 - **THEN** the proxy emits a `notifications/claude/channel` JSON-RPC notification to its host
 - **AND** the notification `params.content` contains the literal string `csid-xyz`
 - **AND** the notification `params.content` mentions `bind_channel`
+- **AND** the notification `params.content` guides `reconnect({ui_pid: $PPID})` for re-establishing after a context clear / resume / channel re-attach (changed csid)
 
 #### Scenario: proxy honors CROSS_AGENT_TEAMS_MCP_DAEMON_URL env var when flag omitted
 

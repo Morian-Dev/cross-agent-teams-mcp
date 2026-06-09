@@ -91,10 +91,11 @@ When more than one `device='local'` agents row matches `runtime_ui_pid = ui_pid`
 
 ### Requirement: reconnect tool description guides invocation on reconnect phrases
 
-The `reconnect` tool's MCP description SHALL instruct the agent to invoke it when the user asks to reconnect or re-register to xats — covering at least the phrases "reconnect xats", "re-register xats", "重连 xats", and "重新注册 xats" — passing the Claude UI process id (`$PPID`) as `ui_pid`.
+The `reconnect` tool's MCP description SHALL instruct the agent to invoke it when the user asks to reconnect or re-register to xats — covering at least the phrases "reconnect xats", "re-register xats", "重连 xats", and "重新注册 xats" — passing the Claude UI process id (`$PPID`) as `ui_pid`. The description SHALL ALSO instruct the agent to use `reconnect` when a resume or channel re-attach leaves it unable to send (a changed `channel_session_id` or an `unknown_agent` result) while `$PPID` is unchanged — i.e. `reconnect` is preferred over the `bind_channel`→`register_agent` fallback for re-establishing on a fresh MCP/channel session, even when the agent still remembers its `(team, name)`.
 
 #### Scenario: Description lists the trigger phrases and the ui_pid source
 
 - **WHEN** the registered `reconnect` tool's description is inspected
 - **THEN** it names the reconnect/re-register trigger phrases (including the Chinese "重连 xats" / "重新注册 xats")
 - **AND** it states that `ui_pid` is the Claude UI process id (`$PPID`)
+- **AND** it states that `reconnect` is the path to re-establish after a resume / channel re-attach when the csid changed or `bind_channel` returned `unknown_agent`

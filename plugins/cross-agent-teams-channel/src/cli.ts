@@ -85,7 +85,7 @@ export function buildStartupHint(
     `cross-agent-teams-mcp: your channel_session_id is ${csid}.`,
     `Do NOT register automatically. First ask the user (in English) to register this session so it can talk to other agents — use exactly this wording: ${ask}`,
     `Once the user provides a name (and optionally a team), call register_agent({agent_type: "claude-code", name: "<name from user>", team: "<team from user, omit if not provided>"${deviceClause}, ui_pid: $PPID, project_dir: "<current working directory>"})${deviceRegisterFragment}. Do NOT pass channel_session_id here; the daemon auto-binds via ui_pid.`,
-    `bind_channel({channel_session_id: "${csid}"}) is the low-level rebind tool for an already-registered Claude host that needs to switch to a fresh csid; it is NOT the primary registration path.`,
+    `If you were already registered in this Claude process earlier (your $PPID is unchanged) and this is a reconnect after a context clear, resume, or channel re-attach, call reconnect({ui_pid: $PPID}) to recover your prior (team, name) and rebind to this new csid in one step — it returns need_register if you have never registered in this process. bind_channel({channel_session_id: "${csid}"}) only rebinds when your CURRENT MCP session is already bound to your agent; on a fresh or resumed MCP session it returns unknown_agent, so use reconnect instead. Neither is the primary first-time registration path.`,
     `Do not use curl or another external HTTP client for Claude registration here — that would create a different MCP session, and follow-up tools in Claude Code could still see unknown_agent.`
   ].join(' ')
   return {

@@ -33,6 +33,9 @@ describe('proxy startup channel notification', () => {
     expect(params.content).not.toContain('register_codex_self')
     expect(params.content).toContain('ui_pid')
     expect(params.content).toContain('bind_channel')
+    // Resume / channel re-attach (fresh session, same $PPID) should route to reconnect,
+    // not the bind_channel→register fallback that returns unknown_agent first.
+    expect(params.content).toContain('reconnect({ui_pid: $PPID})')
     expect(params.content).toContain('register_agent')
     expect(params.content).toContain('agent_type: "claude-code"')
     expect(params.content).toContain('curl')
