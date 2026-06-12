@@ -186,6 +186,7 @@ export function mountMcp(
           clientInfo: undefined,
           originInfo: { origin: 'local', remote_addr: null },
         })
+        log(`mcp session created: sid=${sid} sessions=${sessions.size}`)
         if (opts.orphanSessionLimit !== undefined) {
           enforceOrphanSessionLimit(now, opts.orphanSessionLimit)
         }
@@ -206,6 +207,7 @@ export function mountMcp(
         if (agentIdHolder.current) {
           try { registerSvc.releaseConnection(agentIdHolder.current, transport.sessionId) } catch { /* ignore */ }
         }
+        log(`mcp session closed: sid=${transport.sessionId} had_agent=${agentIdHolder.current ?? 'none'} sessions=${sessions.size - 1}`)
         sessions.delete(transport.sessionId)
         sessionOwners.delete(transport.sessionId)
       }
@@ -266,7 +268,10 @@ export function mountMcp(
     let session = sid ? sessions.get(sid) : undefined
     const originInfo = (req as FastifyRequest & { xatsPeer?: SessionOriginInfo }).xatsPeer
       ?? { origin: 'local' as const, remote_addr: null }
-    if (!session && !isInit) { return reply.code(400).send({ error: 'unknown_session' }) }
+    if (!session && !isInit) {
+      log(`mcp unknown_session: route=POST method=${body?.method ?? 'unknown'} name=${body?.params?.name ?? 'none'} sid=${sid ?? 'none'} sessions=${sessions.size}`)
+      return reply.code(400).send({ error: 'unknown_session' })
+    }
 
     // register_agent presenting a different Authorization header than the one that
     // first claimed this session id -> agent_id_collision (HTTP 409). Absence of
@@ -321,7 +326,10 @@ export function mountMcp(
   app.get('/mcp', async (req: FastifyRequest, reply: FastifyReply) => {
     const sid = req.headers['mcp-session-id'] as string | undefined
     const session = sid ? sessions.get(sid) : undefined
-    if (!session) return reply.code(400).send({ error: 'unknown_session' })
+    if (!session) {
+      log(`mcp unknown_session: route=GET sid=${sid ?? 'none'} sessions=${sessions.size}`)
+      return reply.code(400).send({ error: 'unknown_session' })
+    }
     session.lastActivityAt = Date.now()
     await session.transport.handleRequest(req.raw, reply.raw)
     return reply
@@ -330,7 +338,10 @@ export function mountMcp(
   app.delete('/mcp', async (req: FastifyRequest, reply: FastifyReply) => {
     const sid = req.headers['mcp-session-id'] as string | undefined
     const session = sid ? sessions.get(sid) : undefined
-    if (!session) return reply.code(400).send({ error: 'unknown_session' })
+    if (!session) {
+      log(`mcp unknown_session: route=DELETE sid=${sid ?? 'none'} sessions=${sessions.size}`)
+      return reply.code(400).send({ error: 'unknown_session' })
+    }
     session.lastActivityAt = Date.now()
     await session.transport.handleRequest(req.raw, reply.raw)
     return reply
