@@ -6,6 +6,10 @@ import {
   dispatchCodexAppserverPoke,
   type CodexAppserverDispatchResult,
 } from './codex-appserver-dispatch.js'
+import {
+  dispatchOpencodeServerPoke,
+  type OpencodeServerDispatchResult,
+} from './opencode-server-dispatch.js'
 
 export interface DispatchDeps {
   channelWakeFanout?: ChannelWakeFanout
@@ -14,6 +18,10 @@ export interface DispatchDeps {
     delivery: Extract<DeliverySpec, { kind: 'codex-appserver' }>
     content: string
   }) => Promise<CodexAppserverDispatchResult>
+  opencodeServerDispatch?: (args: {
+    delivery: Extract<DeliverySpec, { kind: 'opencode-server' }>
+    content: string
+  }) => Promise<OpencodeServerDispatchResult>
 }
 
 export type TmuxPokeResult =
@@ -50,9 +58,14 @@ export type DispatchResult =
       thread_id: string
     }
   | {
+      ok: true
+      transport_used: 'opencode-server'
+      session_id: string
+    }
+  | {
       error: string
       detail?: unknown
-      transport_used?: 'tmux-poke' | 'codex-appserver'
+      transport_used?: 'tmux-poke' | 'codex-appserver' | 'opencode-server'
     }
 
 export async function dispatchPoke(
@@ -63,6 +76,7 @@ export async function dispatchPoke(
   const agentType = resolveAgentType(target)
   if (agentType === 'claude-code') return dispatchClaude(deps, target, input)
   if (agentType === 'codex') return dispatchCodex(deps, target, input)
+  if (agentType === 'opencode') return dispatchOpencode(deps, target, input)
   return dispatchUnknown(deps, target, input)
 }
 
@@ -70,6 +84,7 @@ function resolveAgentType(target: TargetRow): AgentType | null {
   if (target.agent_type) return target.agent_type
   if (target.delivery.kind === 'claude-channel') return 'claude-code'
   if (target.delivery.kind === 'codex-appserver') return 'codex'
+  if (target.delivery.kind === 'opencode-server') return 'opencode'
   return null
 }
 
@@ -149,6 +164,32 @@ async function dispatchCodex(
     error: 'no_transport_available',
     detail: {
       codex_bound: false,
+      tmux_pane_set: false,
+    },
+  }
+}
+
+async function dispatchOpencode(
+  deps: DispatchDeps,
+  target: TargetRow,
+  input: DispatchInput
+): Promise<DispatchResult> {
+  if (target.delivery.kind === 'opencode-server') {
+    const result = await (deps.opencodeServerDispatch ?? dispatchOpencodeServerPoke)({
+      delivery: target.delivery,
+      content: input.content,
+    })
+    return result
+  }
+  // opencode agent without an opencode-server delivery falls back to tmux
+  // (legacy `agent_type='opencode'` callers that did not pass base_url used
+  // the tmux runtime-bind path; this branch preserves that behavior).
+  const paneId = target.tmux_pane_id
+  if (paneId) return dispatchTmux(deps, paneId, input.content)
+  return {
+    error: 'no_transport_available',
+    detail: {
+      opencode_bound: false,
       tmux_pane_set: false,
     },
   }

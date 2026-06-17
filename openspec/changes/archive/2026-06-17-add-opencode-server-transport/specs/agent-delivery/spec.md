@@ -1,9 +1,5 @@
-# agent-delivery Specification
+## MODIFIED Requirements
 
-## Purpose
-
-Define the shared delivery contract used to persist, expose, and dispatch agent wake-up transports.
-## Requirements
 ### Requirement: DeliverySpec discriminated union defines the delivery channel contract
 
 The system SHALL define a type `DeliverySpec` as a discriminated union on a literal `kind` field.  `DeliverySpec` is the single type used to represent an agent's poke delivery channel in memory, on the wire (MCP tool params / responses), and as the logical contract persisted in the `agents` table.
@@ -300,25 +296,3 @@ The daemon's poke dispatcher SHALL select the backend transport based on the tar
 - **WHEN** the daemon dispatches a poke to this agent
 - **THEN** the daemon returns `{ error: 'opencode_connect_failed', detail: 'ECONNREFUSED' }`
 - **AND** it does NOT attempt tmux injection automatically
-
-### Requirement: Legacy channel_session_id access derives from delivery
-
-While the legacy `channel_session_id` column remains on the `agents` table for backward compatibility, the daemon SHALL treat it as a read-only derived value when exposed through `AgentsRepo` and `list_agents`.  The derivation rule is:
-
-- If `delivery.kind === 'claude-channel'`, the derived `channel_session_id` equals `delivery.channel_session_id`.
-- Otherwise the derived `channel_session_id` is `null`.
-
-No write path in this change SHALL `UPDATE agents.channel_session_id = ...`; all writes go through the `delivery_kind` / `delivery_payload` pair.
-
-#### Scenario: derived channel_session_id for claude-channel delivery
-
-- **GIVEN** an agent with `delivery={kind: 'claude-channel', channel_session_id: 'csid-abc'}`
-- **WHEN** reading the derived `channel_session_id`, via `AgentsRepo` or `list_agents`
-- **THEN** the value is `'csid-abc'`
-
-#### Scenario: derived channel_session_id is null for other kinds
-
-- **GIVEN** an agent with `delivery={kind: 'none'}` or `delivery={kind: 'codex-appserver', ...}`
-- **WHEN** reading the derived `channel_session_id`
-- **THEN** the value is `null`
-

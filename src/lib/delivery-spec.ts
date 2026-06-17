@@ -14,10 +14,18 @@ export type DeliveryCodexAppserver = {
   auth_token_ref?: string;
 };
 
+export type DeliveryOpencodeServer = {
+  kind: 'opencode-server';
+  session_id: string;
+  base_url: string;
+  auth_token_ref?: string;
+};
+
 export type DeliverySpec =
   | DeliveryNone
   | DeliveryClaudeChannel
-  | DeliveryCodexAppserver;
+  | DeliveryCodexAppserver
+  | DeliveryOpencodeServer;
 
 export type DeliveryKind = DeliverySpec['kind'];
 
@@ -25,6 +33,7 @@ export const DELIVERY_KINDS: readonly DeliveryKind[] = [
   'none',
   'claude-channel',
   'codex-appserver',
+  'opencode-server',
 ] as const;
 
 export type DeliveryRow = {
@@ -81,6 +90,30 @@ export function parseDeliveryRow(row: DeliveryRow): DeliverySpec {
     }
     return { kind: 'codex-appserver', thread_id: threadId, ws_url: wsUrl };
   }
+  if (kind === 'opencode-server') {
+    const sessionId = record.session_id;
+    if (typeof sessionId !== 'string' || sessionId.length === 0 || !sessionId.startsWith('ses')) {
+      throw new Error('corrupt_delivery_payload');
+    }
+    const baseUrl = record.base_url;
+    if (typeof baseUrl !== 'string' || baseUrl.length === 0) {
+      throw new Error('corrupt_delivery_payload');
+    }
+    const hasAuthTokenRef = Object.prototype.hasOwnProperty.call(record, 'auth_token_ref');
+    if (hasAuthTokenRef) {
+      const authTokenRef = record.auth_token_ref;
+      if (typeof authTokenRef !== 'string' || authTokenRef.length === 0) {
+        throw new Error('corrupt_delivery_payload');
+      }
+      return {
+        kind: 'opencode-server',
+        session_id: sessionId,
+        base_url: baseUrl,
+        auth_token_ref: authTokenRef,
+      };
+    }
+    return { kind: 'opencode-server', session_id: sessionId, base_url: baseUrl };
+  }
   throw new Error('corrupt_delivery_payload');
 }
 
@@ -100,7 +133,9 @@ export type DeliveryValidationReason =
   | 'missing_channel_session_id'
   | 'invalid_thread_id'
   | 'invalid_ws_url'
-  | 'invalid_auth_token_ref';
+  | 'invalid_auth_token_ref'
+  | 'invalid_session_id'
+  | 'invalid_base_url';
 
 export type ValidateDeliveryResult =
   | { ok: DeliverySpec }
@@ -164,6 +199,39 @@ export function validateDeliveryForWrite(input: unknown): ValidateDeliveryResult
         kind: 'codex-appserver',
         thread_id: threadId,
         ws_url: wsUrl,
+        ...(authTokenRef === undefined ? {} : { auth_token_ref: authTokenRef }),
+      },
+    };
+  }
+  if (kind === 'opencode-server') {
+    const sessionId = readTrimmedString(record, 'session_id');
+    if (sessionId === undefined || sessionId.length === 0 || !sessionId.startsWith('ses')) {
+      return { error: 'invalid_delivery', reason: 'invalid_session_id' };
+    }
+
+    const baseUrl = readTrimmedString(record, 'base_url');
+    if (baseUrl === undefined || baseUrl.length === 0) {
+      return { error: 'invalid_delivery', reason: 'invalid_base_url' };
+    }
+    try {
+      const parsed = new URL(baseUrl);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return { error: 'invalid_delivery', reason: 'invalid_base_url' };
+      }
+    } catch {
+      return { error: 'invalid_delivery', reason: 'invalid_base_url' };
+    }
+
+    const authTokenRef = readTrimmedString(record, 'auth_token_ref');
+    if (authTokenRef === '') {
+      return { error: 'invalid_delivery', reason: 'invalid_auth_token_ref' };
+    }
+
+    return {
+      ok: {
+        kind: 'opencode-server',
+        session_id: sessionId,
+        base_url: baseUrl,
         ...(authTokenRef === undefined ? {} : { auth_token_ref: authTokenRef }),
       },
     };

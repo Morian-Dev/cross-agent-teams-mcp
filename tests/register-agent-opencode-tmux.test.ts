@@ -35,7 +35,7 @@ async function parseTool(resp: unknown): Promise<Record<string, unknown>> {
   return JSON.parse(r.content[0].text)
 }
 
-describe('register_agent({agent_type:"opencode", ui_pid}) binds tmux pane and poke uses tmux', () => {
+describe('opencode harness via custom + agent_type_name (tmux fallback path)', () => {
   const cleanups: string[] = []
 
   afterEach(() => {
@@ -45,7 +45,7 @@ describe('register_agent({agent_type:"opencode", ui_pid}) binds tmux pane and po
     detectTmuxPaneMock.mockReset()
   })
 
-  it('binds tmux_pane_id via pid-based path and poke delivers via tmux-poke', async () => {
+  it('registers as custom+agent_type_name=opencode, binds tmux pane explicitly, and poke uses tmux-poke', async () => {
     bindRuntimeIdentityMock.mockResolvedValue({
       ok: true,
       tmux_pane_id: '%77',
@@ -64,10 +64,13 @@ describe('register_agent({agent_type:"opencode", ui_pid}) binds tmux pane and po
     const c = new Client({ name: 'opencode-cli', version: '0.0.0' })
     await c.connect(t)
 
+    // Per the spec, `agent_type='opencode'` now requires `base_url` (HTTP transport).
+    // The supported tmux-only path is `agent_type='custom'` + `agent_type_name='opencode'`.
     const resp = await c.callTool({
       name: 'register_agent',
       arguments: {
-        agent_type: 'opencode',
+        agent_type: 'custom',
+        agent_type_name: 'opencode',
         model: 'opencode-default',
         role: 'worker',
         name: 'alice',
@@ -77,7 +80,18 @@ describe('register_agent({agent_type:"opencode", ui_pid}) binds tmux pane and po
     const obj = await parseTool(resp)
 
     expect(obj.agent_id).toBeDefined()
-    expect(obj.hint).toBeUndefined()
+
+    // Explicit runtime binding via bind_runtime_identity (auto-bind does not
+    // fire for agent_type='custom').
+    const bindResp = await c.callTool({
+      name: 'bind_runtime_identity',
+      arguments: {
+        agent: 'opencode',
+        ui_pid: 31415,
+      },
+    })
+    const bindObj = await parseTool(bindResp)
+    expect(bindObj.ok).toBe(true)
     expect(bindRuntimeIdentityMock).toHaveBeenCalledWith({
       callerAgentId: expect.any(String),
       agent: 'opencode',
@@ -87,14 +101,16 @@ describe('register_agent({agent_type:"opencode", ui_pid}) binds tmux pane and po
     const db = openDb(dbPath)
     applySchema(db)
     const row = db.prepare(
-      'SELECT agent_type, tmux_pane_id, runtime_ui_pid FROM agents WHERE team=? AND name=?'
+      'SELECT agent_type, agent_type_name, tmux_pane_id, runtime_ui_pid FROM agents WHERE team=? AND name=?'
     ).get('default', 'alice') as {
       agent_type: string | null
+      agent_type_name: string | null
       tmux_pane_id: string | null
       runtime_ui_pid: number | null
     }
     expect(row).toEqual({
-      agent_type: 'opencode',
+      agent_type: 'custom',
+      agent_type_name: 'opencode',
       tmux_pane_id: '%77',
       runtime_ui_pid: 31415,
     })

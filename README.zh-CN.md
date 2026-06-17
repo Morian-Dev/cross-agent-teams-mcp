@@ -214,9 +214,44 @@ free-xats-codex() {
 
 详细配置 (auth header, 底层 `register_agent` 用法): [docs/configs/codex-cli.md](docs/configs/codex-cli.md).
 
-#### 其它编码 agent (opencode, cursor, ...)
+#### opencode
 
-非 Claude Code 也非 Codex 的工具 — opencode, cursor, 编辑器扩展, 自己的 harness — 直接通过 Streamable HTTP 连 daemon, 注册时用 `agent_type="custom"` (agent 自己会判断).  这些 agent 没有专用的唤醒通道; 跨 agent poke 通过把文本注入到 agent 所在的 tmux pane 实现, 所以把 agent 跑在 tmux 窗口里, 注册时 daemon 会自动解析 `pid → tty → pane`.
+opencode 自带一流的 headless HTTP API (`POST /session/{id}/prompt_async`), daemon 用它作为专用唤醒通道 — 不需要 tmux pane 注入.  通过 `agent_type="opencode"` 加 `base_url` (指向 opencode 进程的 HTTP 服务器) 注册即可激活.
+
+把下面的 `free-xats-opencode` zsh 函数加到 `~/.zshrc` (镜像 `free-xats-codex` 的模式):
+
+```zsh
+free-xats-opencode() {
+    local port
+    port="$(node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')"
+    OPENCODE_XATS_BASE_URL="http://127.0.0.1:${port}" exec opencode --port "${port}" --hostname 127.0.0.1 "$@"
+}
+```
+
+然后用 `free-xats-opencode` 替代原本的 `opencode`:
+
+```bash
+free-xats-opencode                              # 默认 agent
+free-xats-opencode --agent build --model glm-5.2   # 透传用户参数
+```
+
+launcher 做的事:
+
+- 在 `127.0.0.1` 上分配一个空闲 TCP 端口 (支持多个 opencode 实例并发, 不冲突).
+- 导出 `OPENCODE_XATS_BASE_URL=http://127.0.0.1:<port>`, 让 agent 的 Bash 工具能读到, 并把它作为 `base_url` 传给 `register_agent`.
+- `exec opencode --port <port> --hostname 127.0.0.1` 启动 TUI, 同时把 HTTP 服务器绑定到 loopback.
+
+在 opencode TUI 里说:
+
+> 注册到 xats, name: oc-1, team: default
+
+agent 会自动检测 `$OPENCODE_XATS_BASE_URL`, 选 `agent_type="opencode"`, 把 env 值作为 `base_url` 传过去, 并省略 `session_id` (daemon 自动解析为 base_url 上 `time_updated` 最大的那个 session).  只有当 opencode 服务器以 `OPENCODE_SERVER_PASSWORD` 启动时才需要 `auth_token_ref`, 这种情况下也传 `auth_token_ref: "OPENCODE_SERVER_PASSWORD"`.
+
+如果你直接用 `opencode` 启动 (没用 wrapper), env 变量缺失, agent 会回退到 `agent_type="custom"` 加 `agent_type_name="opencode"`, poke 通过 tmux pane 注入投递 (见下一节).
+
+#### 其它编码 agent (cursor, ...)
+
+非 Claude Code, 非 Codex, 也非通过 launcher 启动的 opencode — cursor, 编辑器扩展, 自己的 harness — 直接通过 Streamable HTTP 连 daemon, 注册时用 `agent_type="custom"` (agent 自己会判断).  这些 agent 没有专用的唤醒通道; 跨 agent poke 通过把文本注入到 agent 所在的 tmux pane 实现, 所以把 agent 跑在 tmux 窗口里, 注册时 daemon 会自动解析 `pid → tty → pane`.
 
 各工具的具体配置片段在 [docs/configs/opencode.md](docs/configs/opencode.md) (其它在 `docs/configs/`).
 

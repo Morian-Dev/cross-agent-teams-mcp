@@ -186,4 +186,117 @@ describe('dispatchPoke', () => {
       pane_tail_after: '',
     })
   })
+
+  it('routes opencode-server to the opencode dispatcher', async () => {
+    const fanout = new ChannelWakeFanout()
+    const tmux = stubTmux({ ok: true, pane_tail_before: '', pane_tail_after: '' })
+    const opencodeCalls: Array<{ session_id: string; base_url: string; content: string }> = []
+    const res = await dispatchPoke(
+      {
+        channelWakeFanout: fanout,
+        tmuxPoke: tmux.fn,
+        opencodeServerDispatch: async ({ delivery, content }) => {
+          opencodeCalls.push({
+            session_id: delivery.session_id,
+            base_url: delivery.base_url,
+            content,
+          })
+          return {
+            ok: true,
+            transport_used: 'opencode-server',
+            session_id: delivery.session_id,
+          }
+        },
+      },
+      {
+        agent_type: 'opencode',
+        delivery: {
+          kind: 'opencode-server',
+          session_id: 'ses_abc',
+          base_url: 'http://127.0.0.1:18888',
+        },
+        tmux_pane_id: null,
+      },
+      { content: 'hi', meta: {} }
+    )
+    expect(res).toEqual({
+      ok: true,
+      transport_used: 'opencode-server',
+      session_id: 'ses_abc',
+    })
+    expect(opencodeCalls).toEqual([
+      {
+        session_id: 'ses_abc',
+        base_url: 'http://127.0.0.1:18888',
+        content: 'hi',
+      },
+    ])
+    expect(tmux.calls).toHaveLength(0)
+  })
+
+  it('does NOT fall back to tmux when opencode-server dispatcher fails (even with tmux_pane_id set)', async () => {
+    const fanout = new ChannelWakeFanout()
+    const tmux = stubTmux({ ok: true, pane_tail_before: '', pane_tail_after: '' })
+    const res = await dispatchPoke(
+      {
+        channelWakeFanout: fanout,
+        tmuxPoke: tmux.fn,
+        opencodeServerDispatch: async () => ({
+          error: 'opencode_connect_failed',
+          detail: 'ECONNREFUSED',
+          transport_used: 'opencode-server',
+        }),
+      },
+      {
+        agent_type: 'opencode',
+        delivery: {
+          kind: 'opencode-server',
+          session_id: 'ses_abc',
+          base_url: 'http://127.0.0.1:18888',
+        },
+        tmux_pane_id: '%42',
+      },
+      { content: 'hi', meta: {} }
+    )
+    expect(res).toEqual({
+      error: 'opencode_connect_failed',
+      detail: 'ECONNREFUSED',
+      transport_used: 'opencode-server',
+    })
+    expect(tmux.calls).toHaveLength(0)
+  })
+
+  it('opencode agent without opencode-server delivery falls back to tmux when pane set', async () => {
+    const fanout = new ChannelWakeFanout()
+    const tmux = stubTmux({ ok: true, pane_tail_before: 'b', pane_tail_after: 'a' })
+    const res = await dispatchPoke(
+      { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
+      {
+        agent_type: 'opencode',
+        delivery: { kind: 'none' },
+        tmux_pane_id: '%77',
+      },
+      { content: 'hi', meta: {} }
+    )
+    expect(res).toMatchObject({ ok: true, transport_used: 'tmux-poke', pane_id: '%77' })
+  })
+
+  it('opencode agent without opencode-server delivery and no pane returns no_transport_available', async () => {
+    const fanout = new ChannelWakeFanout()
+    const tmux = stubTmux({ ok: true, pane_tail_before: '', pane_tail_after: '' })
+    const res = await dispatchPoke(
+      { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
+      {
+        agent_type: 'opencode',
+        delivery: { kind: 'none' },
+        tmux_pane_id: null,
+      },
+      { content: 'hi', meta: {} }
+    )
+    expect(res).toEqual({
+      error: 'no_transport_available',
+      detail: { opencode_bound: false, tmux_pane_set: false },
+    })
+    expect(tmux.calls).toHaveLength(0)
+  })
 })
