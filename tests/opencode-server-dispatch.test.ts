@@ -64,7 +64,7 @@ describe('dispatchOpencodeServerPoke', () => {
     expect(calls[0].init.headers['Content-Type']).toBe('application/json')
     expect(JSON.parse(calls[0].init.body)).toEqual({
       parts: [{ type: 'text', text: 'hello from daemon' }],
-      noReply: true,
+      noReply: false,
     })
   })
 

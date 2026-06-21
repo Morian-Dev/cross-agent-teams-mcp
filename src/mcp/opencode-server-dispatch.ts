@@ -50,7 +50,7 @@ export async function dispatchOpencodeServerPoke(
   }
   const body = JSON.stringify({
     parts: [{ type: 'text', text: input.content }],
-    noReply: true,
+    noReply: false,
   })
 
   let response: Response

@@ -9,7 +9,7 @@ When the daemon dispatches a poke to a target with `delivery={ kind: 'opencode-s
 
 - Method: `POST`
 - URL: `<base_url>/session/<session_id>/prompt_async`
-- Request body: `{ parts: [{ type: 'text', text: <poke content> }], noReply: true }`
+- Request body: `{ parts: [{ type: 'text', text: <poke content> }], noReply: false }`. The `noReply: false` is REQUIRED: it instructs opencode to schedule agent-loop execution on the admitted user message (i.e. actually wake the target agent). `noReply: true` would append the message to session history WITHOUT triggering the agent loop, defeating the poke's purpose.
 - Headers: `Content-Type: application/json`. If `auth_token_ref` resolves to a non-empty environment variable, additionally `Authorization: Bearer <resolved value>`.
 
 On HTTP `204 No Content` (or any 2xx with empty body), the dispatcher SHALL return `{ ok: true, transport_used: 'opencode-server', session_id: <delivery.session_id> }`.
@@ -21,7 +21,7 @@ The dispatcher MUST NOT retry on non-2xx responses; the caller's auto-poke retry
 - **GIVEN** target delivery is `{ kind: 'opencode-server', session_id: 'ses_abc', base_url: 'http://127.0.0.1:18888' }`
 - **AND** the opencode server responds `204 No Content` to `POST /session/ses_abc/prompt_async`
 - **WHEN** the daemon dispatches a poke with content `hello from daemon`
-- **THEN** the dispatched HTTP request has body `{"parts":[{"type":"text","text":"hello from daemon"}],"noReply":true}`
+- **THEN** the dispatched HTTP request has body `{"parts":[{"type":"text","text":"hello from daemon"}],"noReply":false}`
 - **AND** the dispatcher returns `{ ok: true, transport_used: 'opencode-server', session_id: 'ses_abc' }`
 
 #### Scenario: Auth header attached when auth_token_ref resolves
