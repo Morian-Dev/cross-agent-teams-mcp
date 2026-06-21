@@ -142,6 +142,8 @@ describe('collapse-register-self-tools', () => {
     expect(d).toContain('CODEX_THREAD_ID')
     // CLAUDECODE OR CLAUDE_CODE_ENTRYPOINT
     expect(d).toMatch(/CLAUDECODE|CLAUDE_CODE_ENTRYPOINT/)
+    // opencode env-var probe (sanctioned); must NOT promote the PATH-based probe
+    expect(d).toContain('OPENCODE_XATS_BASE_URL')
     expect(d).toContain('agent_type="custom"')
     expect(d).toContain('agent_type_name')
     // Active opencode probe was removed because `command -v opencode` checks
@@ -151,6 +153,8 @@ describe('collapse-register-self-tools', () => {
     // Must NOT name the removed tools
     expect(d).not.toContain('register_claude_self')
     expect(d).not.toContain('register_codex_self')
+    // opencode branch must reference base_url argument
+    expect(d).toMatch(/agent_type="opencode".*base_url/s)
 
     await transport.close()
     await client.close()
@@ -193,6 +197,7 @@ describe('collapse-register-self-tools', () => {
     const ins = body.result.instructions
     expect(ins).toContain('register_agent')
     expect(ins).toContain('CODEX_THREAD_ID')
+    expect(ins).toContain('OPENCODE_XATS_BASE_URL')
     expect(ins).toContain('agent_type="custom"')
     expect(ins).toContain('agent_type_name')
     expect(ins).not.toContain('register_claude_self')

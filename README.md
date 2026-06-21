@@ -214,9 +214,44 @@ What the launcher does:
 
 More detail (auth headers, lower-level `register_agent` form): [docs/configs/codex-cli.md](docs/configs/codex-cli.md).
 
-#### Other coding agents (opencode, cursor, ...)
+#### opencode
 
-Anything that is not Claude Code or Codex — opencode, cursor, an editor extension, your own harness — connects over plain Streamable HTTP and registers as `agent_type="custom"` (the agent figures this out for you).  There is no dedicated wake-up transport for these; cross-agent pokes are delivered by injecting text into the agent's tmux pane, so run the agent inside a tmux window and the daemon will resolve `pid → tty → pane` automatically when you register.
+opencode ships a first-class headless HTTP API (`POST /session/{id}/prompt_async`) that the daemon uses as a dedicated wake-up transport — no tmux pane injection required.  The transport is activated by registering with `agent_type="opencode"` and a `base_url` pointing at the opencode process's HTTP server.
+
+Add a `free-xats-opencode` zsh function to `~/.zshrc` (mirrors the `free-xats-codex` pattern):
+
+```zsh
+free-xats-opencode() {
+    local port
+    port="$(node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')"
+    OPENCODE_XATS_BASE_URL="http://127.0.0.1:${port}" exec opencode --port "${port}" --hostname 127.0.0.1 "$@"
+}
+```
+
+Then replace plain `opencode` with `free-xats-opencode`:
+
+```bash
+free-xats-opencode            # default agent
+free-xats-opencode --agent build --model glm-5.2   # args pass through
+```
+
+What the launcher does:
+
+- Allocates a free TCP port on `127.0.0.1` (supports concurrent opencode instances without port conflicts).
+- Exports `OPENCODE_XATS_BASE_URL=http://127.0.0.1:<port>` so the agent's Bash tool can read it and pass it as `base_url` to `register_agent`.
+- `exec opencode --port <port> --hostname 127.0.0.1` starts the TUI with its HTTP server bound to loopback.
+
+Inside the opencode TUI say:
+
+> 注册到 xats, name: oc-1, team: default
+
+The agent detects `$OPENCODE_XATS_BASE_URL`, picks `agent_type="opencode"` automatically, passes the env value as `base_url`, and omits `session_id` (the daemon auto-resolves it as the most recently updated session on that base_url).  `auth_token_ref` is only required when the opencode server was started with `OPENCODE_SERVER_PASSWORD` set; in that case also pass `auth_token_ref: "OPENCODE_SERVER_PASSWORD"`.
+
+If you launch opencode via plain `opencode` (without the wrapper), the env var is absent, the agent falls back to `agent_type="custom"` with `agent_type_name="opencode"`, and pokes are delivered via tmux pane injection (see next section).
+
+#### Other coding agents (cursor, ...)
+
+Anything that is not Claude Code, Codex, or opencode-via-launcher — cursor, an editor extension, your own harness — connects over plain Streamable HTTP and registers as `agent_type="custom"` (the agent figures this out for you).  There is no dedicated wake-up transport for these; cross-agent pokes are delivered by injecting text into the agent's tmux pane, so run the agent inside a tmux window and the daemon will resolve `pid → tty → pane` automatically when you register.
 
 Per-tool config snippets live in [docs/configs/opencode.md](docs/configs/opencode.md) (and `docs/configs/` for the rest).
 

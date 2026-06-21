@@ -21,6 +21,7 @@ import { BindChannelService } from './bind-channel.js'
 import { AutoBindChannelService } from './auto-bind-channel.js'
 import { BindRuntimeIdentityService } from './bind-runtime-identity.js'
 import { RegisterCodexSelfService } from './register-codex-self.js'
+import { RegisterOpencodeSelfService } from './register-opencode-self.js'
 import { resolveReconnect } from './reconnect.js'
 import { UnregisterSelfService } from './unregister-self.js'
 import { toPublicAgentRow } from './agent-public-row.js'
@@ -259,6 +260,7 @@ export function registerBusinessTools(
   })
   const bindRuntimeIdentitySvc = new BindRuntimeIdentityService(db)
   const registerCodexSelfSvc = new RegisterCodexSelfService(registerSvc)
+  const registerOpencodeSelfSvc = new RegisterOpencodeSelfService(registerSvc)
   const unregisterSelfSvc = new UnregisterSelfService(db, agents)
 
   const autoPokeImpl = createAutoPokeImpl(db, agents, channelWakeFanout)
@@ -387,6 +389,8 @@ export function registerBusinessTools(
     thread_id: z.string().min(1).refine(v => v.trim().length > 0, { message: 'thread_id must not be empty' }).optional(),
     ws_url: z.string().optional(),
     auth_token_ref: z.string().min(1).optional(),
+    base_url: z.string().min(1).refine(v => v.trim().length > 0, { message: 'base_url must not be empty' }).optional(),
+    session_id: z.string().min(1).refine(v => v.trim().length > 0, { message: 'session_id must not be empty' }).optional(),
     claude_ui_pid: z.number().int().positive().optional().describe(
       "Internal field for the cross-agent-teams-mcp channel proxy.  Stores the proxy's parent Claude Code UI pid (`process.ppid`) so that Claude Code hosts registering in the same lineage can auto-bind their claude-channel delivery.  Only valid when role='__channel_proxy__'; rejected otherwise."
     ),
@@ -396,15 +400,27 @@ export function registerBusinessTools(
   )
 
   const registerAgentArgsSchema = registerAgentInputSchema.superRefine((value, ctx) => {
-    const hasCodexFields =
+    // `thread_id` and `ws_url` are codex-exclusive transport fields.
+    // `auth_token_ref` is shared between codex-appserver and opencode-server deliveries.
+    const hasCodexOnlyFields =
       value.thread_id !== undefined ||
-      value.ws_url !== undefined ||
-      value.auth_token_ref !== undefined
-    if (hasCodexFields && value.agent_type !== 'codex') {
+      value.ws_url !== undefined
+    if (hasCodexOnlyFields && value.agent_type !== 'codex') {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['agent_type'],
-        message: 'agent_type=codex is required when thread_id, ws_url, or auth_token_ref is provided',
+        message: 'agent_type=codex is required when thread_id or ws_url is provided',
+      })
+    }
+    if (
+      value.auth_token_ref !== undefined &&
+      value.agent_type !== 'codex' &&
+      value.agent_type !== 'opencode'
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['agent_type'],
+        message: 'agent_type=codex or agent_type=opencode is required when auth_token_ref is provided',
       })
     }
     if (value.channel_session_id !== undefined && value.agent_type !== 'claude-code') {
@@ -441,6 +457,50 @@ export function registerBusinessTools(
           + 'If you are a launcher pre-registering a codex pane, use pre_register_codex_pane instead.',
       })
     }
+    if (value.agent_type === 'opencode') {
+      if (value.base_url === undefined || value.base_url.trim().length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['base_url'],
+          message:
+            'base_url is required when agent_type="opencode". '
+            + 'Read it from $OPENCODE_XATS_BASE_URL (set by the free-xats-opencode launcher).',
+        })
+      } else {
+        let parsedUrl: URL | null = null
+        try { parsedUrl = new URL(value.base_url) } catch { /* invalid */ }
+        if (!parsedUrl || (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:')) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['base_url'],
+            message: 'base_url must be a parseable http:// or https:// URL when agent_type="opencode".',
+          })
+        }
+      }
+      if (value.session_id !== undefined && value.session_id.trim().length > 0) {
+        if (!value.session_id.startsWith('ses')) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['session_id'],
+            message: 'session_id must start with "ses" when supplied for agent_type="opencode".',
+          })
+        }
+      }
+    }
+    if (value.base_url !== undefined && value.agent_type !== 'opencode') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['agent_type'],
+        message: 'agent_type=opencode is required when base_url is provided',
+      })
+    }
+    if (value.session_id !== undefined && value.agent_type !== 'opencode') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['agent_type'],
+        message: 'agent_type=opencode is required when session_id is provided',
+      })
+    }
   })
 
   async function executeRegister(
@@ -458,6 +518,8 @@ export function registerBusinessTools(
       thread_id?: string
       ws_url?: string
       auth_token_ref?: string
+      base_url?: string
+      session_id?: string
       claude_ui_pid?: number
       delivery?: { kind: string; [key: string]: unknown }
     }
@@ -483,6 +545,32 @@ export function registerBusinessTools(
     if (!connectionId) return { error: 'unknown_agent' }
     const uiPidClientError = await preflightUiPidClient(args)
     if (uiPidClientError) return uiPidClientError
+
+    // opencode HTTP branch: register via the opencode-server delivery path.
+    // Bypasses channel auto-bind and tmux runtime auto-bind because the
+    // opencode-server transport is HTTP-based, not tmux-based.
+    if (args.agent_type === 'opencode' && args.base_url !== undefined) {
+      const opencodeRes = await registerOpencodeSelfSvc.register({
+        connection_id: connectionId,
+        name: args.name,
+        device: args.device,
+        model: args.model,
+        role: args.role,
+        team: args.team,
+        project_dir: args.project_dir,
+        base_url: args.base_url,
+        session_id: args.session_id,
+        auth_token_ref: args.auth_token_ref,
+      })
+      if ('agent_id' in opencodeRes) {
+        if (onRegisterSuccess) {
+          try { onRegisterSuccess(opencodeRes.agent_id, opencodeRes.team) } catch { /* best-effort */ }
+        } else if (fanout) {
+          try { fanout.rebind(opencodeRes.agent_id, opencodeRes.team) } catch { /* best-effort */ }
+        }
+      }
+      return opencodeRes
+    }
     if (
       args.agent_type === 'claude-code' &&
       args.channel_session_id !== undefined &&
@@ -676,11 +764,13 @@ export function registerBusinessTools(
       description: [
         'Register this session as an agent in a team. This is the unified registration entry point.',
         'DETECTION (run these probes BEFORE choosing `agent_type=`, in order; first match wins):',
-        '1. `printenv CODEX_THREAD_ID` non-empty → `agent_type="codex"`; pass that value as `thread_id` (REQUIRED for codex per the schema). Do NOT pass `ui_pid` (the launcher\'s `pre_register_codex_pane` flow handles tmux pane binding; supplying `ui_pid` from codex disables that auto-bind path).',
-        '2. `printenv CLAUDECODE` non-empty OR `printenv CLAUDE_CODE_ENTRYPOINT` non-empty → `agent_type="claude-code"`; pass `$PPID` as `ui_pid` to enable channel auto-bind.',
-        '3. None of the above → `agent_type="custom"` with `agent_type_name="<the harness you are running under, e.g. cursor, opencode, ...>"` (`agent_type_name` is required when `agent_type="custom"`). Detect the harness name from your runtime environment if you can — e.g. `printenv CURSOR_TRACE_ID` non-empty means cursor — but do NOT guess from system-wide signals like "binary X exists on PATH": such probes detect what the user has installed, not what runtime you are inside, and pick the wrong agent type. When unsure, prefer `agent_type_name="unknown"` over a wrong guess.',
+        '1. `printenv OPENCODE_XATS_BASE_URL` non-empty → `agent_type="opencode"`; pass that value as `base_url`. Do NOT pass `session_id` — the daemon auto-resolves it as the most recently updated session on that base_url. The env var is set ONLY by the `free-xats-opencode` launcher, so its presence is itself the runtime assertion that the caller is opencode.',
+        '2. `printenv CODEX_THREAD_ID` non-empty → `agent_type="codex"`; pass that value as `thread_id` (REQUIRED for codex per the schema). Do NOT pass `ui_pid` (the launcher\'s `pre_register_codex_pane` flow handles tmux pane binding; supplying `ui_pid` from codex disables that auto-bind path).',
+        '3. `printenv CLAUDECODE` non-empty OR `printenv CLAUDE_CODE_ENTRYPOINT` non-empty → `agent_type="claude-code"`; pass `$PPID` as `ui_pid` to enable channel auto-bind.',
+        '4. None of the above → `agent_type="custom"` with `agent_type_name="<the harness you are running under, e.g. cursor, opencode, ...>"` (`agent_type_name` is required when `agent_type="custom"`). Detect the harness name from your runtime environment if you can — e.g. `printenv CURSOR_TRACE_ID` non-empty means cursor — but do NOT guess from system-wide signals like "binary X exists on PATH": such probes detect what the user has installed, not what runtime you are inside, and pick the wrong agent type. When unsure, prefer `agent_type_name="unknown"` over a wrong guess.',
         'Calling this tool again with the same `(device, team, name)` identity reuses the existing `agent_id` and refreshes `tmux_pane_id` and `model`; no duplicate row is created.',
         'Use `agent_type="custom"` for unsupported agent harnesses; provide `agent_type_name` for observability.',
+        'opencode sessions: pass `agent_type="opencode"` and `base_url` (from `$OPENCODE_XATS_BASE_URL`, set by the `free-xats-opencode` launcher). Omit `session_id` — the daemon auto-resolves it via `<base_url>/session` (most recently updated). `auth_token_ref` is optional; set only when `OPENCODE_SERVER_PASSWORD` is configured on the opencode server. The schema REQUIRES `base_url` (parseable `http://` or `https://` URL) when `agent_type="opencode"`; missing/malformed `base_url` is rejected before any HTTP probe runs.',
         'Claude Code sessions: pass `agent_type="claude-code"` and PREFERRED: pass only `ui_pid` (from `$PPID`) so the daemon auto-binds channel delivery — do not pass `channel_session_id` explicitly. When BOTH `ui_pid` AND `channel_session_id` are supplied, the daemon runs a consistency check against the caller `ui_pid`\'s live channel proxy; if the proxy\'s csid does not match the supplied `channel_session_id`, the call is rejected with `channel_session_id_ui_pid_mismatch` before any agent row is written. To re-establish a prior identity on a fresh/resumed session where you no longer remember your (team, name) (changed csid, unchanged $PPID), prefer `reconnect({ ui_pid })` over the bind_channel→register fallback; `bind_channel` only rebinds a session already bound to your agent. If instead you still remember your (team, name) after a restart + resume (changed $PPID), call register_agent directly with that remembered (team, name) and the current $PPID rather than reconnect.',
         'Codex sessions: pass `agent_type="codex"` and `thread_id` (from `$CODEX_THREAD_ID`) to register Codex app-server delivery. The schema REQUIRES `thread_id` when `agent_type="codex"`; missing or empty `thread_id` is rejected before any handshake runs. Launcher pre-reg callers without `thread_id` should use `pre_register_codex_pane` instead. `ws_url` defaults to `ws://127.0.0.1:8799` (env override `CROSS_AGENT_TEAMS_CODEX_WS_URL`); `model` defaults to `gpt` when omitted. For `agent_type="claude-code"` callers, `model` defaults to a Claude-specific value derived from MCP session client info when omitted.',
         '`model` is OPTIONAL for any agent_type: omit it when you do not have an authoritative model identifier; the daemon stores NULL in that case. Pass an explicit `model` only when you have a stable identifier you would like surfaced via `list_agents`.',
@@ -690,7 +780,7 @@ export function registerBusinessTools(
         'When the end user has not explicitly specified `team`, callers should pass `project_dir` as the current working directory so the daemon derives a project-scoped default team from its basename; if omitted, it falls back to `default`.',
         'REPORTING RULE: on success the response carries the actual `team` the daemon assigned. When summarizing the registration to the user, surface that returned `team` value verbatim; NEVER derive or paraphrase the team from `project_dir`, cwd, or your own pre-call assumption. Failing to read the response masks the daemon\'s `default` fallback (e.g. when `project_dir` was forgotten) and produces misleading "team: X (from cwd basename)" reports that break later cross-team send_message diagnostics.',
         '`agent_type` must describe the runtime behind `ui_pid`, not merely the current MCP caller. For example, if `ui_pid` points at an external editor process, pass `agent_type="custom"` with `agent_type_name=<editor>` even when the registration request is issued from a different harness.',
-        'STRONGLY RECOMMENDED: pass `ui_pid` unless it is truly unobtainable (codex callers excepted, see DETECTION step 1). Without it, automatic runtime binding usually fails to converge and tmux-based cross-agent poke delivery stays off until a separate `bind_runtime_identity(...)` call. From Claude Code, `$PPID` inside a Bash tool call is the `claude` CLI pid. With `ui_pid` the daemon binds via verified pid → tty → pane evidence in one shot.',
+        'STRONGLY RECOMMENDED: pass `ui_pid` unless it is truly unobtainable (codex and opencode callers excepted). Without it, automatic runtime binding usually fails to converge and tmux-based cross-agent poke delivery stays off until a separate `bind_runtime_identity(...)` call. From Claude Code, `$PPID` inside a Bash tool call is the `claude` CLI pid. With `ui_pid` the daemon binds via verified pid → tty → pane evidence in one shot.',
         'After registration, the daemon best-effort attempts runtime binding for recognized local clients so tmux-based poke delivery can come up without a second tool call.',
         'If automatic runtime binding does not converge, call `bind_runtime_identity(...)` explicitly so the daemon can verify and persist your pane binding.',
         '`detect_tmux_pane(...)` remains available as a debugging aid for ambiguous or missing matches, but it does not write registry state by itself.',
@@ -709,6 +799,8 @@ export function registerBusinessTools(
       thread_id?: string
       ws_url?: string
       auth_token_ref?: string
+      base_url?: string
+      session_id?: string
       claude_ui_pid?: number
       delivery?: { kind: string; [key: string]: unknown }
     }) => {

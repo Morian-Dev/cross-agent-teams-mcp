@@ -49,6 +49,26 @@ describe('DeliverySpec discriminated union shape', () => {
     }
   });
 
+  it('accepts kind opencode-server with session_id, base_url, optional auth_token_ref', () => {
+    const specWithout: DeliverySpec = {
+      kind: 'opencode-server',
+      session_id: 'ses_abc',
+      base_url: 'http://127.0.0.1:18888',
+    };
+    const specWith: DeliverySpec = {
+      kind: 'opencode-server',
+      session_id: 'ses_abc',
+      base_url: 'https://example.com',
+      auth_token_ref: 'OPENCODE_SERVER_PASSWORD',
+    };
+    expect(specWithout.kind).toBe('opencode-server');
+    expect(specWith.kind).toBe('opencode-server');
+    if (specWith.kind === 'opencode-server') {
+      expectTypeOf(specWith.session_id).toEqualTypeOf<string>();
+      expectTypeOf(specWith.base_url).toEqualTypeOf<string>();
+    }
+  });
+
   it('narrows kind via discriminated field', () => {
     const describe = (spec: DeliverySpec): string => {
       if (spec.kind === 'none') return 'none';
@@ -164,6 +184,68 @@ describe('parseDeliveryRow read-side validation (harden-delivery-read-path)', ()
     expect(Object.prototype.hasOwnProperty.call(spec, 'auth_token_ref')).toBe(false);
   });
 
+  it('throws corrupt_delivery_payload for opencode-server missing session_id', () => {
+    const row = {
+      delivery_kind: 'opencode-server',
+      delivery_payload: '{"base_url":"http://127.0.0.1:18888"}',
+    };
+    expect(() => parseDeliveryRow(row)).toThrow('corrupt_delivery_payload');
+  });
+
+  it('throws corrupt_delivery_payload for opencode-server with session_id not starting ses', () => {
+    const row = {
+      delivery_kind: 'opencode-server',
+      delivery_payload: '{"session_id":"abc","base_url":"http://127.0.0.1:18888"}',
+    };
+    expect(() => parseDeliveryRow(row)).toThrow('corrupt_delivery_payload');
+  });
+
+  it('throws corrupt_delivery_payload for opencode-server missing base_url', () => {
+    const row = {
+      delivery_kind: 'opencode-server',
+      delivery_payload: '{"session_id":"ses_abc"}',
+    };
+    expect(() => parseDeliveryRow(row)).toThrow('corrupt_delivery_payload');
+  });
+
+  it('throws corrupt_delivery_payload for opencode-server with empty auth_token_ref', () => {
+    const row = {
+      delivery_kind: 'opencode-server',
+      delivery_payload:
+        '{"session_id":"ses_abc","base_url":"http://127.0.0.1:18888","auth_token_ref":""}',
+    };
+    expect(() => parseDeliveryRow(row)).toThrow('corrupt_delivery_payload');
+  });
+
+  it('reconstructs opencode-server with full payload including auth_token_ref', () => {
+    const row = {
+      delivery_kind: 'opencode-server',
+      delivery_payload:
+        '{"session_id":"ses_abc","base_url":"http://127.0.0.1:18888","auth_token_ref":"OPENCODE_SERVER_PASSWORD"}',
+    };
+    expect(parseDeliveryRow(row)).toEqual({
+      kind: 'opencode-server',
+      session_id: 'ses_abc',
+      base_url: 'http://127.0.0.1:18888',
+      auth_token_ref: 'OPENCODE_SERVER_PASSWORD',
+    });
+  });
+
+  it('reconstructs opencode-server without auth_token_ref omits the optional key', () => {
+    const row = {
+      delivery_kind: 'opencode-server',
+      delivery_payload:
+        '{"session_id":"ses_abc","base_url":"http://127.0.0.1:18888"}',
+    };
+    const spec = parseDeliveryRow(row);
+    expect(spec).toEqual({
+      kind: 'opencode-server',
+      session_id: 'ses_abc',
+      base_url: 'http://127.0.0.1:18888',
+    });
+    expect(Object.prototype.hasOwnProperty.call(spec, 'auth_token_ref')).toBe(false);
+  });
+
   it('does not leak extra payload fields through the spread for claude-channel', () => {
     const row = {
       delivery_kind: 'claude-channel',
@@ -227,6 +309,33 @@ describe('serializeDelivery (Task 1.3)', () => {
     });
   });
 
+  it('serializes opencode-server to JSON payload with session_id and base_url', () => {
+    const spec: DeliverySpec = {
+      kind: 'opencode-server',
+      session_id: 'ses_abc',
+      base_url: 'http://127.0.0.1:18888',
+    };
+    const result = serializeDelivery(spec);
+    expect(result.delivery_kind).toBe('opencode-server');
+    expect(result.delivery_payload).toBe('{"session_id":"ses_abc","base_url":"http://127.0.0.1:18888"}');
+  });
+
+  it('serializes opencode-server with optional auth_token_ref when present', () => {
+    const spec: DeliverySpec = {
+      kind: 'opencode-server',
+      session_id: 'ses_abc',
+      base_url: 'http://127.0.0.1:18888',
+      auth_token_ref: 'OPENCODE_SERVER_PASSWORD',
+    };
+    const result = serializeDelivery(spec);
+    const parsed = JSON.parse(result.delivery_payload as string);
+    expect(parsed).toEqual({
+      session_id: 'ses_abc',
+      base_url: 'http://127.0.0.1:18888',
+      auth_token_ref: 'OPENCODE_SERVER_PASSWORD',
+    });
+  });
+
   it('roundtrips parseDeliveryRow(serializeDelivery(spec)) === spec for each kind', () => {
     const specs: DeliverySpec[] = [
       { kind: 'none' },
@@ -241,6 +350,17 @@ describe('serializeDelivery (Task 1.3)', () => {
         thread_id: '11111111-1111-1111-1111-111111111111',
         ws_url: 'wss://y',
         auth_token_ref: 'env:FOO',
+      },
+      {
+        kind: 'opencode-server',
+        session_id: 'ses_a',
+        base_url: 'http://127.0.0.1:18888',
+      },
+      {
+        kind: 'opencode-server',
+        session_id: 'ses_b',
+        base_url: 'https://example.com',
+        auth_token_ref: 'OPENCODE_SERVER_PASSWORD',
       },
     ];
     for (const spec of specs) {
@@ -327,6 +447,84 @@ describe('validateDeliveryForWrite (Task 1.4)', () => {
       kind: 'codex-appserver',
       thread_id: '11111111-1111-4111-8111-111111111111',
       ws_url: 'ws://127.0.0.1:8799',
+      auth_token_ref: '   ',
+    });
+    expect(result).toEqual({
+      error: 'invalid_delivery',
+      reason: 'invalid_auth_token_ref',
+    });
+  });
+
+  it('accepts kind opencode-server with valid session_id, base_url, optional auth_token_ref', () => {
+    const result = validateDeliveryForWrite({
+      kind: 'opencode-server',
+      session_id: 'ses_abc',
+      base_url: 'http://127.0.0.1:18888',
+      auth_token_ref: 'OPENCODE_SERVER_PASSWORD',
+    });
+    expect(result).toEqual({
+      ok: {
+        kind: 'opencode-server',
+        session_id: 'ses_abc',
+        base_url: 'http://127.0.0.1:18888',
+        auth_token_ref: 'OPENCODE_SERVER_PASSWORD',
+      },
+    });
+  });
+
+  it('rejects opencode-server with session_id not starting ses', () => {
+    const result = validateDeliveryForWrite({
+      kind: 'opencode-server',
+      session_id: 'abc',
+      base_url: 'http://127.0.0.1:18888',
+    });
+    expect(result).toEqual({
+      error: 'invalid_delivery',
+      reason: 'invalid_session_id',
+    });
+  });
+
+  it('rejects opencode-server with empty session_id', () => {
+    const result = validateDeliveryForWrite({
+      kind: 'opencode-server',
+      session_id: '',
+      base_url: 'http://127.0.0.1:18888',
+    });
+    expect(result).toEqual({
+      error: 'invalid_delivery',
+      reason: 'invalid_session_id',
+    });
+  });
+
+  it('rejects opencode-server with non-parseable base_url', () => {
+    const result = validateDeliveryForWrite({
+      kind: 'opencode-server',
+      session_id: 'ses_abc',
+      base_url: 'not-a-url',
+    });
+    expect(result).toEqual({
+      error: 'invalid_delivery',
+      reason: 'invalid_base_url',
+    });
+  });
+
+  it('rejects opencode-server with ws:// base_url (protocol mismatch)', () => {
+    const result = validateDeliveryForWrite({
+      kind: 'opencode-server',
+      session_id: 'ses_abc',
+      base_url: 'ws://127.0.0.1:18888',
+    });
+    expect(result).toEqual({
+      error: 'invalid_delivery',
+      reason: 'invalid_base_url',
+    });
+  });
+
+  it('rejects opencode-server with blank auth_token_ref', () => {
+    const result = validateDeliveryForWrite({
+      kind: 'opencode-server',
+      session_id: 'ses_abc',
+      base_url: 'http://127.0.0.1:18888',
       auth_token_ref: '   ',
     });
     expect(result).toEqual({

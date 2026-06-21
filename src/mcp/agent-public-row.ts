@@ -4,6 +4,7 @@ import type { DeliverySpec } from '../lib/delivery-spec.js'
 export type PublicDelivery =
   | { kind: 'none' }
   | { kind: 'codex-appserver' }
+  | { kind: 'opencode-server' }
   | { kind: 'claude-channel'; channel_session_id: string }
 
 export interface PublicAgentListRow {

@@ -43,9 +43,14 @@ export type PokeResult =
       thread_id: string
     }
   | {
+      ok: true
+      transport_used: 'opencode-server'
+      session_id: string
+    }
+  | {
       error: string
       detail?: unknown
-      transport_used?: 'tmux-poke' | 'codex-appserver'
+      transport_used?: 'tmux-poke' | 'codex-appserver' | 'opencode-server'
     }
 
 interface TargetRow {
@@ -159,7 +164,7 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
   const fanout = deps.channelWakeFanout
   const delivery = parseDeliveryRow(target) as DeliverySpec
   if (!fanout) {
-    if (delivery.kind === 'codex-appserver') {
+    if (delivery.kind === 'codex-appserver' || delivery.kind === 'opencode-server') {
       return dispatchPoke(
         { tmuxPoke: tmuxPokeImpl },
         { agent_type: target.agent_type, delivery, tmux_pane_id: target.tmux_pane_id },
