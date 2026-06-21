@@ -1,6 +1,6 @@
 {
   "name": "cross-agent-teams-mcp",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "description": "MCP daemon for cross-agent collaboration",
   "type": "module",
   "bin": {
