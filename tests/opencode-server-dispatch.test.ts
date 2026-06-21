@@ -168,7 +168,7 @@ describe('dispatchOpencodeServerPoke', () => {
     const result = await dispatchOpencodeServerPoke(
       { delivery: DELIVERY, content: 'hello' },
       { fetch: fetchMock, env: {} }
-    ) as Extract<OpencodeServerDispatchResult, { error: 'opencode_inject_failed' }>
+    ) as Extract<OpencodeServerDispatchResult, { error: unknown }> & { detail: { body: string } }
     expect(result.error).toBe('opencode_inject_failed')
     const body = result.detail.body as string
     expect(body.length).toBe(4096)

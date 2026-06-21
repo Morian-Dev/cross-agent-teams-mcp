@@ -160,7 +160,7 @@ describe('RegisterOpencodeSelfService', () => {
     const fetchMock = makeFetch([
       (url) => (url.endsWith('/global/health') ? { status: 503, body: 'down' } : null),
     ])
-    const { db, svc } = setup(fetchMock)
+    const { svc } = setup(fetchMock)
 
     const result = await svc.register({
       connection_id: 'conn-1',
@@ -168,7 +168,7 @@ describe('RegisterOpencodeSelfService', () => {
       base_url: BASE_URL,
     })
 
-    expect(result.error).toBe('opencode_unreachable')
+    expect((result as { error: string }).error).toBe('opencode_unreachable')
     expect((result as { detail: { cause: string } }).detail.cause).toMatch(/503/)
   })
 

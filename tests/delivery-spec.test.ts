@@ -73,7 +73,8 @@ describe('DeliverySpec discriminated union shape', () => {
     const describe = (spec: DeliverySpec): string => {
       if (spec.kind === 'none') return 'none';
       if (spec.kind === 'claude-channel') return spec.channel_session_id;
-      return spec.thread_id;
+      if (spec.kind === 'codex-appserver') return spec.thread_id;
+      return spec.session_id;
     };
     expect(describe({ kind: 'none' })).toBe('none');
     expect(describe({ kind: 'claude-channel', channel_session_id: 'csid-xyz' })).toBe('csid-xyz');
