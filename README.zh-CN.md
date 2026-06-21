@@ -41,7 +41,7 @@ npx mcpsmgr add jtianling/cross-agent-teams-mcp
 # 3. 按平时的方式启动对应 coding agent
 ```
 
-注意: 只有 Claude Code 默认就能收到 push 唤醒.  Codex 需要 `--remote` + launcher 配置 (见下面 section 2) 才能被 poke; 没配的话只有邮箱, 不会自动醒.  opencode / cursor 等其它 agent 只有跑在 tmux pane 里才能被 poke.  没接通 push 唤醒的情况下, 让 agent 自己手动收信即可 (跟它说"查一下我的 xats inbox").
+注意: Claude Code 默认就能 push 唤醒.  Codex 和 opencode 也都有真正的 push 唤醒, 各自做一次性 launcher 配置即可 (见下面 section 2) — Codex 走 `--remote` app-server 通道, opencode 走 HTTP `prompt_async` 通道.  cursor / 其它 custom agent 只有跑在 tmux pane 里才能被 poke.  某个 agent 没接通 push 唤醒时, 让它手动查 inbox 即可 (跟它说"查一下我的 xats inbox").
 
 之后用平时跟 agent 对话的语言就能用了:
 
@@ -217,6 +217,8 @@ free-xats-codex() {
 #### opencode
 
 opencode 自带一流的 headless HTTP API (`POST /session/{id}/prompt_async`), daemon 用它作为专用唤醒通道 — 不需要 tmux pane 注入.  通过 `agent_type="opencode"` 加 `base_url` (指向 opencode 进程的 HTTP 服务器) 注册即可激活.
+
+别的 agent poke 这个 opencode 时, daemon 把 wake hint POST 到 `prompt_async`, **拉起 opencode 一个新的 agent turn** — agent 自己醒来读 inbox, 不需要任何手动提示, 跟 Claude Code 和 Codex 一样是一等公民的 push 唤醒 (而不是 `custom` agent 回落的那种被动 tmux paste).
 
 把下面的 `free-xats-opencode` zsh 函数加到 `~/.zshrc` (镜像 `free-xats-codex` 的模式):
 

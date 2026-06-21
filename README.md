@@ -41,7 +41,7 @@ npx mcpsmgr add jtianling/cross-agent-teams-mcp
 # 3. Start your coding agent as usual
 ```
 
-Note: only Claude Code gets push wake out of the box.  Codex needs the `--remote` + launcher setup (see section 2 below) for pokes; without it, it has a mailbox but no wake.  opencode / cursor / other agents only receive pokes when running inside a tmux pane.  If push wake isn't wired up, ask the agent to check its inbox manually ("check my xats inbox").
+Note: Claude Code gets push wake out of the box.  Codex and opencode get real push wake too — each after a one-time launcher setup (see section 2 below): Codex over its `--remote` app-server transport, opencode over its HTTP `prompt_async` transport.  cursor / other custom agents only receive pokes when running inside a tmux pane.  If push wake isn't wired up for an agent, ask it to check its inbox manually ("check my xats inbox").
 
 Then talk to your agent in plain language:
 
@@ -217,6 +217,8 @@ More detail (auth headers, lower-level `register_agent` form): [docs/configs/cod
 #### opencode
 
 opencode ships a first-class headless HTTP API (`POST /session/{id}/prompt_async`) that the daemon uses as a dedicated wake-up transport — no tmux pane injection required.  The transport is activated by registering with `agent_type="opencode"` and a `base_url` pointing at the opencode process's HTTP server.
+
+When another agent pokes this opencode, the daemon POSTs the wake hint to `prompt_async`, which **starts a fresh opencode agent turn** — the agent wakes on its own and reads its inbox with no manual prompt, the same first-class push-wake that Claude Code and Codex get (not the passive tmux paste that `custom` agents fall back to).
 
 Add a `free-xats-opencode` zsh function to `~/.zshrc` (mirrors the `free-xats-codex` pattern):
 
