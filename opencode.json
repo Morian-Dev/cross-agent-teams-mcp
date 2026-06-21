@@ -4,6 +4,9 @@
     "cross-agent-teams-mcp": {
       "type": "remote",
       "url": "http://127.0.0.1:9100/mcp",
+      "headers": {
+        "Authorization": "Bearer xats"
+      },
       "enabled": true
     }
   }
