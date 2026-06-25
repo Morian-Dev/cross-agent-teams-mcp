@@ -19,10 +19,11 @@ const tmp = () => mkdtempSync(join(tmpdir(), 'atm-poke-cmd-fail-'))
 
 describe('poke tmux_cmd_failed with stage info', () => {
   const cleanups: string[] = []
-  beforeEach(() => { vi.clearAllMocks() })
+  beforeEach(() => { vi.clearAllMocks(); process.env.POKE_QUIET_MS = '50' })
   afterEach(() => {
     cleanups.forEach(d => rmSync(d, { recursive: true, force: true }))
     cleanups.length = 0
+    delete process.env.POKE_QUIET_MS
   })
 
   it('returns tmux_cmd_failed with stage "load_buffer" when loadBuffer rejects unexpectedly', async () => {

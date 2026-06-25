@@ -13,7 +13,7 @@ import {
 
 export interface DispatchDeps {
   channelWakeFanout?: ChannelWakeFanout
-  tmuxPoke: (args: { pane_id: string; content: string }) => Promise<TmuxPokeResult>
+  tmuxPoke: (args: { pane_id: string; content: string; skipGuard?: boolean }) => Promise<TmuxPokeResult>
   codexAppserverDispatch?: (args: {
     delivery: Extract<DeliverySpec, { kind: 'codex-appserver' }>
     content: string
@@ -37,6 +37,7 @@ export interface TargetRow {
 export interface DispatchInput {
   content: string
   meta: Record<string, string>
+  skipGuard?: boolean
 }
 
 export type DispatchResult =
@@ -91,9 +92,10 @@ function resolveAgentType(target: TargetRow): AgentType | null {
 async function dispatchTmux(
   deps: DispatchDeps,
   paneId: string,
-  content: string
+  content: string,
+  skipGuard?: boolean
 ): Promise<DispatchResult> {
-  const tmuxResult = await deps.tmuxPoke({ pane_id: paneId, content })
+  const tmuxResult = await deps.tmuxPoke({ pane_id: paneId, content, skipGuard })
   if ('ok' in tmuxResult && tmuxResult.ok) {
     return {
       ok: true,
@@ -134,7 +136,7 @@ async function dispatchClaude(
     }
   }
 
-  if (paneId) return dispatchTmux(deps, paneId, input.content)
+  if (paneId) return dispatchTmux(deps, paneId, input.content, input.skipGuard)
   return {
     error: 'no_transport_available',
     detail: {
@@ -156,10 +158,10 @@ async function dispatchCodex(
       content: input.content,
     })
     if ('ok' in result && result.ok) return result
-    if (paneId) return dispatchTmux(deps, paneId, input.content)
+    if (paneId) return dispatchTmux(deps, paneId, input.content, input.skipGuard)
     return result
   }
-  if (paneId) return dispatchTmux(deps, paneId, input.content)
+  if (paneId) return dispatchTmux(deps, paneId, input.content, input.skipGuard)
   return {
     error: 'no_transport_available',
     detail: {
@@ -185,7 +187,7 @@ async function dispatchOpencode(
   // (legacy `agent_type='opencode'` callers that did not pass base_url used
   // the tmux runtime-bind path; this branch preserves that behavior).
   const paneId = target.tmux_pane_id
-  if (paneId) return dispatchTmux(deps, paneId, input.content)
+  if (paneId) return dispatchTmux(deps, paneId, input.content, input.skipGuard)
   return {
     error: 'no_transport_available',
     detail: {
@@ -201,7 +203,7 @@ async function dispatchUnknown(
   input: DispatchInput
 ): Promise<DispatchResult> {
   const paneId = target.tmux_pane_id
-  if (paneId) return dispatchTmux(deps, paneId, input.content)
+  if (paneId) return dispatchTmux(deps, paneId, input.content, input.skipGuard)
   return {
     error: 'no_transport_available',
     detail: {

@@ -19,7 +19,7 @@ import { applySchema } from '../src/storage/schema.js'
 import { AgentsRepo } from '../src/storage/agents-repo.js'
 import { EventsOutbox } from '../src/storage/events-outbox.js'
 import { SendMessageService } from '../src/mcp/send-message.js'
-import { __setCapturePaneTail, __resetCapturePaneTail } from '../src/mcp/poke-guard.js'
+import { __setCapturePaneTail, __resetCapturePaneTail, runQuietGuard } from '../src/mcp/poke-guard.js'
 import { clearAllRetries } from '../src/mcp/poke-retry.js'
 import { createAutoPokeImpl } from '../src/mcp/tools.js'
 import { poke as pokeMock } from '../src/mcp/poke.js'
@@ -48,7 +48,18 @@ function setupService(opts?: { paneState?: Record<string, 'idle' | 'active'> }):
 
   const autoPokeImpl = createAutoPokeImpl(db, agents)
   const pokeCalls: PokeCall[] = []
-  vi.mocked(pokeMock).mockImplementation(async (_deps: unknown, input: { target_agent_id: string; prompt: string }) => {
+  // The mock stands in for the real poke primitive, which runs the quiet-guard on
+  // the tmux paste branch unless skipGuard is set. Mirror that so active panes
+  // resolve to guard_failed (and the retry tick's skipGuard:true poke fires).
+  vi.mocked(pokeMock).mockImplementation(async (deps: { db: ReturnType<typeof openDb> }, input: { target_agent_id: string; prompt: string; skipGuard?: boolean }) => {
+    if (!input.skipGuard) {
+      const row = deps.db
+        .prepare('SELECT tmux_pane_id FROM agents WHERE agent_id=?')
+        .get(input.target_agent_id) as { tmux_pane_id: string | null } | undefined
+      if (row?.tmux_pane_id && (await runQuietGuard(row.tmux_pane_id)) === 'fail') {
+        return { error: 'guard_failed', transport_used: 'tmux-poke' as const }
+      }
+    }
     pokeCalls.push({ target: input.target_agent_id, prompt: input.prompt })
     return { ok: true as const, transport_used: 'tmux-poke' as const, pane_id: '%mock', pane_tail_before: '', pane_tail_after: '' }
   })

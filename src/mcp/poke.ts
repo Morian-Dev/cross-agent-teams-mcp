@@ -10,6 +10,7 @@ import {
 } from '../daemon/tmux-cli.js'
 import type { ChannelWakeFanout } from '../daemon/channel-wake-fanout.js'
 import { dispatchPoke, type TmuxPokeResult } from './transport-dispatch.js'
+import { runQuietGuard } from './poke-guard.js'
 
 // allowCrossTeam is for internal auto-poke callers only; MCP tool entry MUST NOT pass it.
 export interface PokeDeps {
@@ -22,6 +23,7 @@ export interface PokeDeps {
 export interface PokeInput {
   target_agent_id: string
   prompt: string
+  skipGuard?: boolean
 }
 
 export type PokeResult =
@@ -106,12 +108,22 @@ async function runStage<T>(stage: TmuxStage, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-async function tmuxPokeImpl(args: { pane_id: string; content: string }): Promise<TmuxPokeResult> {
+async function tmuxPokeImpl(args: {
+  pane_id: string
+  content: string
+  skipGuard?: boolean
+}): Promise<TmuxPokeResult> {
   if (!(await isTmuxAvailable())) {
     return { error: 'tmux_unavailable', detail: 'tmux binary not available on PATH' }
   }
   const bufName = `poke-${randomBytes(3).toString('hex')}`
   try {
+    if (!args.skipGuard) {
+      // Guard inside the try so a pane that dies mid-window is classified
+      // (pane_dead / tmux_cmd_failed) instead of throwing out of the primitive.
+      const guard = await runStage('capture_before', () => runQuietGuard(args.pane_id))
+      if (guard === 'fail') return { error: 'guard_failed' }
+    }
     const pane_tail_before = await runStage('capture_before', () => capturePaneTail(args.pane_id, TAIL_LINES))
     await runStage('load_buffer', () => loadBuffer(bufName, args.content))
     await runStage('paste_buffer', () => pasteBuffer(bufName, args.pane_id))
@@ -168,13 +180,17 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
       return dispatchPoke(
         { tmuxPoke: tmuxPokeImpl },
         { agent_type: target.agent_type, delivery, tmux_pane_id: target.tmux_pane_id },
-        { content: input.prompt, meta: {} }
+        { content: input.prompt, meta: {}, skipGuard: input.skipGuard }
       )
     }
 
     // Legacy tmux-only path preserved when no fanout supplied by caller.
     if (!target.tmux_pane_id) return { error: 'tmux_pane_not_set' }
-    const tr = await tmuxPokeImpl({ pane_id: target.tmux_pane_id, content: input.prompt })
+    const tr = await tmuxPokeImpl({
+      pane_id: target.tmux_pane_id,
+      content: input.prompt,
+      skipGuard: input.skipGuard
+    })
     if ('ok' in tr && tr.ok) {
       return {
         ok: true,
@@ -190,6 +206,6 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
   return dispatchPoke(
     { channelWakeFanout: fanout, tmuxPoke: tmuxPokeImpl },
     { agent_type: target.agent_type, delivery, tmux_pane_id: target.tmux_pane_id },
-    { content: input.prompt, meta: {} }
+    { content: input.prompt, meta: {}, skipGuard: input.skipGuard }
   )
 }

@@ -324,7 +324,7 @@ Each retry tick MUST:
 1. Look up the recipient's current `tmux_pane_id` and `last_seen_at` from the database (no team filter — `agent_id` is globally unique).
 2. If the recipient no longer exists or has no pane id: mark the delivery status `failed` with `skip_reason='no_pane'` and stop retrying for that recipient.
 3. If `last_seen_at > sent_at` of the originating message: mark the delivery status `skipped` with `skip_reason='recipient_active'` and stop retrying.
-4. Otherwise: invoke `runQuietGuard(pane_id)`.  Pass → fire poke with the hint-format wake-up prompt, mark delivery status `delivered`, set `delivered_at`, and stop remaining retries.  Fail → increment `retry_attempts`; if attempts remain, keep status `retrying`; if no attempts remain, mark status `failed` with `skip_reason='retry_exhausted'`.
+4. Otherwise: invoke `runQuietGuard(pane_id)`.  Pass → fire poke with the hint-format wake-up prompt AND the internal `skipGuard` flag set (the tick has already run the quiet-guard, so the poke primitive MUST NOT re-run it — this avoids a redundant second `POKE_QUIET_MS` wait), mark delivery status `delivered`, set `delivered_at`, and stop remaining retries.  Fail → increment `retry_attempts`; if attempts remain, keep status `retrying`; if no attempts remain, mark status `failed` with `skip_reason='retry_exhausted'`.
 
 The sending tool's response (`send_message`, `broadcast`, or `broadcast_to_role`) MUST include:
 
@@ -342,12 +342,12 @@ The daemon MUST clear all pending retry timers on shutdown (e.g. Fastify `onClos
 - **AND** the daemon's internal retry map has exactly one entry keyed by `${message_id}:${B}`
 - **AND** the delivery status for B is `retrying` with `skip_reason='guard_failed'`
 
-#### Scenario: First retry tick guard passes → poke fires, remaining cancelled
+#### Scenario: First retry tick guard passes → poke fires with skipGuard, remaining cancelled
 
 - **GIVEN** the setup above with a retry already scheduled, pointer to attempt 1
-- **AND** test uses fake timers, B's pane becomes idle (guard will pass on re-check)
+- **AND** test uses fake timers, B's pane becomes idle (the tick's guard will pass on re-check)
 - **WHEN** 30 seconds of fake-time advance
-- **THEN** a poke is fired at B's pane
+- **THEN** a poke is fired at B's pane with the internal `skipGuard` flag set (the poke primitive does not re-run the guard)
 - **AND** the retry map has no entry for this message/recipient
 - **AND** no further timers fire
 - **AND** the delivery status for B is `delivered`
@@ -376,17 +376,11 @@ The daemon MUST clear all pending retry timers on shutdown (e.g. Fastify `onClos
 
 `send_message` MUST accept an optional `auto_poke: boolean` parameter.  When the parameter is omitted, the default value MUST be `true` — for same-team AND cross-team calls alike.
 
-When `auto_poke` resolves to `true`, the daemon MUST choose the initial wake path from the recipient's configured transports.  If the recipient has a configured non-tmux transport (`delivery.kind != 'none'`, including `claude-channel` or `codex-appserver`, or a complete opencode binding), the daemon MUST invoke the internal poke primitive without requiring `tmux_pane_id` and without running the tmux quiet-guard.  The internal poke primitive then applies the transport selection and fallback rules from "poke dispatches via transport abstraction".
+When `auto_poke` resolves to `true`, the daemon MUST invoke the internal poke primitive for the single recipient.  The primitive performs transport selection and fallback per "poke dispatches via transport abstraction".  The fan-out layer MUST NOT run its own transport-type-gated quiet-guard; the tmux quiet-guard is run by the poke primitive if and only if dispatch reaches the tmux paste branch (per "poke happy path delivers paste and returns before/after tails").  Consequently a recipient with a configured non-tmux transport that is currently unreachable MAY still fall back to a guarded tmux paste, and resolves to `guard_failed` when its pane is active.
 
-If the recipient has no configured non-tmux transport, the daemon MUST run a quiet-guard before firing `poke` against the single recipient:
+The quiet-guard mechanics are unchanged: capture the pane tail, wait `POKE_QUIET_MS` milliseconds (default 2000, overridable via environment variable, positive integer), re-capture, and compare; matching captures (idle pane) allow the paste, differing captures (pane activity) yield `guard_failed` with no paste.  The message MUST still be persisted in the mailbox regardless of the poke outcome.
 
-1. Capture the recipient's pane tail via `tmux capture-pane` (if `tmux_pane_id` is registered).
-2. Wait `POKE_QUIET_MS` milliseconds (default 2000, overridable via environment variable, positive integer).
-3. Re-capture the pane tail and compare the two captures (string-equal or equivalent hash).
-4. If the captures match (pane has been idle): fire the poke.
-5. If the captures differ (pane has activity): skip the poke; the message MUST still be persisted in the mailbox.
-
-The daemon MUST skip the poke and record a skip reason when any of the following apply: the recipient has no configured non-tmux transport and no registered `tmux_pane_id` (reason `no_pane`), `tmux` is not available on PATH for a tmux-only recipient (reason `tmux_unavailable`), the quiet-guard detects activity (reason `guard_failed`), or the recipient is the caller itself (reason `self`).
+The daemon MUST skip the poke and record a skip reason when any of the following apply: the recipient has no reachable transport and no registered `tmux_pane_id` (reason `no_pane`), `tmux` is not available on PATH for a tmux-only recipient (reason `tmux_unavailable`), the quiet-guard detects activity on the tmux paste branch (reason `guard_failed`), or the recipient is the caller itself (reason `self`).
 
 The `send_message` response MUST include:
 
@@ -434,7 +428,7 @@ Cross-team auto-poke is identical: the recipient's `tmux_pane_id` is looked up b
 - **GIVEN** B is registered with `delivery={kind:'claude-channel', channel_session_id:'csid-b'}` and no `tmux_pane_id`
 - **AND** the channel proxy subscribing to `csid-b` is online
 - **WHEN** A calls `send_message_by_id({to_agent_id: B, body: "hi"})` (auto_poke omitted)
-- **THEN** the daemon invokes the internal poke primitive without running the tmux quiet-guard
+- **THEN** the poke primitive delivers via the claude-channel transport without reaching the tmux paste branch, so no quiet-guard runs
 - **AND** the response has `poked: true`
 - **AND** `poke_skip_reasons` is absent or empty
 
@@ -443,9 +437,20 @@ Cross-team auto-poke is identical: the recipient's `tmux_pane_id` is looked up b
 - **GIVEN** B is registered with `opencode_base_url='http://127.0.0.1:4096'`, `opencode_session_id='sess-b'`, and no `tmux_pane_id`
 - **AND** the opencode server accepts the wake prompt for `sess-b`
 - **WHEN** A calls `send_message_by_id({to_agent_id: B, body: "hi"})` (auto_poke omitted)
-- **THEN** the daemon invokes the internal poke primitive without running the tmux quiet-guard
+- **THEN** the poke primitive delivers via the opencode transport without reaching the tmux paste branch, so no quiet-guard runs
 - **AND** the response has `poked: true`
 - **AND** `poke_skip_reasons` is absent or empty
+
+#### Scenario: Channel recipient with offline sink falls back to guarded tmux against active pane
+
+- **GIVEN** B is registered with `delivery={kind:'claude-channel', channel_session_id:'csid-b'}` AND `tmux_pane_id='%42'`
+- **AND** no sink is attached for `csid-b` (channel offline) and B has no bound opencode session
+- **AND** `%42` is actively redrawing, `POKE_QUIET_MS=100` for test speed
+- **WHEN** A calls `send_message_by_id({to_agent_id: B, body: "hi"})` (auto_poke omitted)
+- **THEN** the poke primitive falls back to the tmux branch, runs the quiet-guard, and detects activity
+- **AND** the response has `poked: false` with `poke_skip_reasons` containing `{agent_id: B, reason: 'guard_failed'}`
+- **AND** `retry_scheduled: true`, `retry_delays_s: [30, 180, 600]`
+- **AND** no paste is injected into `%42`
 
 #### Scenario: auto_poke:false disables the behavior entirely
 
@@ -466,12 +471,7 @@ Cross-team auto-poke is identical: the recipient's `tmux_pane_id` is looked up b
 When `auto_poke` resolves to `true`, the daemon MUST:
 
 1. Persist the message to every recipient's mailbox (one row per recipient sharing one `event_id`, all with `from_team=to_team=caller.team`).
-2. For every recipient, in parallel via `Promise.all`, run the wake-path logic specified in "Send-message auto-poke default with quiet-guard":
-   - If recipient has a configured non-tmux transport (`delivery.kind != 'none'` or a complete opencode binding): invoke the internal poke primitive directly, without requiring `tmux_pane_id`.
-   - If recipient has no configured non-tmux transport and no `tmux_pane_id`: skip with reason `no_pane`.
-   - If `tmux` not on PATH for a tmux-only recipient: skip with reason `tmux_unavailable`.
-   - If recipient is the caller: skip with reason `self` (broadcast already excludes sender, but defensive).
-   - Otherwise capture pane tail, wait `POKE_QUIET_MS`, recapture, compare. Match → fire poke; differ → skip with reason `guard_failed`.
+2. For every recipient, in parallel via `Promise.all`, invoke the internal poke primitive.  The primitive performs transport selection + fallback and runs the tmux quiet-guard if and only if it reaches the tmux paste branch (per "poke dispatches via transport abstraction" and "poke happy path delivers paste and returns before/after tails").  The fan-out layer MUST NOT run its own transport-type-gated guard.  A recipient whose only reachable route is a tmux paste against an active pane resolves to `guard_failed`; a recipient with no reachable transport and no `tmux_pane_id` resolves to `no_pane`; a tmux-only recipient with `tmux` not on PATH resolves to `tmux_unavailable`; the caller resolves to `self` (broadcast already excludes sender, but defensive).
 3. For every recipient that resulted in `guard_failed` AND has a `tmux_pane_id`, schedule the same 3-attempt retry-with-backoff (30s / 180s / 600s) specified in "Auto-poke retry with backoff on guard_failed".
 4. The total wall-clock duration MUST approximate one `POKE_QUIET_MS` window (~2000ms default), not `N × POKE_QUIET_MS`, because guards run in parallel.
 
@@ -612,7 +612,7 @@ The rule does NOT constrain the `poke` MCP tool itself when callers invoke it di
 3. Self-poke and cross-team checks remain unchanged; `allowCrossTeam` internal flag still governs auto-poke bypass.
 4. If `channel_session_id` is non-null AND the daemon's `ChannelWakeFanout` has a live sink attached for that id, call the internal `sendChannelWake(channel_session_id, {content, meta})`.  On success, return `{ok: true, transport_used: 'claude-channel', channel_session_id}`.
 5. Otherwise, if both `opencode_base_url` and `opencode_session_id` are non-null, call the internal opencode transport helper.  On success, return `{ok: true, transport_used: 'opencode-server', base_url, session_id}`.
-6. If steps 4-5 did not return success, AND `tmux_pane_id` is non-null, perform the existing tmux-based poke flow.  On success, return `{ok: true, pane_id, pane_tail_before, pane_tail_after, transport_used: 'tmux-poke'}`.  On tmux error, return the classified error with `transport_used: 'tmux-poke'`.
+6. If steps 4-5 did not return success, AND `tmux_pane_id` is non-null, perform the existing tmux-based poke flow, which runs the quiet-guard before pasting UNLESS the internal `skipGuard` flag is set (per "poke happy path delivers paste and returns before/after tails").  On success, return `{ok: true, pane_id, pane_tail_before, pane_tail_after, transport_used: 'tmux-poke'}`.  When the guard detects pane activity (and `skipGuard` is not set), return `{error: 'guard_failed', transport_used: 'tmux-poke'}` without pasting.  On other tmux error, return the classified error with `transport_used: 'tmux-poke'`.
 7. If none of the three transports is configured, return `{error: 'no_transport_available', detail: {channel_subscribed: <bool>, opencode_bound: <bool>, tmux_pane_set: <bool>}}`.
 
 The tool MUST NOT fan a wake-up via multiple transports for a single poke call.  Successful Claude channel delivery short-circuits opencode and tmux, and successful opencode delivery short-circuits tmux.
@@ -635,12 +635,23 @@ The tool MUST NOT fan a wake-up via multiple transports for a single poke call. 
 - **THEN** the response is `{ok: true, transport_used: 'opencode-server', base_url: 'http://127.0.0.1:4096', session_id: 'sess-bob'}`
 - **AND** no `tmux` command is executed
 
-#### Scenario: poke falls back to tmux when opencode not bound
+#### Scenario: poke falls back to tmux when opencode not bound and pane idle
 
 - **GIVEN** target `bob` has `channel_session_id=NULL`, `opencode_base_url=NULL`, `opencode_session_id=NULL`, and `tmux_pane_id='%99'`
+- **AND** `%99` stays idle through the quiet-guard window, so the guard passes
 - **WHEN** `alice` calls `poke({target_agent_id:'bob', prompt:'p'})`
 - **THEN** the daemon executes the tmux paste-then-enter flow on pane `%99`
 - **AND** the response is `{ok: true, transport_used: 'tmux-poke', pane_id: '%99', pane_tail_before: ..., pane_tail_after: ...}`
+
+#### Scenario: tmux fallback guards an active pane and returns guard_failed
+
+- **GIVEN** target `bob` has `channel_session_id='csid-bob'` but no live sink for it, `opencode_base_url=NULL`, and `tmux_pane_id='%99'`
+- **AND** `%99` is actively redrawing during the quiet-guard window
+- **AND** the poke is invoked without `skipGuard`
+- **WHEN** `alice` pokes `bob`
+- **THEN** the dispatch falls through steps 4-5 to the tmux branch, runs the quiet-guard, and detects activity
+- **AND** the response is `{error: 'guard_failed', transport_used: 'tmux-poke'}`
+- **AND** no `paste-buffer` / `send-keys` command is executed on `%99`
 
 #### Scenario: poke returns no_transport_available when no route is configured
 

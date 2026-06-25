@@ -9,6 +9,7 @@ import { EventsOutbox } from '../src/storage/events-outbox.js'
 import { SendMessageService, type AutoPokeFn, type AutoPokeSkipReason } from '../src/mcp/send-message.js'
 import { __setCapturePaneTail, __resetCapturePaneTail } from '../src/mcp/poke-guard.js'
 import { insertAgent } from './helpers/insert-agent.js'
+import { guardingPoke } from './helpers/guarding-poke.js'
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'atm-sm-autopoke-'))
 
@@ -35,10 +36,10 @@ function setupService(opts?: { paneState?: Record<string, 'idle' | 'active'> }):
   })
 
   const pokeCalls: PokeCall[] = []
-  const fakePoke: AutoPokeFn = async ({ targetAgentId, paneId }) => {
-    pokeCalls.push({ target: targetAgentId, pane: paneId })
-    return { ok: true }
-  }
+  const fakePoke: AutoPokeFn = guardingPoke(
+    async () => ({ ok: true }),
+    ({ targetAgentId, paneId }) => { pokeCalls.push({ target: targetAgentId, pane: paneId }) }
+  )
 
   const svc = new SendMessageService(db, agents, events, { poke: fakePoke })
   return { svc, db, pokeCalls, cleanup: () => rmSync(dir, { recursive: true, force: true }) }

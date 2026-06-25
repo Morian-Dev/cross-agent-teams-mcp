@@ -12,6 +12,7 @@ import { buildAutoPokeHint } from '../src/mcp/tools.js'
 import { __setCapturePaneTail, __resetCapturePaneTail } from '../src/mcp/poke-guard.js'
 import { clearAllRetries } from '../src/mcp/poke-retry.js'
 import { insertAgent } from './helpers/insert-agent.js'
+import { guardingPoke } from './helpers/guarding-poke.js'
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'atm-btr-'))
 
@@ -37,13 +38,15 @@ function setup(opts?: { paneState?: Record<string, 'idle' | 'active'> }): {
   })
 
   const pokes: PokeCall[] = []
-  const fakePoke: AutoPokeFn = async ({ fromAgentId, targetAgentId, paneId }) => {
-    const row = db.prepare('SELECT name FROM agents WHERE agent_id=?').get(fromAgentId) as
-      { name: string | null } | undefined
-    const prompt = buildAutoPokeHint(row, fromAgentId)
-    pokes.push({ target: targetAgentId, pane: paneId, prompt })
-    return { ok: true }
-  }
+  const fakePoke: AutoPokeFn = guardingPoke(
+    async ({ fromAgentId, targetAgentId, paneId }) => {
+      const row = db.prepare('SELECT name FROM agents WHERE agent_id=?').get(fromAgentId) as
+        { name: string | null } | undefined
+      const prompt = buildAutoPokeHint(row, fromAgentId)
+      pokes.push({ target: targetAgentId, pane: paneId, prompt })
+      return { ok: true }
+    }
+  )
 
   const svc = new BroadcastToRoleService(db, agents, events, { poke: fakePoke })
   return { svc, db, pokes, cleanup: () => rmSync(dir, { recursive: true, force: true }) }

@@ -10,6 +10,7 @@ import { BroadcastService } from '../src/mcp/broadcast.js'
 import { __setCapturePaneTail, __resetCapturePaneTail } from '../src/mcp/poke-guard.js'
 import { clearAllRetries } from '../src/mcp/poke-retry.js'
 import { insertAgent } from './helpers/insert-agent.js'
+import { guardingPoke } from './helpers/guarding-poke.js'
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'atm-bcast-autopoke-'))
 
@@ -34,10 +35,10 @@ function setupService(opts?: { paneState?: Record<string, 'idle' | 'active'> }):
   })
 
   const pokeCalls: PokeCall[] = []
-  const fakePoke: AutoPokeFn = async ({ targetAgentId, paneId }) => {
-    pokeCalls.push({ target: targetAgentId, pane: paneId })
-    return { ok: true }
-  }
+  const fakePoke: AutoPokeFn = guardingPoke(
+    async () => ({ ok: true }),
+    ({ targetAgentId, paneId }) => { pokeCalls.push({ target: targetAgentId, pane: paneId }) }
+  )
 
   const svc = new BroadcastService(db, agents, { poke: fakePoke })
   return { svc, db, pokeCalls, cleanup: () => rmSync(dir, { recursive: true, force: true }) }

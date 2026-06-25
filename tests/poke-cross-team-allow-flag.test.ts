@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -31,7 +31,11 @@ function seed(db: ReturnType<typeof openDb>, agent_id: string, team: string, nam
 
 describe('poke() cross-team with allowCrossTeam flag', () => {
   const dirs: string[] = []
-  afterEach(() => { dirs.forEach(d => rmSync(d, { recursive: true, force: true })); dirs.length = 0 })
+  beforeEach(() => { process.env.POKE_QUIET_MS = '50' })
+  afterEach(() => {
+    dirs.forEach(d => rmSync(d, { recursive: true, force: true })); dirs.length = 0
+    delete process.env.POKE_QUIET_MS
+  })
 
   function fresh(): ReturnType<typeof openDb> {
     const dir = tmp(); dirs.push(dir)

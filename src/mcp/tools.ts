@@ -190,7 +190,7 @@ export function createAutoPokeImpl(
     const hint = buildAutoPokeHint(row, args.fromAgentId)
     const res = await poke(
       { db, callerAgentId: args.fromAgentId, allowCrossTeam: true, channelWakeFanout },
-      { target_agent_id: args.targetAgentId, prompt: hint }
+      { target_agent_id: args.targetAgentId, prompt: hint, skipGuard: args.skipGuard }
     )
     if ('ok' in res && res.ok) return { ok: true }
     const err = (res as { error?: string }).error
@@ -198,6 +198,8 @@ export function createAutoPokeImpl(
     if (err === 'tmux_pane_not_set') return { ok: false, reason: 'no_pane' }
     if (err === 'no_transport_available') return { ok: false, reason: 'no_pane' }
     if (err === 'self_poke_denied') return { ok: false, reason: 'self' }
+    // Remaining errors (incl. guard_failed) map to guard_failed so the retry
+    // scheduler picks them up; this preserves the pre-change fall-through.
     return { ok: false, reason: 'guard_failed' }
   }
 }

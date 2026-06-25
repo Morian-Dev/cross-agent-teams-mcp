@@ -3,6 +3,7 @@ import { fanoutAutoPoke } from '../src/mcp/auto-poke-fanout.js'
 import type { AutoPokeFn } from '../src/mcp/auto-poke-fanout.js'
 import { __peekRetryMap, clearAllRetries } from '../src/mcp/poke-retry.js'
 import { __setCapturePaneTail, __resetCapturePaneTail } from '../src/mcp/poke-guard.js'
+import { guardingPoke } from './helpers/guarding-poke.js'
 
 describe('fanoutAutoPoke: guard_failed recipients get retry scheduled', () => {
   beforeEach(() => { process.env.POKE_QUIET_MS = '50' })
@@ -15,7 +16,10 @@ describe('fanoutAutoPoke: guard_failed recipients get retry scheduled', () => {
   it('single recipient with guard_failed → retry scheduled in retry map; retryScheduledCount=1', async () => {
     __setCapturePaneTail(async (paneId: string) => `active-${paneId}-${Math.random()}`)
     const pokeCalls: Array<{ target: string }> = []
-    const poke: AutoPokeFn = async (a) => { pokeCalls.push({ target: a.targetAgentId }); return { ok: true } }
+    const poke: AutoPokeFn = guardingPoke(
+      async () => ({ ok: true }),
+      (a) => { pokeCalls.push({ target: a.targetAgentId }) }
+    )
 
     const r = await fanoutAutoPoke({
       team: 'default',
@@ -63,7 +67,7 @@ describe('fanoutAutoPoke: guard_failed recipients get retry scheduled', () => {
       if (paneId === '%3') return `active-${paneId}-${Math.random()}`
       return `idle-${paneId}`
     })
-    const poke: AutoPokeFn = async () => ({ ok: true })
+    const poke: AutoPokeFn = guardingPoke(async () => ({ ok: true }))
 
     const r = await fanoutAutoPoke({
       team: 'default',
@@ -90,7 +94,7 @@ describe('fanoutAutoPoke: guard_failed recipients get retry scheduled', () => {
 
   it('without retry ctx (legacy callers): retryScheduledCount=0, no map entries', async () => {
     __setCapturePaneTail(async (paneId: string) => `active-${paneId}-${Math.random()}`)
-    const poke: AutoPokeFn = async () => ({ ok: true })
+    const poke: AutoPokeFn = guardingPoke(async () => ({ ok: true }))
 
     const r = await fanoutAutoPoke({
       team: 'default',

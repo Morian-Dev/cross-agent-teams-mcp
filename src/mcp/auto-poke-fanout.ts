@@ -11,6 +11,7 @@ export interface AutoPokeArgs {
   targetAgentId: string
   paneId: string | null
   body: string
+  skipGuard?: boolean
 }
 
 export type AutoPokeFn = (args: AutoPokeArgs) => Promise<{ ok: true } | { ok: false; reason?: AutoPokeSkipReason }>
@@ -72,12 +73,6 @@ export async function fanoutAutoPoke(args: {
       if (!pokeFn) {
         return { agent_id: r.agent_id, poked: false, reason: 'tmux_unavailable' as AutoPokeSkipReason, paneId: r.tmux_pane_id }
       }
-      if (!nonTmuxTransport) {
-        const guard = await runQuietGuard(r.tmux_pane_id!)
-        if (guard === 'fail') {
-          return { agent_id: r.agent_id, poked: false, reason: 'guard_failed' as AutoPokeSkipReason, paneId: r.tmux_pane_id }
-        }
-      }
       const out = await pokeFn({
         team: args.team,
         fromAgentId: args.fromAgentId,
@@ -111,7 +106,7 @@ export async function fanoutAutoPoke(args: {
           sentAt: args.retry.sentAt,
           paneId: res.paneId,
           paneGuardFn: runQuietGuard,
-          pokeFn: async (pokeArgs) => { await pokeFn(pokeArgs) },
+          pokeFn: async (pokeArgs) => { await pokeFn({ ...pokeArgs, skipGuard: true }) },
           lookupAgentFn: args.retry.lookupAgentFn,
           updateStatusFn: args.retry.updateStatusFn
         })
