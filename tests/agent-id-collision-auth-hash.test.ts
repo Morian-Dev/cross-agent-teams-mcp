@@ -136,7 +136,8 @@ describe('agent_id_collision auth-hash semantics', () => {
 
     const res2 = await callRegister('127.0.0.1', port, agent2, sid, { model: 'opus-4-7', role: 'reviewer', name: 'alice' }, 'Bearer tokenY')
     expect(res2.status).toBe(409)
-    expect(JSON.parse(res2.body)).toEqual({ error: 'agent_id_collision' })
+    // Body must not be a bare {error} object that would poison a strict client.
+    expect(res2.body).toBe('')
 
     await app.close()
   })

@@ -1,4 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
+import { sendControlPlaneReject } from '../mcp/control-plane-reject.js'
 
 export function extractToken(req: FastifyRequest): string | undefined {
   const h = req.headers['authorization']
@@ -12,6 +13,6 @@ export function makeAuthHook(expected: string | undefined) {
     if (req.url.startsWith('/health')) return
     if (!expected) return
     const got = extractToken(req)
-    if (got !== expected) return reply.code(401).send({ error: 'invalid_token' })
+    if (got !== expected) return sendControlPlaneReject(reply, 401)
   }
 }

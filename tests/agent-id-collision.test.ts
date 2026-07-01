@@ -111,7 +111,8 @@ describe('agent_id collision (credential-based)', () => {
 
     const res2 = await callRegister('127.0.0.1', port, a2, sid, { model: 'm', role: 'r', name: 'alice' }, 'Bearer imposterToken')
     expect(res2.status).toBe(409)
-    expect(JSON.parse(res2.body)).toEqual({ error: 'agent_id_collision' })
+    // Body must not be a bare {error} object that would poison a strict client.
+    expect(res2.body).toBe('')
 
     await app.close()
   })

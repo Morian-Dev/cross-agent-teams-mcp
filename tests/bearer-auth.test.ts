@@ -39,7 +39,8 @@ describe('bearer auth', () => {
       payload: { jsonrpc: '2.0', id: 1, method: 'ping' }
     })
     expect(res.statusCode).toBe(401)
-    expect(res.json()).toEqual({ error: 'invalid_token' })
+    // Body must not be a bare {error} object that would poison a strict client.
+    expect(res.body).toBe('')
     await app.close()
   })
 

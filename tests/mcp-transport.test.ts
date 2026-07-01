@@ -78,15 +78,35 @@ describe('mcp transport', () => {
     await app.close()
   })
 
-  it('unknown session id returns 400 unknown_session', async () => {
+  it('unknown session id returns 404 with a non-poisoning body', async () => {
     const dir = tmp(); cleanups.push(dir)
     const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
     const url = `http://${host}:${port}/mcp`
     const res = await rpc(url, {
       jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'echo', arguments: { msg: 'hi' } }
     }, '00000000-0000-0000-0000-000000000000')
-    expect(res.status).toBe(400)
-    expect(await res.json()).toEqual({ error: 'unknown_session' })
+    expect(res.status).toBe(404)
+    expect(await res.text()).toBe('')
+    await app.close()
+  })
+
+  it('unknown session response body is NOT a bare {error} object (strict-client regression)', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const { app, port, host } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+    const url = `http://${host}:${port}/mcp`
+    const res = await rpc(url, {
+      jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'echo', arguments: { msg: 'hi' } }
+    }, '00000000-0000-0000-0000-000000000000')
+    expect(res.status).toBe(404)
+    const text = await res.text()
+    // Empty body OR a valid JSON-RPC 2.0 error object — never a bare {error:...}.
+    if (text.length > 0) {
+      const parsed = JSON.parse(text)
+      expect(parsed.jsonrpc).toBe('2.0')
+      expect(parsed.error).toBeTypeOf('object')
+    } else {
+      expect(text).toBe('')
+    }
     await app.close()
   })
 

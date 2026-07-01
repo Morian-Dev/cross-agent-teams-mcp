@@ -71,8 +71,8 @@ describe('register_agent cross-session takeover', () => {
       },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })
     })
-    expect(probe.status).toBe(400)
-    expect(await probe.json()).toEqual({ error: 'unknown_session' })
+    expect(probe.status).toBe(404)
+    expect(await probe.text()).toBe('')
 
     try { await a.t.close() } catch { /* already closed */ }
     await b.c.close()

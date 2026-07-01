@@ -43,8 +43,8 @@ describe('HTTP status codes for identity errors', () => {
         params: { name: 'register_agent', arguments: { agent_type: 'custom', name: 'tester-2', model: 'm', role: 'r' } }
       }, 'Bearer tokenY')
       expect(res.status).toBe(409)
-      const body = await res.json()
-      expect(body).toEqual({ error: 'agent_id_collision' })
+      // Body must not be a bare {error} object that would poison a strict client.
+      expect(await res.text()).toBe('')
     } finally {
       await c.close()
       await app.close()
@@ -70,8 +70,8 @@ describe('HTTP status codes for identity errors', () => {
         params: { name: 'send_message', arguments: { body: 'hello', from_agent_id: 'not-my-session' } }
       })
       expect(res.status).toBe(403)
-      const body = await res.json()
-      expect(body).toEqual({ error: 'identity_mismatch' })
+      // Body must not be a bare {error} object that would poison a strict client.
+      expect(await res.text()).toBe('')
     } finally {
       await c.close()
       await app.close()

@@ -470,7 +470,9 @@ Upsert fields: `role`, `model`, `last_seen_at` are overwritten by the incoming v
 
 ### Requirement: Within-session agent_id_collision via Authorization header
 
-When a `register_agent` tool call carries an `Authorization` request header, the daemon MUST bind that session id to the sha256 hash of the (trimmed) header value on first binding, and MUST return `{ error: 'agent_id_collision' }` with HTTP status 409 on any subsequent `register_agent` for the **same MCP session id** presenting a different `Authorization` value.
+When a `register_agent` tool call carries an `Authorization` request header, the daemon MUST bind that session id to the sha256 hash of the (trimmed) header value on first binding, and MUST reject any subsequent `register_agent` for the **same MCP session id** presenting a different `Authorization` value with HTTP status 409.
+
+The 409 rejection body MUST NOT be a bare `{ "error": <string> }` object. Strict MCP clients (e.g. codex's `rmcp`) deserialize any response body as a JSON-RPC message; a bare `{ "error": "agent_id_collision" }` object matches no JSON-RPC 2.0 variant and poisons the client transport. The body MUST be either an empty body or a well-formed JSON-RPC 2.0 error object `{ "jsonrpc": "2.0", "id": null, "error": { "code": <integer>, "message": <string> } }` that a strict client can deserialize without error. (This concerns only the transport-level HTTP rejection emitted before/around tool dispatch; tool-result-level `{ error: ... }` payloads returned inside a normal 200 JSON-RPC `result` are unaffected.)
 
 When a `register_agent` call targets a `(team, name)` pair that is currently bound to a DIFFERENT MCP session id (a "cross-session re-claim"), the daemon MUST treat the new call as a TAKEOVER of that identity rather than a collision:
 
@@ -489,7 +491,8 @@ Arriving on a different TCP socket (e.g. after keep-alive expiry) MUST NOT by it
 
 - **GIVEN** session `sess-A` was first bound to the sha256 of `Authorization: Bearer tokenX`
 - **WHEN** a request with `Mcp-Session-Id: sess-A` AND `Authorization: Bearer tokenY` calls `register_agent`
-- **THEN** response is HTTP 409 with body `{ error: 'agent_id_collision' }`
+- **THEN** response status is HTTP 409
+- **AND** the response body is NOT a bare `{ "error": "agent_id_collision" }` object (it is empty or a valid JSON-RPC 2.0 error object)
 
 #### Scenario: Cross-session same identity under different Authorization reuses agent_id
 
@@ -515,7 +518,9 @@ Arriving on a different TCP socket (e.g. after keep-alive expiry) MUST NOT by it
 
 ### Requirement: Mismatched agent_id for tool call returns 403
 
-If a tool call explicitly carries a `from_agent_id` parameter that does not match the caller's **currently registered agent_id** (held in the session's `agentIdHolder.current`), the daemon MUST return HTTP 403 with body `{ error: 'identity_mismatch' }`.
+If a tool call explicitly carries a `from_agent_id` parameter that does not match the caller's **currently registered agent_id** (held in the session's `agentIdHolder.current`), the daemon MUST reject the request with HTTP 403.
+
+The 403 rejection body MUST NOT be a bare `{ "error": <string> }` object. Strict MCP clients (e.g. codex's `rmcp`) deserialize any response body as a JSON-RPC message; a bare `{ "error": "identity_mismatch" }` object matches no JSON-RPC 2.0 variant and poisons the client transport. The body MUST be either an empty body or a well-formed JSON-RPC 2.0 error object `{ "jsonrpc": "2.0", "id": null, "error": { "code": <integer>, "message": <string> } }` that a strict client can deserialize without error.
 
 Before the session has called `register_agent` successfully, `agentIdHolder.current` is `undefined`; any tool call other than `register_agent` MUST also be rejected (unregistered session).
 
@@ -523,7 +528,8 @@ Before the session has called `register_agent` successfully, `agentIdHolder.curr
 
 - **GIVEN** session `sess-A` has registered and holds `agentIdHolder.current = 'X'`
 - **WHEN** a tool call on this session arrives with `from_agent_id='Y'` (not `'X'`)
-- **THEN** the daemon rejects with 403 `{ error: 'identity_mismatch' }`
+- **THEN** the daemon rejects with HTTP 403
+- **AND** the response body is NOT a bare `{ "error": "identity_mismatch" }` object (it is empty or a valid JSON-RPC 2.0 error object)
 
 #### Scenario: Unregistered session calling business tool is rejected
 

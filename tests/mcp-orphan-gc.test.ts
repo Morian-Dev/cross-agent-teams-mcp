@@ -70,8 +70,8 @@ async function expectUnknownSession(host: string, port: number, sid: string): Pr
     },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })
   })
-  expect(probe.status).toBe(400)
-  expect(await probe.json()).toEqual({ error: 'unknown_session' })
+  expect(probe.status).toBe(404)
+  expect(await probe.text()).toBe('')
 }
 
 describe('mcp-transport orphan-session GC', () => {
@@ -186,16 +186,39 @@ describe('mcp-transport orphan-session GC', () => {
     await h.close()
   }, 15000)
 
-  it('active orphan past max age is reaped despite recent activity', async () => {
+  it('active orphan past max age is NOT reaped (recent activity exempts it)', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const h = await bootHarness(join(dir, 'data.db'))
+    const { c, t } = await connectAndInit(h.host, h.port)
+
+    await c.callTool({ name: 'echo', arguments: { msg: 'hb' } })
+
+    // Past max-age (40 s) but within the idle window (60 s) of the echo above:
+    // recent client activity exempts the orphan from max-age reaping.
+    h.reapOrphanSessions(Date.now() + 45_000, {
+      idleMs: 60_000,
+      maxAgeMs: 40_000,
+      maxSessions: 100,
+    })
+    await new Promise(r => setTimeout(r, 100))
+
+    const echo = await c.callTool({ name: 'echo', arguments: { msg: 'survived' } }) as { content: Array<{ text: string }> }
+    expect(echo.content[0].text).toContain('survived')
+
+    await c.close()
+    await t.close()
+    await h.close()
+  }, 15000)
+
+  it('idle orphan past max age is reaped', async () => {
     const dir = tmp(); cleanups.push(dir)
     const h = await bootHarness(join(dir, 'data.db'))
     const { c, t } = await connectAndInit(h.host, h.port)
     const sid = t.sessionId!
 
-    await c.callTool({ name: 'echo', arguments: { msg: 'hb' } })
-
+    // No activity since initialize; virtual `now` is past both idle and max-age.
     h.reapOrphanSessions(Date.now() + 45_000, {
-      idleMs: 60_000,
+      idleMs: 40_000,
       maxAgeMs: 40_000,
       maxSessions: 100,
     })

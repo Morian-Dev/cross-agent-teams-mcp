@@ -4,6 +4,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { randomUUID, createHash } from 'node:crypto'
 import { echoSchema, echoHandler } from './echo.js'
+import { sendControlPlaneReject } from './control-plane-reject.js'
 import { registerBusinessTools, type AgentIdHolder } from './tools.js'
 import { RegisterAgentService } from './register-agent.js'
 import type { SseFanout, SseSink } from '../daemon/sse-fanout.js'
@@ -91,6 +92,10 @@ export function mountMcp(
     const idleMs = opts?.idleMs ?? 300_000
     return {
       idleMs,
+      // Accepted for backward-compat but inert: reapOrphanSessions no longer
+      // reaps by max-age (subsumed by the idle rule once active sessions are
+      // exempt). Retained so existing ORPHAN_GC_MAX_AGE_MS / orphanGcMaxAgeMs
+      // config does not error.
       maxAgeMs: opts?.maxAgeMs ?? idleMs,
       maxSessions: opts?.maxSessions ?? Number.POSITIVE_INFINITY,
     }
@@ -271,7 +276,7 @@ export function mountMcp(
       ?? { origin: 'local' as const, remote_addr: null }
     if (!session && !isInit) {
       log(`mcp unknown_session: route=POST method=${body?.method ?? 'unknown'} name=${body?.params?.name ?? 'none'} sid=${sid ?? 'none'} sessions=${sessions.size}`)
-      return reply.code(400).send({ error: 'unknown_session' })
+      return sendControlPlaneReject(reply, 404)
     }
 
     // register_agent presenting a different Authorization header than the one that
@@ -282,7 +287,7 @@ export function mountMcp(
       if (authHash !== null) {
         const owner = sessionOwners.get(session.sessionId)
         if (owner && owner !== authHash) {
-          return reply.code(409).send({ error: 'agent_id_collision' })
+          return sendControlPlaneReject(reply, 409)
         }
         if (!owner) sessionOwners.set(session.sessionId, authHash)
       }
@@ -295,7 +300,7 @@ export function mountMcp(
       if (typeof claimed === 'string') {
         const current = session.agentIdHolder.current
         if (current === undefined || claimed !== current) {
-          return reply.code(403).send({ error: 'identity_mismatch' })
+          return sendControlPlaneReject(reply, 403)
         }
       }
     }
@@ -329,7 +334,7 @@ export function mountMcp(
     const session = sid ? sessions.get(sid) : undefined
     if (!session) {
       log(`mcp unknown_session: route=GET sid=${sid ?? 'none'} sessions=${sessions.size}`)
-      return reply.code(400).send({ error: 'unknown_session' })
+      return sendControlPlaneReject(reply, 404)
     }
     session.lastActivityAt = Date.now()
     await session.transport.handleRequest(req.raw, reply.raw)
@@ -341,7 +346,7 @@ export function mountMcp(
     const session = sid ? sessions.get(sid) : undefined
     if (!session) {
       log(`mcp unknown_session: route=DELETE sid=${sid ?? 'none'} sessions=${sessions.size}`)
-      return reply.code(400).send({ error: 'unknown_session' })
+      return sendControlPlaneReject(reply, 404)
     }
     session.lastActivityAt = Date.now()
     await session.transport.handleRequest(req.raw, reply.raw)
@@ -354,13 +359,16 @@ export function mountMcp(
     for (const session of sessions.values()) {
       if (session.agentIdHolder.current !== undefined) continue
       const idleMs = now - session.lastActivityAt
-      const ageMs = now - session.createdAt
+      // GC is idle-based + cap-based. An orphan is reaped once it has had no
+      // client transport activity within idleMs; an actively-transacting but
+      // not-yet-registered client (e.g. a codex session mid-setup / just after
+      // compact) is thereby exempt from time-based reaping. `maxAgeMs` is still
+      // an accepted config knob (see normalizeGcOptions) for backward-compat but
+      // is now INERT: exempting active sessions leaves max-age with nothing the
+      // idle rule does not already catch, so it never fires independently. The
+      // orphan cap below still bounds active orphans over maxSessions.
       if (idleMs >= gc.idleMs) {
         closeOrphanSession(session, now, 'idle')
-        continue
-      }
-      if (ageMs >= gc.maxAgeMs) {
-        closeOrphanSession(session, now, 'max_age')
         continue
       }
       survivors.push(session)
