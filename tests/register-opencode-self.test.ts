@@ -115,6 +115,61 @@ describe('RegisterOpencodeSelfService', () => {
     expect(JSON.parse(row.delivery_payload).session_id).toBe('ses_b')
   })
 
+  it('auto-resolves session_id from nested time.updated (opencode 1.17.x format)', async () => {
+    const fetchMock = makeFetch([
+      healthHandler,
+      (url) =>
+        url.endsWith('/session')
+          ? {
+              status: 200,
+              body: JSON.stringify([
+                { id: 'ses_a', time: { created: 1000, updated: 1000 } },
+                { id: 'ses_b', time: { created: 1900, updated: 2000 } },
+                { id: 'ses_c', time: { created: 1400, updated: 1500 } },
+              ]),
+            }
+          : null,
+    ])
+    const { db, svc } = setup(fetchMock)
+
+    const result = await svc.register({
+      connection_id: 'conn-1',
+      name: 'oc-1',
+      base_url: BASE_URL,
+    })
+
+    expect(result).toMatchObject({ session_id: 'ses_b' })
+    const row = db.prepare(
+      'SELECT delivery_payload FROM agents WHERE team=? AND name=?'
+    ).get('default', 'oc-1') as { delivery_payload: string }
+    expect(JSON.parse(row.delivery_payload).session_id).toBe('ses_b')
+  })
+
+  it('prefers flat time_updated over nested time.updated when both present', async () => {
+    const fetchMock = makeFetch([
+      healthHandler,
+      (url) =>
+        url.endsWith('/session')
+          ? {
+              status: 200,
+              body: JSON.stringify([
+                { id: 'ses_flat', time_updated: 3000, time: { updated: 999 } },
+                { id: 'ses_nested', time_updated: 500, time: { updated: 9000 } },
+              ]),
+            }
+          : null,
+    ])
+    const { svc } = setup(fetchMock)
+
+    const result = await svc.register({
+      connection_id: 'conn-1',
+      name: 'oc-1',
+      base_url: BASE_URL,
+    })
+
+    expect(result).toMatchObject({ session_id: 'ses_flat' })
+  })
+
   it('returns no_active_session when session list is empty', async () => {
     const fetchMock = makeFetch([
       healthHandler,

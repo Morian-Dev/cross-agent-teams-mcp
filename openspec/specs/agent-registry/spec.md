@@ -1444,7 +1444,7 @@ The directive language SHALL use jussive form (DO NOT / CANNOT / MUST NOT) rathe
 The daemon SHALL handle `register_agent({agent_type:'opencode'})` as a dedicated branch in `executeRegister`, distinct from the `codex` and `claude-code` branches. The following normative rules apply:
 
 1. `base_url` MUST be a non-empty `http://` or `https://` URL. The Zod schema SHALL reject calls where `base_url` is missing, empty, or not parseable as an http/https URL, BEFORE any backend service runs and BEFORE any agents row is written or read.
-2. `session_id` is OPTIONAL. If the caller supplies it, it MUST be a non-empty string starting with `ses` (Zod rejection otherwise). If omitted, the daemon SHALL resolve it by `GET <base_url>/session` and selecting the entry with the largest `time_updated` value. If the session list is empty, return `{ error: 'no_active_session', detail: { base_url } }`.
+2. `session_id` is OPTIONAL. If the caller supplies it, it MUST be a non-empty string starting with `ses` (Zod rejection otherwise). If omitted, the daemon SHALL resolve it by `GET <base_url>/session` and selecting the entry with the largest "updated" timestamp value. The daemon MUST accept both field paths the opencode server has been observed to return: the legacy flat `time_updated` (number, top-level) and the structured `time.updated` (number, nested under a `time` object, as emitted by opencode 1.17.x+). When both paths are present on the same entry, the flat `time_updated` wins. Entries lacking BOTH paths are filtered out. If the resulting candidate list is empty, return `{ error: 'no_active_session', detail: { base_url } }`.
 3. The daemon SHALL `GET <base_url>/global/health` before session resolution; if it fails (network error or non-2xx), return `{ error: 'opencode_unreachable', detail: { base_url, cause: <message> } }` and do NOT write any agents row.
 4. `auth_token_ref` is OPTIONAL; when supplied it MUST be a trimmed non-empty string and is propagated verbatim into the persisted `delivery_payload`.
 5. On success, the daemon writes `delivery={kind:'opencode-server', session_id, base_url, auth_token_ref?}` on the caller's agents row via the `agent-delivery` persistence rules (`UPDATE agents SET delivery_kind='opencode-server', delivery_payload=...`).
@@ -1467,6 +1467,20 @@ This requirement supersedes the previously-deleted `register_opencode_self` tool
 - **WHEN** a caller invokes `register_agent({agent_type:'opencode', name:'oc-1', base_url:'http://127.0.0.1:18888'})`
 - **THEN** the agents row is written with `delivery_payload` containing `session_id='ses_b'`
 - **AND** the response `session_id` is `'ses_b'`
+
+#### Scenario: register_agent({agent_type:'opencode'}) auto-resolves from nested time.updated (opencode 1.17.x+ format)
+
+- **GIVEN** `GET http://127.0.0.1:18888/session` returns sessions `[{id:'ses_a', time:{created:1000, updated:1000}}, {id:'ses_b', time:{created:1900, updated:2000}}, {id:'ses_c', time:{created:1400, updated:1500}}]` (no top-level `time_updated`)
+- **WHEN** a caller invokes `register_agent({agent_type:'opencode', name:'oc-1', base_url:'http://127.0.0.1:18888'})`
+- **THEN** the agents row is written with `delivery_payload` containing `session_id='ses_b'`
+- **AND** the response `session_id` is `'ses_b'`
+
+#### Scenario: register_agent({agent_type:'opencode'}) treats entries missing both time paths as filtered out
+
+- **GIVEN** `GET http://127.0.0.1:18888/session` returns sessions `[{id:'ses_a'}, {id:'ses_b', time:{}}]` (no usable updated timestamp on any entry)
+- **WHEN** a caller invokes `register_agent({agent_type:'opencode', name:'oc-1', base_url:'http://127.0.0.1:18888'})`
+- **THEN** the response is `{ error: 'no_active_session', detail: { base_url: 'http://127.0.0.1:18888' } }`
+- **AND** no agents row is written
 
 #### Scenario: register_agent({agent_type:'opencode'}) returns no_active_session when session list is empty
 

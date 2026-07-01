@@ -43,11 +43,20 @@ export interface RegisterOpencodeSelfDeps {
 interface OpencodeSessionEntry {
   id?: unknown
   time_updated?: unknown
+  time?: { updated?: unknown } | undefined
 }
 
 function trimToUndefined(value: string | undefined): string | undefined {
   const trimmed = value?.trim()
   return trimmed ? trimmed : undefined
+}
+
+function updatedOf(entry: OpencodeSessionEntry | undefined | null): number | undefined {
+  if (!entry) return undefined
+  if (typeof entry.time_updated === 'number') return entry.time_updated
+  const nested = entry.time?.updated
+  if (typeof nested === 'number') return nested
+  return undefined
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -109,11 +118,10 @@ export class RegisterOpencodeSelfService {
       }
 
       const candidates = sessions
-        .filter((entry): entry is { id: string; time_updated: number } =>
-          typeof entry?.id === 'string' &&
-          typeof entry?.time_updated === 'number'
+        .filter((entry): entry is OpencodeSessionEntry & { id: string } =>
+          typeof entry?.id === 'string' && updatedOf(entry) !== undefined
         )
-        .sort((a, b) => b.time_updated - a.time_updated)
+        .sort((a, b) => (updatedOf(b) ?? 0) - (updatedOf(a) ?? 0))
 
       if (candidates.length === 0) {
         return {
