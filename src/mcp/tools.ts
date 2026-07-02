@@ -24,9 +24,8 @@ import { RegisterCodexSelfService } from './register-codex-self.js'
 import { RegisterOpencodeSelfService } from './register-opencode-self.js'
 import { resolveReconnect } from './reconnect.js'
 import { UnregisterSelfService } from './unregister-self.js'
-import { toPublicAgentRow } from './agent-public-row.js'
+import { listAgentsForTeam } from './list-agents.js'
 import { detectTmuxPane } from '../daemon/tmux-pane-detect.js'
-import { listTmuxPaneIds } from '../daemon/tmux-pane-list.js'
 import { bindRuntimeIdentity } from '../daemon/runtime-identity.js'
 import type { DetectAgentKind } from '../daemon/tmux-pane-detect.js'
 import type { AgentType } from '../lib/agent-type.js'
@@ -923,17 +922,7 @@ export function registerBusinessTools(
       const who = requireAgent()
       if (typeof who !== 'string') return toText(who)
       const row = agents.findById(who)!
-      const livePanes = await listTmuxPaneIds()
-      return run(() => ({
-        agents: agents
-          .list({
-            team: row.team,
-            excludeRoles: ['__channel_proxy__'],
-            localDevice: context?.localDevice ?? 'local',
-            livePanes,
-          })
-          .map(toPublicAgentRow),
-      }))
+      return run(() => listAgentsForTeam(db, row.team, context?.localDevice ?? 'local'))
     }
   )
 

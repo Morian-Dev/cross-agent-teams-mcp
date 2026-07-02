@@ -4,6 +4,7 @@ import { openDb } from '../storage/db.js'
 import { applySchema } from '../storage/schema.js'
 import { makeAuthHook } from './auth.js'
 import { mountMcp } from '../mcp/transport.js'
+import { mountRestApi } from './rest-api.js'
 import { runCleanup } from './cleanup.js'
 import { SseFanout } from './sse-fanout.js'
 import { ChannelWakeFanout } from './channel-wake-fanout.js'
@@ -74,6 +75,10 @@ export async function buildServer(opts: ServerOpts): Promise<FastifyInstance> {
     log: opts.mcpLog,
     orphanSessionLimit: orphanGcMaxSessions,
   })
+  // Loopback-only REST lifeboat. Mounted after the auth + origin-classification
+  // onRequest hooks (above) and alongside mountMcp. Receives the same
+  // channelWakeFanout used for send fan-out so /api/send pokes identically.
+  mountRestApi(app, db, { channelWakeFanout, context })
   app.get('/health', async () => ({
     ok: true,
     version,

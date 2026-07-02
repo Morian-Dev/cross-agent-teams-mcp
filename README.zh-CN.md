@@ -261,7 +261,29 @@ agent 会自动检测 `$OPENCODE_XATS_BASE_URL`, 选 `agent_type="opencode"`, �
 
 agent 连上 daemon 后, 你不需要去记工具名字.  直接用平时跟 agent 对话的语言告诉它你想干嘛, agent 会自己挑工具 — 下面列的是 *你说的话*, 不是底层 API.
 
-> 注意: 这些都要在 agent 会话内说.  不要用 `curl` 或其它外部 HTTP client 去注册或发消息 — 那会开一个不同的 MCP session, 消息送不到你这里.
+> 注意: 这些都要在 agent 会话内说.  不要用 `curl` 或其它外部 HTTP client 去手搓 MCP 协议注册或发消息 — 那会开一个不同的 MCP session, 更糟的是 `curl` 版 `register_agent` 会触发跨 session 的 **takeover**, 把你真正的 session 强制关掉.  如果你的 MCP client 传输已经挂了, 只是需要一个救生艇, 用下面这个 loopback-only 的 REST API — 它不碰你的 session.
+
+**救生艇: loopback REST API.**  当 agent 的 MCP client 传输挂掉时, 它连一个 xats 工具都调不了 — 甚至没法说自己卡住了.  正是为了这种情况, daemon 在同一个端口上以 `/api/` 前缀暴露了一个极小的 **loopback-only** REST 接口.  它按 `(team, name)` 解析 agent, 复用和 MCP 工具完全相同的 send / inbox / list-agents 逻辑, 并且**对 session 零副作用** (不 takeover, 哪怕你的 MCP session 还活着也安全).  远程调用一律 `403`; 如果 daemon 带 `--token` 启动, 像 `/mcp` 一样带上 token (`Authorization: Bearer <token>` 或 `?token=<token>`).
+
+```bash
+# 以一个已注册的 agent 身份发消息
+curl -s http://127.0.0.1:<port>/api/send \
+  -H 'content-type: application/json' \
+  -d '{"from":{"team":"default","name":"alice"},
+       "to":{"team":"default","name":"bob"},
+       "body":"我的 MCP client 卡死了 — 正在重启"}'
+
+# 读收件箱 — 省略 since_event_id 会推进你的已读游标,
+# 传了则是只读查看, 不推进游标
+curl -s 'http://127.0.0.1:<port>/api/inbox?team=default&name=alice'
+
+# 列出某个 team 的 agent
+curl -s 'http://127.0.0.1:<port>/api/agents?team=default'
+```
+
+REST 上刻意没有 `register_agent` — 创建或重新绑定身份正是这个接口要规避的 takeover 陷阱, 所以 agent 必须先 (通过 MCP) 注册过一次, 才能用这个救生艇.
+
+> 安全提示: "loopback-only" 也包含同机的浏览器, 所以给 daemon 带上 `--token` 才能挡住本机网页访问 `/api/`.  不带 token 时, 恶意本机网页最多能通过跨站 `GET /api/inbox` 推进某个 agent 的收件箱游标 — 它读不到任何响应 (CORS), 发不了消息, 也冒充不了别人; 唯一后果是那个 agent 可能漏掉未读消息.  这是一个有界的、经过权衡后接受的风险; 带 token 就能彻底消除.
 
 ### 注册当前会话
 

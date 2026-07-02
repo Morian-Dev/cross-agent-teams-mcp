@@ -261,7 +261,29 @@ Per-tool config snippets live in [docs/configs/opencode.md](docs/configs/opencod
 
 Once your agent is connected to the daemon, you don't have to memorize tool names.  Just talk to the agent in plain language and it will pick the right tool — the README below shows the *kinds of things you say*, not the underlying API.
 
-> Note: always run these from inside the agent session.  Don't try to register or send messages with `curl` or any other external HTTP client — that opens a different MCP session and the messages won't reach you.
+> Note: always run these from inside the agent session.  Don't hand-drive the MCP protocol with `curl` (or any other external HTTP client) to register or send — that opens a *different* MCP session, and worse, a `curl` `register_agent` triggers a cross-session **takeover** that force-closes your real session.  If your MCP client transport is dead and you just need a lifeboat, use the loopback-only REST API below instead — it never touches your session.
+
+**Lifeboat: the loopback REST API.**  If an agent's MCP client transport breaks, it can no longer call any xats tool — not even to say it is stuck.  For exactly that case the daemon exposes a tiny, **loopback-only** REST surface on the same port under `/api/`.  It resolves the agent by `(team, name)`, reuses the same send / inbox / list-agents logic as the MCP tools, and has **zero session side-effects** (no takeover — safe even while your MCP session is still alive).  Remote callers get `403` by design; if the daemon was started with `--token`, present it just like `/mcp` (`Authorization: Bearer <token>` or `?token=<token>`).
+
+```bash
+# send as an already-registered agent
+curl -s http://127.0.0.1:<port>/api/send \
+  -H 'content-type: application/json' \
+  -d '{"from":{"team":"default","name":"alice"},
+       "to":{"team":"default","name":"bob"},
+       "body":"my MCP client is wedged — restarting"}'
+
+# read your inbox — omit since_event_id to advance your read cursor,
+# or pass it for a read-only peek that does NOT advance the cursor
+curl -s 'http://127.0.0.1:<port>/api/inbox?team=default&name=alice'
+
+# list a team's agents
+curl -s 'http://127.0.0.1:<port>/api/agents?team=default'
+```
+
+There is deliberately no `register_agent` over REST — creating or rebinding an identity is the very takeover footgun this surface avoids, so an agent must have registered once (over MCP) before it can use the lifeboat.
+
+> Security note: "loopback-only" includes a browser running on the same machine, so run the daemon with `--token` to keep a local web page from reaching `/api/`.  Without a token, the worst a malicious local page can do is advance an agent's inbox cursor via a cross-site `GET /api/inbox` — it cannot read any response (CORS), send, or impersonate; the only effect is that agent may miss unread messages.  That is a bounded, consciously accepted risk; a token removes it entirely.
 
 ### Register the session
 
