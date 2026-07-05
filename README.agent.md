@@ -252,11 +252,33 @@ normal flow is safe.  Rotating the token later (delete the token file)
 requires `stop-xats` then `start-xats`, and **already-open shells** need a
 fresh `source ~/.zshrc` to pick up the new env.
 
-## 3. Per-project setup (once per project)
+## 3. Project-level vs global install (ask the user first)
+
+Before running any install command in this section, **ask the user which
+level they want**, then follow the matching branch:
+
+- **Project-level** — the config lives inside the project
+  (`opencode.json` / `.mcp.json`); only that project can use xats, and
+  **every new project needs the same command again**.
+- **Global** — configured once, all projects on the device covered, no
+  per-project action afterwards.
+
+What actually exists per agent (do not offer branches that do not work):
+
+| Agent | Project-level | Global |
+| --- | --- | --- |
+| codex | none — `--remote` ignores project MCP config (see 3.2) | the only mode; already done in section 2.2 |
+| opencode | `mcpsmgr add` into `opencode.json` (3.1) | manual merge into `~/.config/opencode/config.json` (3.1) |
+| claude-code | `mcpsmgr add` into `.mcp.json` (3.3) | tools-only via `claude mcp add --scope user`; push-wake channel stays project-level (3.3) |
+
+**Mandatory reminder**: whenever you finish a **project-level** install, tell
+the user explicitly that it only covers the current project — each new
+project needs the same one-liner again (repeat this in the section 8
+hand-off).  Global installs need no such reminder.
 
 ### 3.1 opencode
 
-In the project root:
+**Project-level (default)** — in the project root:
 
 ```bash
 npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a opencode -y
@@ -294,16 +316,24 @@ npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a opencode -y
 - `opencode.json` contains the plaintext token; make sure it is in
   `.gitignore` or the user accepts committing it.
 
-### 3.2 codex — no per-project step
+**Global** — if the user chose global, merge the same `mcp` block into
+`~/.config/opencode/config.json` by hand (opencode reads this device-wide
+config; see `docs/configs/opencode.md`).  mcpsmgr cannot do this for you:
+`--global` is not supported for opencode as of mcpsmgr 0.4.8 (codex only).
+A side benefit: the plaintext token stays in the home directory instead of a
+committable project file.
+
+### 3.2 codex — global only, no project-level option
 
 codex's xats MCP config is device-level (section 2.2); do **not** run mcpsmgr
-per project for it.  Note: old mcpsmgr (<= 0.4.7) without `--global` writes a
+per project for it, and do not offer the user a project-level branch — it
+does not exist.  Note: old mcpsmgr (<= 0.4.7) without `--global` writes a
 project-level `.codex/config.toml` which `--remote` mode ignores for MCP —
 useless.  Use the `--global` form from section 2.2 (device-level, once).
 
 ### 3.3 claude-code
 
-In the project root:
+**Project-level (default)** — in the project root:
 
 ```bash
 npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a claude-code
@@ -313,6 +343,12 @@ Writes two servers into the project `.mcp.json`: `cross-agent-teams` (http
 tool surface) and `cross-agent-teams-channel` (stdio channel).  Launch with
 `xats-claude` / `free-xats-claude` from section 2.1 (the `server:` suffix
 must equal the channel server key).
+
+**Global** — only the HTTP tool server can go device-wide
+(`claude mcp add --scope user ...`, see `docs/configs/claude-code.md`); the
+push-wake channel flow documented in this runbook is project-level.  Prefer
+project-level unless the user explicitly accepts mailbox-only (no push wake)
+for claude-code.
 
 ## 4. Daily launch and agent-side registration
 
@@ -410,6 +446,7 @@ user.  It must contain:
    including the very terminal the user is sitting in — do not have the new
    functions and env yet.  Run `source ~/.zshrc` there once, or open a new
    terminal.
-4. **The per-project reminder**: every new project needs the one-liner from
-   section 3 for opencode (`-a opencode -y`) / claude-code
-   (`-a claude-code`); codex needs nothing per project.
+4. **The per-project reminder** (only when project-level installs were
+   chosen in section 3): every new project needs the same one-liner again —
+   opencode (`-a opencode -y`) / claude-code (`-a claude-code`).  Skip this
+   point for global installs; codex never needs a per-project step.
