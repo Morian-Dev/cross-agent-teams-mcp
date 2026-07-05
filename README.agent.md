@@ -262,7 +262,11 @@ npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a opencode -y
   `cat ~/.config/xats/token`).
 - **Old versions (<= 0.4.7) silently skip the token under `-y` — do not use
   them.**
-- Manual fallback — edit the generated `opencode.json`:
+- If neither env nor `--var` supplied a token — the one remaining way this
+  happens is running `-y` from a shell opened before this setup (it lacks the
+  new env; see section 8) — the generated config carries no auth header and
+  gets 401 at runtime.  Re-run from a shell with the env, or hand-edit
+  `opencode.json`:
 
 ```json
 {
