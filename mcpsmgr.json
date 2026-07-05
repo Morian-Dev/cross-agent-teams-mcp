@@ -16,7 +16,7 @@
   },
   "envVars": [
     {
-      "name": "CROSS_AGENT_TEAMS_TOKEN",
+      "name": "CROSS_AGENT_TEAMS_MCP_TOKEN",
       "required": false,
       "secret": true,
       "description": "Optional bearer token. If set, daemon must be started with the same --token, and ALL agent headers must include it (no fallback to no-auth — any mismatch returns 401).",
@@ -29,7 +29,7 @@
       "description": "Start the daemon (long-running). Keep it alive in tmux/launchd/dedicated terminal. MUST be running before any agent client connects.",
       "command": "npx -y cross-agent-teams-mcp daemon --port ${port}",
       "notes": [
-        "If you set CROSS_AGENT_TEAMS_TOKEN, append: --token ${CROSS_AGENT_TEAMS_TOKEN}"
+        "If you set CROSS_AGENT_TEAMS_MCP_TOKEN, append: --token ${CROSS_AGENT_TEAMS_MCP_TOKEN}"
       ]
     }
   ],

@@ -173,6 +173,11 @@ alias xats-claude="claude --dangerously-load-development-channels server:cross-a
 
 ### 2.2 全局 ~/.codex/config.toml
 
+> mcpsmgr 下一版 (> 0.4.7, 待发布) 起, 本节可一条命令完成 (含顶级 rmcp 开关与
+> `bearer_token_env_var`, 需 `start-xats` 已跑过一次让 token 在 env 里):
+> `npx mcpsmgr add jtianling/cross-agent-teams-mcp -a codex --global -y`.
+> 发布前 npm 上的 mcpsmgr 仍是旧行为, 按下面手工配置.
+
 追加 (若文件已有 `experimental_use_rmcp_client` 或同名 server 块, 合并而不是
 重复追加):
 
@@ -219,10 +224,14 @@ nc -z 127.0.0.1 8799 && echo appserver-ok
 npx mcpsmgr add jtianling/cross-agent-teams-mcp -a opencode
 ```
 
-- 交互 prompt 会问 `CROSS_AGENT_TEAMS_TOKEN` (掩码输入), **必须输入** daemon 的
-  token, 直接回车 = 跳过 = 之后 401.  加 `-y` 会无条件跳过 token, 不要用.
-  token 值查看: `echo $CROSS_AGENT_TEAMS_MCP_TOKEN` (或 `cat
-  ~/.config/xats/token`), 需要 `start-xats` 至少运行过一次.
+- 交互 prompt 会问 `CROSS_AGENT_TEAMS_MCP_TOKEN` (掩码输入), **必须输入** daemon
+  的 token, 直接回车 = 跳过 = 之后 401.  token 值查看:
+  `echo $CROSS_AGENT_TEAMS_MCP_TOKEN` (或 `cat ~/.config/xats/token`), 需要
+  `start-xats` 至少运行过一次.
+- mcpsmgr 下一版 (> 0.4.7, 待发布) 起支持非交互: env 里已 export token 时 (本文
+  token 策略即如此) 直接加 `-y` 全自动, 也可显式
+  `--var CROSS_AGENT_TEAMS_MCP_TOKEN=<TOKEN>`.  **旧版的 `-y` 会无条件跳过
+  token, 不要用**.
 - mcpsmgr 不读环境变量, token 只能交互输入.  如果你 (agent) 无法做交互输入,
   先跑命令再直接编辑生成的 `opencode.json`, 补上 header:
 
@@ -243,10 +252,10 @@ npx mcpsmgr add jtianling/cross-agent-teams-mcp -a opencode
 
 ### 3.2 codex — 无需项目级步骤
 
-codex 的 xats MCP 配置在 2.2 节的全局文件里, 项目里**不需要**跑 mcpsmgr.
-当前 `mcpsmgr add ... -a codex` 只会写项目级 `.codex/config.toml`, 而它在
-`--remote` 模式下对 MCP 不生效, 且不含顶级 `experimental_use_rmcp_client` —
-写了也没用 (已向 mcpsmgr 提需求, 见第 7 节).
+codex 的 xats MCP 配置是设备级的 (2.2 节), 项目里**不需要**跑 mcpsmgr.
+注意: 旧版 (<= 0.4.7) `mcpsmgr add ... -a codex` 不带 `--global` 时只写项目级
+`.codex/config.toml`, 它在 `--remote` 模式下对 MCP 不生效, 写了也没用; 新版请
+用 2.2 节的 `--global` 形式 (设备级一次).
 
 ### 3.3 claude-code
 
@@ -304,16 +313,21 @@ npx mcpsmgr add jtianling/cross-agent-teams-mcp -a claude-code
 | opencode 收不到 push 唤醒 | 没用 launcher 启动 (缺 `OPENCODE_XATS_BASE_URL`), 或注册时没传 `base_url` |
 | daemon 重启后工具全部 `unknown_session` / `unknown_agent` | 重连 MCP server 后 `reconnect(ui_pid)` 或 `register_agent` 恢复身份 |
 
-## 7. 当前已知限制 (依赖 mcpsmgr 侧修改)
+## 7. mcpsmgr 版本 gate (已实现, 待发版)
 
-以下已作为 feature request 提给 mcps-manager 维护方, 修复前按本文手工步骤做:
+以下 4 项已在 mcps-manager 主线实现 (2026-07-05), 但**尚未发布到 npm**
+(npm 上 <= 0.4.7 仍是旧行为).  新版发布前按本文手工步骤做, 发布后可简化:
 
-1. codex adapter 只写项目级 `.codex/config.toml`, 无全局模式 → 本文 2.2 节手工
-   配全局.
-2. codex adapter 不写顶级 `experimental_use_rmcp_client = true` → 同上手工加.
-3. codex token 落成明文 `http_headers` 而非 `bearer_token_env_var` → 全局手工配
-   后不受影响.
-4. `mcpsmgr add` 的 token 只能交互输入, 无法用 flag/env 非交互提供 → agent 自动
-   化时按 3.1 节先跑命令再补文件.
+1. `add -a codex` 自动在目标 config.toml 顶级补
+   `experimental_use_rmcp_client = true` (新版 codex 已默认 rmcp client, 此键为
+   旧版兼容性写入, 已存在则不动).
+2. codex token 落成 `bearer_token_env_var = "CROSS_AGENT_TEAMS_MCP_TOKEN"` (名字
+   取自 xats manifest `envVars[].name`), 不再写明文 Authorization; token 缺失时
+   空 `http_headers` / `headers` 整块省略 (opencode 有 token 时仍是明文 Bearer,
+   其配置格式无 env 引用机制).
+3. `--global` (仅 codex 支持): 写全局 `~/.codex/config.toml`, 替代 2.2 节手工
+   步骤; 其他 agent 传 `--global` 会报错退出.
+4. 非交互 token: 可重复 `--var NAME=VALUE`, 取值优先级 --var > process.env >
+   交互 prompt; env 有值时 `-y` 不再静默跳过.
 
-上述任一项在 mcpsmgr 发布修复后, 应同步简化本文对应小节.
+新版版本号确定后, 更新本节与 2.2 / 3.1 / 3.2 的 gate 标注.
