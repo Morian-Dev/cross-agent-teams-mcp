@@ -16,6 +16,22 @@ Claude Code 自己也有 agent teams 功能, cross-agent-teams 表面上和它�
 
 ## 快速开始
 
+### 推荐: 让 code agent 替你完成配置
+
+完整的设备配置 (zshrc 启动函数, daemon token, codex/opencode 配置) 已写成一份
+agent 可读的操作手册: [README.agent.md](README.agent.md).  把下面这段粘贴给任何
+能访问 URL、能执行 shell 命令的 code agent 即可:
+
+```
+读取 https://raw.githubusercontent.com/jtianling/cross-agent-teams-mcp/HEAD/README.agent.md
+并按其内容在本设备上配置好 xats.
+```
+
+agent 会与你确认设备标签和 `~/.zshrc` 改动, 首次 `start-xats` 时自动生成 daemon
+token, 并配好 `free-xats-codex` / `xats-codex` / `free-xats-opencode` /
+`xats-opencode` 启动函数以及 `start-xats` / `stop-xats`.  想手工操作的话, 继续
+往下看.
+
 ### Claude Code
 
 ```bash

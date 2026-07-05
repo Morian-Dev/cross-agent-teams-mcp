@@ -16,6 +16,23 @@ Claude Code already ships its own agent teams feature.  cross-agent-teams overla
 
 ## Quick start
 
+### Recommended: let a code agent set it up
+
+The whole device setup (zshrc launchers, daemon token, codex/opencode config) is
+written as an agent-readable runbook: [README.agent.md](README.agent.md).  Paste
+this to any code agent that can fetch URLs and run shell commands:
+
+```
+Read https://raw.githubusercontent.com/jtianling/cross-agent-teams-mcp/HEAD/README.agent.md
+and follow it to set up xats on this device.
+```
+
+The agent will confirm a device label and the `~/.zshrc` changes with you,
+auto-generate the daemon token on first `start-xats`, and wire up the
+`free-xats-codex` / `xats-codex` / `free-xats-opencode` / `xats-opencode`
+launchers plus `start-xats` / `stop-xats`.  Prefer doing it by hand?  Continue
+below.
+
 ### Claude Code
 
 ```bash
