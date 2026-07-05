@@ -1,63 +1,80 @@
-# README.agent.md — xats 设备配置指南 (写给 code agent)
+# README.agent.md — xats device setup guide (for code agents)
 
-> 阅读对象: 在一台新设备上负责配置 xats (cross-agent-teams-mcp) 启动环境的 code agent.
-> 你 (agent) 按本文顺序执行, 完成后这台设备就能用统一的 shell 命令启动带 xats
-> 通信能力的 codex / opencode / claude-code agent.
+> Audience: a code agent configuring the xats (cross-agent-teams-mcp) launch
+> environment on a new device.  Follow this document in order; when done, the
+> device can launch codex / opencode / claude-code agents with xats
+> communication wired up, using a single set of shell commands.
 
-配置完成后的目标 UX:
+Target UX after setup:
 
-1. 设备级常驻服务用 `start-xats` / `stop-xats` 管理 (daemon + codex app-server);
-2. 每个项目里最多跑一次 `npx mcpsmgr add jtianling/cross-agent-teams-mcp -a <agent>`
-   完成项目级配置 (目前只有 opencode / claude-code 需要, codex 不需要, 见第 3 节);
-3. 直接运行 `free-xats-codex` / `xats-codex` / `free-xats-opencode` / `xats-opencode`
-   即可启动对应 agent, xats 的 transport poke 等能力开箱即用.
-   `free-` 前缀 = yolo 模式 (跳过审批/沙箱), 无前缀 = 正常审批模式.
+1. Device-resident services are managed with `start-xats` / `stop-xats`
+   (daemon + codex app-server);
+2. Each project needs at most one
+   `npx mcpsmgr add jtianling/cross-agent-teams-mcp -a <agent>` run
+   (currently only opencode / claude-code need it; codex does not, see
+   section 3);
+3. Running `free-xats-codex` / `xats-codex` / `free-xats-opencode` /
+   `xats-opencode` launches the corresponding agent with xats transport poke
+   etc. working out of the box.
+   `free-` prefix = yolo mode (skip approvals/sandbox), no prefix = normal
+   approval mode.
 
-## 0. 开始前: 需要向用户确认的 3 件事
+## 0. Before you start: three things to align with the user
 
-1. **daemon token**: daemon 用 `--token` 启动后, 所有 agent 侧配置必须带同一个
-   token, 任何不匹配都会 401.  token **不需要向用户索取**: 首次运行 `start-xats`
-   时自动生成, 格式 `<hostname>-<6 位随机数字>`, **每设备唯一, 不要复用其他设备
-   的值**.  生成后会打印告知用户, 并持久化到 `~/.config/xats/token`, 之后每个新
-   shell 由 zshrc 自动 export.  本文出现 `<TOKEN>` 的地方, 都指
-   `$CROSS_AGENT_TEAMS_MCP_TOKEN` 的当前值.  daemon 监听 `0.0.0.0` (跨设备互通
-   需要), 所以必须有 token.
-2. **device 标签**: 每台设备一个短且唯一的标签 (如 `jt`, `jtianling-mac-mini`),
-   跨设备寻址时用作 `name:device` 后缀.  问用户定一个.
-3. **修改 ~/.zshrc 的同意**: 本仓库约定永远不静默修改用户 shell 配置.  把第 2.1
-   节的片段展示给用户, 得到同意后再写入.
+1. **daemon token**: once the daemon runs with `--token`, every agent-side
+   config must carry the same token; any mismatch is a 401.  You do **not**
+   need to ask the user for a token: the first `start-xats` run auto-generates
+   one, format `<hostname>-<6 random digits>`, **unique per device — never
+   reuse another device's value**.  It is printed for the user and persisted
+   to `~/.config/xats/token`; every new shell exports it via zshrc.  Wherever
+   this document says `<TOKEN>`, it means the current value of
+   `$CROSS_AGENT_TEAMS_MCP_TOKEN`.  The daemon listens on `0.0.0.0`
+   (required for cross-device teams), so a token is mandatory.
+2. **device label**: one short, unique label per device (e.g. `jt`,
+   `jtianling-mac-mini`), used as the `name:device` suffix for cross-device
+   addressing.  Ask the user to pick one.
+3. **consent to edit ~/.zshrc**: this repo never silently modifies the user's
+   shell config.  Show the section 2.1 snippet to the user and write it only
+   after approval.
 
-## 1. 架构速览 (为什么是这些步骤)
+## 1. Architecture in one minute (why these steps)
 
-- **daemon** (port 9100): 所有 agent 通信的中枢, 常驻进程, 每设备一个.
-- **codex**: TUI 以 `--remote` 连接常驻的 codex app-server (port 8799).
-  关键约束: **`--remote` 模式下 MCP 由 app-server 的 CODEX_HOME 加载**, 通常是
-  全局 `~/.codex/config.toml`.  所以 codex 的 xats MCP 配置是**设备级**的,
-  项目级 `.codex/config.toml` 在 `--remote` 下对 MCP 不生效.
-- **opencode**: 每个实例自带 HTTP server.  launcher 分配随机 loopback 端口并导出
-  `OPENCODE_XATS_BASE_URL`, daemon 通过它做 push 唤醒 (prompt_async), 不依赖 tmux.
-  MCP 配置是**项目级** `opencode.json`, 由 mcpsmgr 写入.
-- **claude-code**: MCP + channel server 配置是项目级 `.mcp.json`, 由 mcpsmgr 写入;
-  启动时需要 `--dangerously-load-development-channels` 挂 channel.
-- **pre-register-codex-pane**: codex launcher 在 tmux 里启动前, 先向 daemon 预告
-  "pane X 即将运行 agent UUID Y", 之后 codex 内 `register_agent` 时 daemon 自动
-  绑定 tmux pane, 无需手动 `bind_runtime_identity`.
+- **daemon** (port 9100): the hub for all agent communication; resident
+  process, one per device.
+- **codex**: the TUI connects with `--remote` to a resident codex app-server
+  (port 8799).  Key constraint: **in `--remote` mode, MCP servers are loaded
+  by the app-server's CODEX_HOME**, usually the global
+  `~/.codex/config.toml`.  So codex's xats MCP config is **device-level**;
+  a project-level `.codex/config.toml` does not affect MCP under `--remote`.
+- **opencode**: every instance ships its own HTTP server.  The launcher
+  allocates a random loopback port and exports `OPENCODE_XATS_BASE_URL`;
+  the daemon push-wakes it through `prompt_async` — no tmux dependency.
+  Its MCP config is **project-level** `opencode.json`, written by mcpsmgr.
+- **claude-code**: MCP + channel server config is project-level `.mcp.json`,
+  written by mcpsmgr; launch with `--dangerously-load-development-channels`
+  to attach the channel.
+- **pre-register-codex-pane**: before exec'ing codex, the launcher announces
+  "pane X is about to run agent UUID Y" to the daemon, so a later
+  `register_agent` from inside codex auto-binds the tmux pane — no manual
+  `bind_runtime_identity` needed.
 
-## 2. 设备级一次性配置
+## 2. Device-level one-time setup
 
-### 2.1 ~/.zshrc 片段
+### 2.1 ~/.zshrc snippet
 
-先检查旧版本: `grep -n 'xats' ~/.zshrc`.  如果已有 `free-xats-codex` /
-`free-xats-opencode` / `start-xats` / `XATS_TOKEN` 等旧定义, 与用户确认后**删除或
-注释掉旧块**再写入下面的片段, 避免新旧定义共存 (zsh 后定义覆盖先定义, 但残留
-alias 会干扰 function, 残留旧变量名会误导排查).
+Check for old versions first: `grep -n 'xats' ~/.zshrc`.  If old definitions
+of `free-xats-codex` / `free-xats-opencode` / `start-xats` / `XATS_TOKEN`
+etc. exist, confirm with the user and **remove or comment out the old block**
+before writing the snippet below (zsh lets later definitions win, but stale
+aliases interfere with functions and stale variable names mislead debugging).
 
-把整段追加到 `~/.zshrc` (替换 `<TOKEN>` 和 `<DEVICE>`):
+Append the whole block to `~/.zshrc` (replace `<DEVICE>`):
 
 ```zsh
 # ===== xats (cross-agent-teams-mcp) =====
-# 唯一 token 变量: daemon --token 和 codex bearer_token_env_var 都引用它.
-# 值由首次 start-xats 自动生成并持久化, 不要手写.
+# Single token variable: referenced by both daemon --token and codex
+# bearer_token_env_var.  Auto-generated and persisted by the first start-xats
+# run; do not hand-write the value.
 XATS_TOKEN_FILE="$HOME/.config/xats/token"
 [[ -f "$XATS_TOKEN_FILE" ]] && export CROSS_AGENT_TEAMS_MCP_TOKEN="$(<"$XATS_TOKEN_FILE")"
 XATS_DEVICE="<DEVICE>"
@@ -159,31 +176,36 @@ alias xats-claude="claude --dangerously-load-development-channels server:cross-a
 # ===== end xats =====
 ```
 
-要点 (改动前先理解):
+Key points (understand before changing anything):
 
-- `_xats-codex` 里 `-C "$PWD"` 必须保留: `codex --remote` 默认用 app-server 的
-  cwd, 不带它的话 session 会落到 app-server 启动时的目录.
-- `-c xats.agent_id="\"$uuid\""` 让 uuid 出现在 codex argv 里, daemon 靠它反向
-  校验 pre-register 的 pane, 不能省.
-- `_xats-opencode` 用 `exec`: opencode 退出后该 shell/pane 一并结束, 这是预期
-  行为 (launcher 即会话).
-- pre-register 失败或不在 tmux 内都不阻塞启动, 只是退化为无 pane 自动绑定.
-- `_xats-codex` 发现 app-server 未运行时会自动拉起并 disown (`&!`).  此时当前
-  shell 已 export 过 token env, 不存在 env 固化问题; 拉起失败才报错退出.
+- `-C "$PWD"` in `_xats-codex` must stay: `codex --remote` defaults to the
+  app-server's cwd; without it the session lands in whatever directory the
+  app-server was started from.
+- `-c xats.agent_id="\"$uuid\""` puts the uuid into codex's argv; the daemon
+  verifies the pre-registered pane against it.  Do not remove.
+- `_xats-opencode` uses `exec`: the shell/pane ends together with opencode.
+  This is intended behavior (the launcher is the session).
+- pre-register failing, or not being inside tmux, never blocks the launch —
+  it only degrades to "no automatic pane binding".
+- `_xats-codex` auto-starts the app-server (disowned via `&!`) when it is not
+  running.  The current shell has the token env exported already, so there is
+  no env-freeze problem; it errors out only if the startup itself fails.
 
-### 2.2 全局 ~/.codex/config.toml
+### 2.2 Global ~/.codex/config.toml
 
-推荐用 mcpsmgr (>= 0.4.8, 见第 7 节) 完成本节, 注意三步顺序:
+Recommended: use mcpsmgr (>= 0.4.8, see section 7).  Mind the three-step
+order:
 
 ```bash
-source ~/.zshrc && start-xats   # 首次运行: 生成 token 并放进当前 env (见 2.3)
+source ~/.zshrc && start-xats   # first run: generates the token into env (see 2.3)
 npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a codex --global -y
-stop-xats && start-xats         # 重启, 让 app-server 读到新写入的 MCP 配置
+stop-xats && start-xats         # restart so the app-server loads the new MCP config
 ```
 
-它写入的内容等价于下面的手工配置.  无法用 mcpsmgr 或需要手工合并时自己追加
-(若文件已有 `experimental_use_rmcp_client` 或同名 server 块, 合并而不是重复
-追加):
+What it writes is equivalent to the manual config below.  If mcpsmgr is not
+usable, or you need to merge by hand, append yourself (if the file already
+has `experimental_use_rmcp_client` or a same-named server block, merge rather
+than duplicating):
 
 ```toml
 experimental_use_rmcp_client = true
@@ -194,50 +216,53 @@ url = "http://127.0.0.1:9100/mcp"
 bearer_token_env_var = "CROSS_AGENT_TEAMS_MCP_TOKEN"
 ```
 
-- `experimental_use_rmcp_client = true` 必须在**顶级**, 缺了 codex 根本不加载
-  streamable-http 类型的 MCP.
-- 不要用旧写法 `[mcp_servers.X.headers]`: codex 0.130+ 不认 (静默忽略), 结果是
-  daemon 401.  `bearer_token_env_var` 引用的环境变量名必须与 2.1 节 export 的
-  一致.
-- 版本要求: codex 0.124.0+ (调 MCP 工具时导出 `CODEX_THREAD_ID`, 注册必需).
+- `experimental_use_rmcp_client = true` must be **top-level**; without it,
+  codex does not load streamable-http MCP servers at all.
+- Do not use the legacy `[mcp_servers.X.headers]` form: codex 0.130+ silently
+  ignores it and the daemon returns 401.  The env var name referenced by
+  `bearer_token_env_var` must match the one exported in section 2.1.
+- Version requirement: codex 0.124.0+ (exports `CODEX_THREAD_ID` to MCP tool
+  processes, required for registration).
 
-### 2.3 启动常驻服务并验证
+### 2.3 Start resident services and verify
 
 ```bash
 source ~/.zshrc
 start-xats
-# 稍等几秒后验证:
+# wait a few seconds, then verify:
 nc -z 127.0.0.1 9100 && echo daemon-ok
 nc -z 127.0.0.1 8799 && echo appserver-ok
 ```
 
-首次运行会打印自动生成的 token, **把它转告用户留存**.
+The first run prints the auto-generated token — **relay it to the user**.
 
-注意: app-server 的环境变量在启动那一刻固化.  token 的生成与 export 在
-`start-xats` 内部先于两个服务启动, 天然满足.  之后换 token (删 token 文件) 要
-`stop-xats` 再 `start-xats`, 且**其他已打开的 shell** 需要重新 `source ~/.zshrc`
-才能拿到新 env.
+Note: an app-server's environment is frozen at launch time.  Token generation
+and export happen inside `start-xats` before either service starts, so the
+normal flow is safe.  Rotating the token later (delete the token file)
+requires `stop-xats` then `start-xats`, and **already-open shells** need a
+fresh `source ~/.zshrc` to pick up the new env.
 
-## 3. 项目级配置 (每项目一次)
+## 3. Per-project setup (once per project)
 
 ### 3.1 opencode
 
-在项目根目录:
+In the project root:
 
 ```bash
 npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a opencode -y
 ```
 
-- mcpsmgr >= 0.4.8 的 `-y` 非交互: token 从 env 的
-  `CROSS_AGENT_TEAMS_MCP_TOKEN` 自动读取 (本文 token 策略下已存在, 需
-  `start-xats` 至少运行过一次), 也可显式
-  `--var CROSS_AGENT_TEAMS_MCP_TOKEN=<TOKEN>`.
-- 不加 `-y` 时交互 prompt 会问 `CROSS_AGENT_TEAMS_MCP_TOKEN` (掩码输入), 必须
-  输入 daemon 的 token, 直接回车 = 跳过 = 之后 401.  token 值查看:
-  `echo $CROSS_AGENT_TEAMS_MCP_TOKEN` (或 `cat ~/.config/xats/token`).
-- **旧版 (<= 0.4.7) 的 `-y` 会无条件跳过 token, 不要用旧版**.
-- mcpsmgr 不读环境变量, token 只能交互输入.  如果你 (agent) 无法做交互输入,
-  先跑命令再直接编辑生成的 `opencode.json`, 补上 header:
+- With mcpsmgr >= 0.4.8, `-y` is non-interactive: the token is read from the
+  env var `CROSS_AGENT_TEAMS_MCP_TOKEN` (present under this document's token
+  policy; `start-xats` must have run at least once), or pass it explicitly
+  with `--var CROSS_AGENT_TEAMS_MCP_TOKEN=<TOKEN>`.
+- Without `-y`, the interactive prompt asks for
+  `CROSS_AGENT_TEAMS_MCP_TOKEN` (masked input); pressing enter = skip = 401
+  later.  To view the token: `echo $CROSS_AGENT_TEAMS_MCP_TOKEN` (or
+  `cat ~/.config/xats/token`).
+- **Old versions (<= 0.4.7) silently skip the token under `-y` — do not use
+  them.**
+- Manual fallback — edit the generated `opencode.json`:
 
 ```json
 {
@@ -252,87 +277,123 @@ npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a opencode -y
 }
 ```
 
-- `opencode.json` 含明文 token, 确认它在 `.gitignore` 里或用户接受入库.
+- `opencode.json` contains the plaintext token; make sure it is in
+  `.gitignore` or the user accepts committing it.
 
-### 3.2 codex — 无需项目级步骤
+### 3.2 codex — no per-project step
 
-codex 的 xats MCP 配置是设备级的 (2.2 节), 项目里**不需要**跑 mcpsmgr.
-注意: 旧版 (<= 0.4.7) `mcpsmgr add ... -a codex` 不带 `--global` 时只写项目级
-`.codex/config.toml`, 它在 `--remote` 模式下对 MCP 不生效, 写了也没用; 新版请
-用 2.2 节的 `--global` 形式 (设备级一次).
+codex's xats MCP config is device-level (section 2.2); do **not** run mcpsmgr
+per project for it.  Note: old mcpsmgr (<= 0.4.7) without `--global` writes a
+project-level `.codex/config.toml` which `--remote` mode ignores for MCP —
+useless.  Use the `--global` form from section 2.2 (device-level, once).
 
 ### 3.3 claude-code
 
-在项目根目录:
+In the project root:
 
 ```bash
-npx mcpsmgr add jtianling/cross-agent-teams-mcp -a claude-code
+npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a claude-code
 ```
 
-写入项目 `.mcp.json` 两个 server: `cross-agent-teams` (http 工具面) 和
-`cross-agent-teams-channel` (stdio channel).  之后用 2.1 节的 `xats-claude` /
-`free-xats-claude` 启动 (`server:` 后缀名必须与 channel server 的 key 一致).
+Writes two servers into the project `.mcp.json`: `cross-agent-teams` (http
+tool surface) and `cross-agent-teams-channel` (stdio channel).  Launch with
+`xats-claude` / `free-xats-claude` from section 2.1 (the `server:` suffix
+must equal the channel server key).
 
-## 4. 日常启动与 agent 侧注册
+## 4. Daily launch and agent-side registration
 
-| 命令 | 效果 |
+| Command | Effect |
 | --- | --- |
-| `free-xats-codex` | yolo codex, 连 app-server, tmux pane 预注册 |
-| `xats-codex` | 同上, 正常审批模式 |
-| `free-xats-opencode` | yolo opencode, 随机端口 + push 唤醒 |
-| `xats-opencode` | 同上, 正常审批模式 |
-| `free-xats-claude` / `xats-claude` | claude-code, 挂 xats channel |
+| `free-xats-codex` | yolo codex, connects to app-server, tmux pane pre-registered |
+| `xats-codex` | same, normal approval mode |
+| `free-xats-opencode` | yolo opencode, random port + push wake |
+| `xats-opencode` | same, normal approval mode |
+| `free-xats-claude` / `xats-claude` | claude-code with the xats channel attached |
 
-额外参数原样透传, 如 `xats-opencode --model glm-5.2`.
+Extra arguments pass through, e.g. `xats-opencode --model glm-5.2`.
 
-启动后, agent 会话内调 `register_agent` 注册, 关键参数按 agent 类型:
+After launch, the agent session registers itself via `register_agent`; key
+parameters per agent type:
 
-- **codex**: `agent_type="codex"`, `thread_id=$CODEX_THREAD_ID` (必填),
-  **不要传 `ui_pid`** (会关掉 pre-register 的 pane 自动绑定路径).
-- **opencode**: `agent_type="opencode"`, `base_url=$OPENCODE_XATS_BASE_URL`,
-  省略 `session_id` (daemon 自动解析).
+- **codex**: `agent_type="codex"`, `thread_id=$CODEX_THREAD_ID` (required),
+  **do not pass `ui_pid`** (it disables the pre-register pane auto-bind
+  path).
+- **opencode**: `agent_type="opencode"`,
+  `base_url=$OPENCODE_XATS_BASE_URL`, omit `session_id` (the daemon
+  auto-resolves it).
 - **claude-code**: `agent_type="claude-code"`, `ui_pid=$PPID`.
-- 通用: 不显式指定 `team` 时传 `project_dir=$PWD`, daemon 用目录名派生 team.
+- Common: when no explicit `team`, pass `project_dir=$PWD`; the daemon
+  derives the team from the directory basename.
 
-## 5. 验证清单
+## 5. Verification checklist
 
-1. `nc -z 127.0.0.1 9100` 和 `nc -z 127.0.0.1 8799` 都通.
-2. 在 tmux 里 `free-xats-codex` 启动, 会话内 `register_agent` 成功且响应**不带
-   `hint`** (带 hint = pane 自动绑定没成功).
-3. `free-xats-opencode` 启动, 会话内 `printenv OPENCODE_XATS_BASE_URL` 非空,
-   `register_agent` 返回 `agent_id`.
-4. 从另一个已注册 agent `send_message` 给新 agent, 返回 `poked: true`, 且新
-   agent 被唤醒并能 `get_inbox` 读到.
+1. `nc -z 127.0.0.1 9100` and `nc -z 127.0.0.1 8799` both succeed.
+2. Launch `free-xats-codex` inside tmux; `register_agent` from within the
+   session succeeds and the response carries **no `hint`** (a hint means pane
+   auto-binding did not converge).
+3. Launch `free-xats-opencode`; inside the session
+   `printenv OPENCODE_XATS_BASE_URL` is non-empty and `register_agent`
+   returns an `agent_id`.
+4. From another registered agent, `send_message` to the new agent returns
+   `poked: true`, and the new agent wakes up and reads it via `get_inbox`.
 
-## 6. 常见坑排查
+## 6. Troubleshooting
 
-| 症状 | 原因与处理 |
+| Symptom | Cause and fix |
 | --- | --- |
-| `[xats] failed to start codex app-server` | codex CLI 未安装/不在 PATH, 或 8799 被其他进程占用.  手动跑 `codex app-server --listen ws://127.0.0.1:8799` 看原始报错 |
-| `Deserialize error: data did not match any variant of untagged enum JsonRpcMessage` | 实为 daemon 401: app-server 启动时看不到 token env.  在 export 过 token 的 shell 里重启 (`stop-xats` + `start-xats`) |
-| codex 里看不到 xats 的 MCP 工具 | MCP 配置没在 app-server 读的 CODEX_HOME (全局 `~/.codex/config.toml`), 或缺顶级 `experimental_use_rmcp_client = true` |
-| 配置了 token 还是 401 | 用了旧写法 `[mcp_servers.X.headers]` (0.130+ 静默忽略); 或项目级 `.codex/config.toml` 残留盖掉了全局鉴权.  审计: `find ~ -path '*/.codex/config.toml' -print` |
-| codex session 目录不对 | launcher 丢了 `-C "$PWD"` |
-| `register_agent` 响应带 `hint` | 不在 tmux 内, 或 pre-register 失败/过期 (120s TTL).  功能可用, 只是无 pane 自动绑定; 需要时 `bind_runtime_identity` 手动绑 |
-| opencode 收不到 push 唤醒 | 没用 launcher 启动 (缺 `OPENCODE_XATS_BASE_URL`), 或注册时没传 `base_url` |
-| daemon 重启后工具全部 `unknown_session` / `unknown_agent` | 重连 MCP server 后 `reconnect(ui_pid)` 或 `register_agent` 恢复身份 |
+| `[xats] failed to start codex app-server` | codex CLI not installed / not on PATH, or port 8799 taken.  Run `codex app-server --listen ws://127.0.0.1:8799` manually to see the raw error |
+| `Deserialize error: data did not match any variant of untagged enum JsonRpcMessage` | Actually a daemon 401: the app-server cannot see the token env.  Restart from a shell that has it exported (`stop-xats` + `start-xats`) |
+| xats MCP tools invisible inside codex | MCP config is not in the CODEX_HOME the app-server reads (global `~/.codex/config.toml`), or top-level `experimental_use_rmcp_client = true` is missing |
+| 401 despite a configured token | Legacy `[mcp_servers.X.headers]` form (silently ignored on 0.130+); or a stale project-level `.codex/config.toml` overriding global auth.  Audit: `find ~ -path '*/.codex/config.toml' -print` |
+| codex session lands in the wrong directory | Launcher lost `-C "$PWD"` |
+| `register_agent` response carries `hint` | Not inside tmux, or pre-register failed/expired (120s TTL).  Still functional, just no pane auto-bind; call `bind_runtime_identity` to bind manually if needed |
+| opencode gets no push wake | Not launched via the launcher (missing `OPENCODE_XATS_BASE_URL`), or `base_url` not passed at registration |
+| All tools return `unknown_session` / `unknown_agent` after a daemon restart | Reconnect the MCP server, then `reconnect(ui_pid)` or `register_agent` to recover identity |
 
-## 7. mcpsmgr 版本要求
+## 7. mcpsmgr version requirement
 
-本文的 mcpsmgr 步骤需要 **mcpsmgr >= 0.4.8** (`npx -y mcpsmgr@latest` 即满足).
-相对旧版 (<= 0.4.7) 的关键差异:
+The mcpsmgr steps in this document require **mcpsmgr >= 0.4.8**
+(`npx -y mcpsmgr@latest` satisfies this).  Key differences vs older versions
+(<= 0.4.7):
 
-1. `add -a codex` 自动在目标 config.toml 顶级补
-   `experimental_use_rmcp_client = true` (新版 codex 已默认 rmcp client, 此键为
-   旧版兼容性写入, 已存在则不动).
-2. codex token 落成 `bearer_token_env_var = "CROSS_AGENT_TEAMS_MCP_TOKEN"` (名字
-   取自 xats manifest `envVars[].name`), 不再写明文 Authorization; token 缺失时
-   空 `http_headers` / `headers` 整块省略 (opencode 有 token 时仍是明文 Bearer,
-   其配置格式无 env 引用机制).
-3. `--global` (仅 codex 支持): 写全局 `~/.codex/config.toml`, 即 2.2 节的一步式
-   入口; 其他 agent 传 `--global` 会报错退出.
-4. 非交互 token: 可重复 `--var NAME=VALUE`, 取值优先级 --var > process.env >
-   交互 prompt; env 有值时 `-y` 不再静默跳过.
+1. `add -a codex` automatically ensures top-level
+   `experimental_use_rmcp_client = true` in the target config.toml (recent
+   codex defaults to the rmcp client; the key is a compatibility write for
+   older codex and is left untouched if present).
+2. The codex token is written as
+   `bearer_token_env_var = "CROSS_AGENT_TEAMS_MCP_TOKEN"` (name taken from
+   the xats manifest `envVars[].name`), never as a plaintext Authorization
+   header; when the token is absent, empty `http_headers` / `headers` blocks
+   are omitted entirely (opencode still gets a plaintext Bearer when a token
+   exists — its config format has no env reference mechanism).
+3. `--global` (codex only): writes the global `~/.codex/config.toml`; this is
+   the one-shot entry used in section 2.2.  Other agents reject `--global`.
+4. Non-interactive token: repeatable `--var NAME=VALUE`; source priority is
+   `--var` > `process.env` > interactive prompt; with a value in env, `-y` no
+   longer silently skips it.
 
-旧版没有以上行为 (codex 只写项目级配置且缺 rmcp 开关, token 明文/被 `-y` 静默
-跳过), 不要用旧版跑本文流程.
+Old versions have none of the above (project-level codex config without the
+rmcp toggle, plaintext / silently-skipped tokens) — do not run this document's
+flow with them.
+
+## 8. Hand-off: what to tell the user when you are done
+
+After the section 5 checklist passes, print a short hand-off message to the
+user.  It must contain:
+
+1. **The commands now available**:
+   - `start-xats` / `stop-xats` — manage the resident daemon + codex
+     app-server;
+   - `free-xats-codex` / `xats-codex` — launch codex (yolo / normal);
+   - `free-xats-opencode` / `xats-opencode` — launch opencode (yolo /
+     normal);
+   - `free-xats-claude` / `xats-claude` — launch Claude Code with the xats
+     channel.
+2. **The daemon token value** and where it lives (`~/.config/xats/token`).
+3. **The `source ~/.zshrc` reminder**: shells opened before this setup —
+   including the very terminal the user is sitting in — do not have the new
+   functions and env yet.  Run `source ~/.zshrc` there once, or open a new
+   terminal.
+4. **The per-project reminder**: every new project needs the one-liner from
+   section 3 for opencode (`-a opencode -y`) / claude-code
+   (`-a claude-code`); codex needs nothing per project.
