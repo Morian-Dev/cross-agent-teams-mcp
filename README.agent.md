@@ -80,8 +80,8 @@ XATS_TOKEN_FILE="$HOME/.config/xats/token"
 XATS_DEVICE="<DEVICE>"
 
 start-xats() {
+    mkdir -p "${XATS_TOKEN_FILE:h}"
     if [[ -z "$CROSS_AGENT_TEAMS_MCP_TOKEN" ]]; then
-        mkdir -p "${XATS_TOKEN_FILE:h}"
         printf '%s-%06d' "$(hostname -s)" \
             "$(( $(od -An -N4 -tu4 /dev/urandom | tr -d ' ') % 1000000 ))" \
             > "$XATS_TOKEN_FILE"
@@ -95,9 +95,11 @@ start-xats() {
       --host 0.0.0.0 \
       --port 9100 \
       --token "$CROSS_AGENT_TEAMS_MCP_TOKEN" \
-      --device "$XATS_DEVICE" &
+      --device "$XATS_DEVICE" \
+      >>"${XATS_TOKEN_FILE:h}/daemon.log" 2>&1 &!
 
-    codex app-server --listen ws://127.0.0.1:8799 &
+    codex app-server --listen ws://127.0.0.1:8799 \
+      >>"${XATS_TOKEN_FILE:h}/app-server.log" 2>&1 &!
 }
 
 stop-xats() {
@@ -132,7 +134,9 @@ _xats-codex() {
 
     if ! nc -z 127.0.0.1 8799 >/dev/null 2>&1; then
         echo "[xats] codex app-server not running, starting it" >&2
-        codex app-server --listen "$ws_url" >/dev/null 2>&1 &!
+        mkdir -p "${XATS_TOKEN_FILE:h}"
+        codex app-server --listen "$ws_url" \
+            >>"${XATS_TOKEN_FILE:h}/app-server.log" 2>&1 &!
         local _i
         for _i in {1..20}; do
             nc -z 127.0.0.1 8799 >/dev/null 2>&1 && break
@@ -190,6 +194,12 @@ Key points (understand before changing anything):
 - `_xats-codex` auto-starts the app-server (disowned via `&!`) when it is not
   running.  The current shell has the token env exported already, so there is
   no env-freeze problem; it errors out only if the startup itself fails.
+- `start-xats` redirects both services to `~/.config/xats/daemon.log` /
+  `app-server.log` and disowns them (`&!`): no terminal spam, and they survive
+  the launching terminal closing (plain `&` jobs get SIGHUP).  The token
+  echoes stay on the terminal on purpose.  Trade-off: if the user runs
+  everything inside tmux and prefers live logs in the pane, plain `&` without
+  redirection is a valid local variation.
 
 ### 2.2 Global ~/.codex/config.toml
 
@@ -345,7 +355,9 @@ parameters per agent type:
 
 | Symptom | Cause and fix |
 | --- | --- |
-| `[xats] failed to start codex app-server` | codex CLI not installed / not on PATH, or port 8799 taken.  Run `codex app-server --listen ws://127.0.0.1:8799` manually to see the raw error |
+| `[xats] failed to start codex app-server` | codex CLI not installed / not on PATH, or port 8799 taken.  Check `~/.config/xats/app-server.log`, or run `codex app-server --listen ws://127.0.0.1:8799` manually to see the raw error |
+| Need daemon / app-server logs (startup errors, noise) | `tail -f ~/.config/xats/daemon.log` / `app-server.log`.  App-server noise like `failed to refresh available models: timeout` is non-fatal |
+| daemon vanished after its terminal was closed | It was started with a plain `&` (job gets SIGHUP with the terminal).  The current snippet's `&!` (disown) prevents this; restart with `start-xats` |
 | `Deserialize error: data did not match any variant of untagged enum JsonRpcMessage` | Actually a daemon 401: the app-server cannot see the token env.  Restart from a shell that has it exported (`stop-xats` + `start-xats`) |
 | xats MCP tools invisible inside codex | MCP config is not in the CODEX_HOME the app-server reads (global `~/.codex/config.toml`), or top-level `experimental_use_rmcp_client = true` is missing |
 | 401 despite a configured token | Legacy `[mcp_servers.X.headers]` form (silently ignored on 0.130+); or a stale project-level `.codex/config.toml` overriding global auth.  Audit: `find ~ -path '*/.codex/config.toml' -print` |
