@@ -268,7 +268,7 @@ What actually exists per agent (do not offer branches that do not work):
 | Agent | Project-level | Global |
 | --- | --- | --- |
 | codex | none — `--remote` ignores project MCP config (see 3.2) | the only mode; already done in section 2.2 |
-| opencode | `mcpsmgr add` into `opencode.json` (3.1) | manual merge into `~/.config/opencode/config.json` (3.1) |
+| opencode | `mcpsmgr add` into `opencode.json` (3.1) | `mcpsmgr add --global` into `~/.config/opencode/opencode.json` (3.1) |
 | claude-code | `mcpsmgr add` into `.mcp.json` (3.3) | tools-only via `claude mcp add --scope user`; push-wake channel stays project-level (3.3) |
 
 **Mandatory reminder**: whenever you finish a **project-level** install, tell
@@ -316,12 +316,16 @@ npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a opencode -y
 - `opencode.json` contains the plaintext token; make sure it is in
   `.gitignore` or the user accepts committing it.
 
-**Global** — if the user chose global, merge the same `mcp` block into
-`~/.config/opencode/config.json` by hand (opencode reads this device-wide
-config; see `docs/configs/opencode.md`).  mcpsmgr cannot do this for you:
-`--global` is not supported for opencode as of mcpsmgr 0.4.8 (codex only).
-A side benefit: the plaintext token stays in the home directory instead of a
-committable project file.
+**Global** — if the user chose global (requires mcpsmgr >= 0.4.9):
+
+```bash
+npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a opencode --global -y
+```
+
+Writes the same `mcp` block into `~/.config/opencode/opencode.json`
+(opencode reads this device-wide config; see `docs/configs/opencode.md`).
+The token rules above apply unchanged.  A side benefit: the plaintext token
+stays in the home directory instead of a committable project file.
 
 ### 3.2 codex — global only, no project-level option
 

@@ -1,6 +1,6 @@
 # opencode MCP config for cross-agent-teams-mcp
 
-Add to `~/.config/opencode/config.json`:
+Add to `~/.config/opencode/opencode.json`:
 
 ```json
 {
