@@ -474,14 +474,18 @@ When a `register_agent` tool call carries an `Authorization` request header, the
 
 The 409 rejection body MUST NOT be a bare `{ "error": <string> }` object. Strict MCP clients (e.g. codex's `rmcp`) deserialize any response body as a JSON-RPC message; a bare `{ "error": "agent_id_collision" }` object matches no JSON-RPC 2.0 variant and poisons the client transport. The body MUST be either an empty body or a well-formed JSON-RPC 2.0 error object `{ "jsonrpc": "2.0", "id": null, "error": { "code": <integer>, "message": <string> } }` that a strict client can deserialize without error. (This concerns only the transport-level HTTP rejection emitted before/around tool dispatch; tool-result-level `{ error: ... }` payloads returned inside a normal 200 JSON-RPC `result` are unaffected.)
 
-When a `register_agent` call targets a `(team, name)` pair that is currently bound to a DIFFERENT MCP session id (a "cross-session re-claim"), the daemon MUST treat the new call as a TAKEOVER of that identity rather than a collision:
+当 `register_agent` 调用的 `(device, team, name)` 已绑定到不同的 MCP session id 时, daemon MUST 将其视为身份 TAKEOVER, 而不是 collision, 但下述 Codex 同 thread 例外除外.  TAKEOVER 必须执行以下步骤:
 
-1. Update the in-memory connection binding for `(team, name)` to point to the new MCP session id.
-2. Force-close the prior MCP transport associated with the old session id by invoking the SDK transport's `close()` method on it. The close MUST propagate through the transport's `onclose` chain so the prior session is removed from the daemon's `sessions` Map, its SSE fanout binding is detached, and its channel-wake binding (if any) is detached.
-3. Proceed with the normal identity-reuse upsert path on the agents row (preserving `agent_id`, `registered_at`, `last_processed_event_id`; updating `last_seen_at`, `role`, `model`, etc.) and return `{ agent_id, team }` for the new session.
-4. Log the takeover at debug level identifying the old session id, the new session id, and `(team, name)`. The log line MUST be emitted EVEN when the old session id is unknown to the transport (defensive-only path).
+1. 将内存连接账本替换为新的 MCP session id.
+2. 对每个旧 MCP transport 调用 SDK transport 的 `close()` 方法.  关闭 MUST 经过 transport 的 `onclose` 链, 从 daemon 的 `sessions` Map 删除旧 session, 并清理对应的 SSE fanout 和 channel-wake 绑定.
+3. 继续复用 agents row 的正常 upsert 路径, 保留 `agent_id`, `registered_at`, `last_processed_event_id`, 更新 `last_seen_at`, `role`, `model` 等字段, 并向新 session 返回 `{ agent_id, team }`.
+4. 对每个旧 session 输出 debug 级 takeover 日志, 日志 MUST 包含新旧 session id 和 `(team, name)`.  即使 transport 中已找不到旧 session id, 也 MUST 输出日志.
 
-This collision protection is therefore now scoped to **within-session Authorization mismatch** only. Cross-session `register_agent` calls targeting the same `(team, name)` identity from a NEW MCP session id are ALWAYS legitimate takeover, regardless of whether the prior session is still alive in the `sessions` Map at the time of the takeover.
+强制关闭 MUST 使用幂等 session 清理器同步撤销旧 session 的路由、连接账本和 fanout 所有权.  SDK transport 的 `close()` 仍 MUST 被调用.  如果 `close()` 同步抛错或 Promise rejection, daemon MUST 显式记录包含旧 session id 的错误, 并保留已经完成的路由撤销, 不得让旧 session 继续通过 `/mcp` 到达业务工具.
+
+唯一例外是稳定 Codex runtime 身份共用连接.  当新旧注册都声明 `agent_type='codex'`, 都携带通过校验的 `delivery.kind='codex-appserver'`, 且 `delivery.thread_id` 相同时, daemon MUST 将这些 MCP session 视为同一 Codex thread 的并发连接.  内存账本 MUST 保留所有连接, MUST NOT 关闭任何已有 transport, MUST NOT 输出 takeover 日志, 且所有连接 MUST 继续以同一个 `agent_id` 调用业务工具.  任一连接关闭时, daemon MUST 只释放该连接, 其余同 thread 连接保持有效.  不同 `thread_id`, 缺少稳定 Codex delivery, 或任何非 Codex agent 类型仍执行正常 TAKEOVER.
+
+因此, collision 保护仍仅适用于同一 session 内的 Authorization mismatch.  跨 session 重用同一身份时, daemon 根据上述规则执行 TAKEOVER 或 Codex 同 thread 共存, 不得返回 collision.
 
 When the request carries no `Authorization` header (or an empty one after trim), the daemon MUST NOT enforce Authorization-based collision detection.
 
@@ -515,6 +519,23 @@ Arriving on a different TCP socket (e.g. after keep-alive expiry) MUST NOT by it
 - **GIVEN** the conditions of the prior scenario hold
 - **WHEN** the takeover is processed
 - **THEN** the daemon emits a debug-level log line containing `takeover`, the old session id, the new session id, the team `'default'`, and the name `'alice'`
+
+#### Scenario: 同一 Codex thread 的并发 MCP session 共存
+
+- **GIVEN** `sess-A` 已通过 `agent_type='codex'` 和 `thread_id='T'` 注册 `(default, alice)`, 并获得 `agent_id='X'`
+- **WHEN** `sess-B` 使用相同 `agent_type`, `(device, team, name)` 和 `thread_id='T'` 注册
+- **THEN** `sess-B` 获得相同的 `agent_id='X'`
+- **AND** daemon 不关闭 `sess-A`, 也不输出 takeover 日志
+- **AND** `sess-A` 和 `sess-B` 都能继续调用 `get_inbox` 等业务工具
+- **AND** 任一 session 关闭后, 另一个 session 仍保持注册状态
+
+#### Scenario: 新 Codex thread 接管旧 thread 的所有连接
+
+- **GIVEN** `sess-A` 和 `sess-B` 都以 `thread_id='T1'` 绑定到 `(default, alice)`
+- **WHEN** `sess-C` 以相同身份和不同的 `thread_id='T2'` 注册
+- **THEN** daemon 关闭 `sess-A` 和 `sess-B`
+- **AND** 内存连接账本只保留 `sess-C`
+- **AND** daemon 为两个被关闭的 session 分别输出 takeover 日志
 
 ### Requirement: Mismatched agent_id for tool call returns 403
 
@@ -1541,4 +1562,3 @@ When `register_agent` is invoked with `agent_type='opencode'` and `model` is omi
 
 - **WHEN** a caller invokes `register_agent({agent_type:'opencode', name:'oc-1', base_url:'http://127.0.0.1:18888', model:'glm-5.2'})`
 - **THEN** the agents row has `model='glm-5.2'`
-

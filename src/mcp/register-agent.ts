@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3'
 import {
   validateDeliveryForWrite,
+  type DeliverySpec,
   type DeliveryValidationReason,
 } from '../lib/delivery-spec.js'
 import type { AgentType } from '../lib/agent-type.js'
@@ -40,6 +41,16 @@ export type RegisterResult =
 
 function identityKey(device: string, team: string, name: string): string {
   return `${device}\u0000${team}\u0000${name}`
+}
+
+function sharedRuntimeKey(
+  agentType: AgentType | undefined,
+  delivery: DeliverySpec | undefined
+): string | undefined {
+  if (agentType !== 'codex' || delivery?.kind !== 'codex-appserver') {
+    return undefined
+  }
+  return delivery.thread_id
 }
 
 export function validateNameLabel(name: string): { ok: string } | { error: 'invalid_name_label' } {
@@ -99,15 +110,11 @@ export function resolveEffectiveDevice(args: {
 
 export interface RegisterAgentDeps {
   /**
-   * Cross-session takeover hook. When `register_agent` re-claims a `(device, team, name)`
-   * binding from a NEW MCP session id, the service invokes this with the OLD
-   * connection_id so the transport layer can force-close the prior session.
-   * Returns true when the old session id was found and a close was issued.
+   * Called once for each conflicting connection during a cross-session
+   * takeover. Returns true when the connection was found and close was issued.
    */
   closeSessionByConnectionId?: (connectionId: string) => boolean
-  /**
-   * Debug log sink. When omitted, takeover events go through `console.debug`.
-   */
+  /** Optional debug log sink. */
   log?: (line: string) => void
   localDevice?: string
   getSessionOrigin?: (connectionId: string) => SessionOriginInfo | undefined
@@ -115,7 +122,10 @@ export interface RegisterAgentDeps {
 
 export class RegisterAgentService {
   private readonly repo: AgentsRepo
-  private readonly connections = new Map<string, string>()
+  private connections = new Map<
+    string,
+    Map<string, string | undefined>
+  >()
   private readonly deps: RegisterAgentDeps
 
   constructor(db: Database.Database, deps: RegisterAgentDeps = {}) {
@@ -152,21 +162,15 @@ export class RegisterAgentService {
       project_dir: input.project_dir,
     })
     const key = identityKey(resolvedDevice.ok, team, input.name)
-    const bound = this.connections.get(key)
-    if (bound && bound !== input.connection_id) {
-      // Cross-session takeover: release the old binding and force-close the
-      // prior MCP transport. The old session's `onclose` chain reaps it from
-      // the daemon's `sessions` Map; new session keeps its existing binding.
-      let closed = false
-      if (this.deps.closeSessionByConnectionId) {
-        try { closed = this.deps.closeSessionByConnectionId(bound) } catch { /* best-effort */ }
-      }
-      const log = this.deps.log ?? (() => {})
-      try {
-        log(`register_agent takeover: old=${bound} new=${input.connection_id} device=${resolvedDevice.ok} team=${team} name=${input.name} closed=${closed}`)
-      } catch { /* best-effort */ }
-    }
-    this.connections.set(key, input.connection_id)
+    const runtimeKey = sharedRuntimeKey(input.agent_type, validated?.ok)
+    this.bindConnection({
+      key,
+      connectionId: input.connection_id,
+      runtimeKey,
+      device: resolvedDevice.ok,
+      team,
+      name: input.name,
+    })
     return this.repo.register({
       agent_type: input.agent_type,
       agent_type_name: input.agent_type_name,
@@ -183,11 +187,110 @@ export class RegisterAgentService {
     })
   }
 
-  releaseConnection(agent_id: string, connection_id: string): void {
-    // Release by connection_id — scan and unbind any identity key mapped to this connection.
-    for (const [k, cid] of this.connections) {
-      if (cid === connection_id) this.connections.delete(k)
+  releaseConnection(_agent_id: string, connection_id: string): void {
+    const remaining = Array.from(this.connections.entries()).flatMap(
+      ([key, bindings]): Array<[
+        string,
+        Map<string, string | undefined>
+      ]> => {
+        if (!bindings.has(connection_id)) return [[key, bindings]]
+        const next = new Map(
+          Array.from(bindings.entries()).filter(
+            ([connectionId]) => connectionId !== connection_id
+          )
+        )
+        return next.size === 0 ? [] : [[key, next]]
+      }
+    )
+    this.connections = new Map(remaining)
+  }
+
+  private bindConnection(input: {
+    key: string
+    connectionId: string
+    runtimeKey: string | undefined
+    device: string
+    team: string
+    name: string
+  }): void {
+    const current = this.connections.get(input.key) ?? new Map()
+    const prior = Array.from(current.entries()).filter(
+      ([connectionId]) => connectionId !== input.connectionId
+    )
+    const canShare = input.runtimeKey !== undefined && prior.every(
+      ([, runtimeKey]) => runtimeKey === input.runtimeKey
+    )
+    if (prior.length === 0 || canShare) {
+      const next = new Map([
+        ...current.entries(),
+        [input.connectionId, input.runtimeKey] as const,
+      ])
+      this.storeBindings(input.key, next)
+      return
     }
-    void agent_id
+    const failed = prior.flatMap(([connectionId, runtimeKey]) => {
+      const close = this.closeConnection(connectionId)
+      this.log(
+        `register_agent takeover: old=${connectionId} ` +
+        `new=${input.connectionId} device=${input.device} ` +
+        `team=${input.team} name=${input.name} closed=${close.closed}`
+      )
+      return close.keepBinding
+        ? [[connectionId, runtimeKey] as const]
+        : []
+    })
+    this.storeBindings(
+      input.key,
+      new Map([
+        ...failed,
+        [input.connectionId, input.runtimeKey] as const,
+      ])
+    )
+  }
+
+  private closeConnection(connectionId: string): {
+    closed: boolean
+    keepBinding: boolean
+  } {
+    try {
+      return {
+        closed: this.deps.closeSessionByConnectionId?.(connectionId) ?? false,
+        keepBinding: false,
+      }
+    } catch (error) {
+      const detail = error instanceof Error
+        ? `${error.name}: ${error.message}`
+        : String(error)
+      this.log(
+        `register_agent takeover close failed: old=${connectionId} ` +
+        `cause=${detail}`,
+        error
+      )
+      return { closed: false, keepBinding: true }
+    }
+  }
+
+  private log(line: string, error?: unknown): void {
+    try {
+      this.deps.log?.(line)
+    } catch (logError) {
+      console.error('RegisterAgentService logger failed.', logError)
+      if (error === undefined) console.error(line)
+      else console.error(line, error)
+      return
+    }
+    if (error !== undefined && this.deps.log === undefined) {
+      console.error(line, error)
+    }
+  }
+
+  private storeBindings(
+    key: string,
+    bindings: Map<string, string | undefined>
+  ): void {
+    const others = Array.from(this.connections.entries()).filter(
+      ([existingKey]) => existingKey !== key
+    )
+    this.connections = new Map([...others, [key, bindings]])
   }
 }

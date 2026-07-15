@@ -15,8 +15,10 @@ import type { SessionOriginInfo } from '../daemon/network-origin.js'
 interface Session {
   transport: StreamableHTTPServerTransport
   server: McpServer
+  sink: SseSink
   sessionId: string
   agentIdHolder: AgentIdHolder
+  registeredTeam?: string
   createdAt: number
   lastActivityAt: number
   clientInfo?: {
@@ -61,14 +63,38 @@ export function mountMcp(
   } = {}
 ): MountMcpResult {
   const sessions = new Map<string, Session>()
-  const log = opts.log ?? (() => {})
+  const log = (line: string): void => {
+    try {
+      opts.log?.(line)
+    } catch (error) {
+      console.error('MCP transport logger failed.', error)
+      console.error(line)
+    }
+  }
   const context = opts.context ?? { localDevice: 'local' }
+
+  function reportSessionCloseError(
+    connectionId: string,
+    error: unknown
+  ): void {
+    console.error(`Failed to close MCP session ${connectionId}.`, error)
+  }
 
   function closeSessionByConnectionId(connectionId: string): boolean {
     const s = sessions.get(connectionId)
     if (!s) return false
-    try { void s.transport.close() } catch { /* best-effort */ }
-    return true
+    let closeIssued = true
+    try {
+      void s.transport.close().catch(error => {
+        reportSessionCloseError(connectionId, error)
+      })
+    } catch (error) {
+      reportSessionCloseError(connectionId, error)
+      closeIssued = false
+    } finally {
+      finalizeSessionClose(connectionId)
+    }
+    return closeIssued
   }
 
   // Single RegisterAgentService for the whole daemon: its `connections` Map is
@@ -80,6 +106,65 @@ export function mountMcp(
     localDevice: context.localDevice,
     getSessionOrigin: (connectionId) => sessions.get(connectionId)?.originInfo,
   })
+
+  function detachOrRestoreFanout(
+    agentId: string,
+    excludedSessionId: string | undefined
+  ): void {
+    const fallback = Array.from(sessions.values())
+      .filter(session =>
+        session.sessionId !== excludedSessionId &&
+        session.agentIdHolder.current === agentId &&
+        session.registeredTeam !== undefined
+      )
+      .at(-1)
+    if (fallback?.registeredTeam === undefined) {
+      fanout.detach(agentId)
+      return
+    }
+    fanout.attach(agentId, fallback.registeredTeam, fallback.sink)
+  }
+
+  function finalizeSessionClose(sessionId: string): void {
+    const session = sessions.get(sessionId)
+    if (!session) return
+    const agentId = session.agentIdHolder.current
+    if (agentId) {
+      runSessionCleanup(sessionId, 'fanout', () => {
+        detachOrRestoreFanout(agentId, sessionId)
+      })
+    }
+    runSessionCleanup(sessionId, 'channel wake', () => {
+      channelWakeFanout?.detachBySession(sessionId)
+    })
+    if (agentId) {
+      runSessionCleanup(sessionId, 'registry', () => {
+        registerSvc.releaseConnection(agentId, sessionId)
+      })
+    }
+    const remaining = sessions.size - 1
+    sessions.delete(sessionId)
+    sessionOwners.delete(sessionId)
+    log(
+      `mcp session closed: sid=${sessionId} ` +
+      `had_agent=${agentId ?? 'none'} sessions=${remaining}`
+    )
+  }
+
+  function runSessionCleanup(
+    sessionId: string,
+    target: string,
+    cleanup: () => void
+  ): void {
+    try {
+      cleanup()
+    } catch (error) {
+      console.error(
+        `Failed to clean up MCP session ${sessionId} ${target}.`,
+        error
+      )
+    }
+  }
 
   // Once register_agent succeeds for a session id, pin the owning Authorization hash.
   // A later register_agent presenting a different Authorization triggers HTTP 409.
@@ -104,10 +189,11 @@ export function mountMcp(
   function closeOrphanSession(session: Session, now: number, reason: string): void {
     const ageS = Math.floor((now - session.createdAt) / 1000)
     const idleS = Math.floor((now - session.lastActivityAt) / 1000)
-    try {
-      log(`mcp orphan session reap: sid=${session.sessionId} age_s=${ageS} idle_s=${idleS} reason=${reason}`)
-    } catch { /* best-effort */ }
-    try { void session.transport.close() } catch { /* best-effort */ }
+    log(
+      `mcp orphan session reap: sid=${session.sessionId} ` +
+      `age_s=${ageS} idle_s=${idleS} reason=${reason}`
+    )
+    closeSessionByConnectionId(session.sessionId)
   }
 
   function enforceOrphanSessionLimit(now: number, maxSessions: number, candidates?: Session[]): void {
@@ -157,22 +243,26 @@ export function mountMcp(
     }
 
     const onRegisterSuccess = (agent_id: string, team: string): void => {
-      // Detach any prior sink registered under this agent_id (e.g. from a previous
-      // session that reused the same identity) before attaching the new one.
-      try { fanout.detach(agent_id) } catch { /* ignore */ }
-      // If this session had previously bound a different agent_id (e.g. role change
-      // mid-session), detach that too.
       if (agentIdHolder.current && agentIdHolder.current !== agent_id) {
-        try { fanout.detach(agentIdHolder.current) } catch { /* ignore */ }
+        detachOrRestoreFanout(agentIdHolder.current, sessionIdForCaller)
       }
       fanout.attach(agent_id, team, sink)
       agentIdHolder.current = agent_id
+      const currentSession = sessionIdForCaller
+        ? sessions.get(sessionIdForCaller)
+        : undefined
+      if (currentSession && sessionIdForCaller) {
+        sessions.set(sessionIdForCaller, {
+          ...currentSession,
+          registeredTeam: team,
+        })
+      }
     }
 
     const onUnregisterSuccess = (agent_id: string): void => {
-      try { fanout.detach(agent_id) } catch { /* ignore */ }
+      fanout.detach(agent_id)
       if (sessionIdForCaller && channelWakeFanout) {
-        try { channelWakeFanout.detachBySession(sessionIdForCaller) } catch { /* ignore */ }
+        channelWakeFanout.detachBySession(sessionIdForCaller)
       }
       if (agentIdHolder.current === agent_id) agentIdHolder.current = undefined
     }
@@ -185,6 +275,7 @@ export function mountMcp(
         sessions.set(sid, {
           transport,
           server,
+          sink,
           sessionId: sid,
           agentIdHolder,
           createdAt: now,
@@ -199,24 +290,7 @@ export function mountMcp(
       }
     })
     transport.onclose = () => {
-      if (agentIdHolder.current) {
-        try { fanout.detach(agentIdHolder.current) } catch { /* ignore */ }
-      }
-      if (transport.sessionId && channelWakeFanout) {
-        try { channelWakeFanout.detachBySession(transport.sessionId) } catch { /* ignore */ }
-      }
-      if (transport.sessionId) {
-        // Release this session's identity binding from the daemon-singleton
-        // RegisterAgentService so its `connections` Map does not retain dead
-        // (device, team, name) → connection_id entries. Without this, every reconnect
-        // would log a misleading "takeover" against an already-dead session.
-        if (agentIdHolder.current) {
-          try { registerSvc.releaseConnection(agentIdHolder.current, transport.sessionId) } catch { /* ignore */ }
-        }
-        log(`mcp session closed: sid=${transport.sessionId} had_agent=${agentIdHolder.current ?? 'none'} sessions=${sessions.size - 1}`)
-        sessions.delete(transport.sessionId)
-        sessionOwners.delete(transport.sessionId)
-      }
+      if (transport.sessionId) finalizeSessionClose(transport.sessionId)
     }
     registerBusinessTools(
       server,
@@ -246,6 +320,7 @@ export function mountMcp(
     return {
       transport,
       server,
+      sink,
       sessionId: '',
       agentIdHolder,
       createdAt: now,

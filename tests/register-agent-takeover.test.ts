@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { z } from 'zod'
 import { startServer } from '../src/daemon/server.js'
+import { SseFanout } from '../src/daemon/sse-fanout.js'
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'atm-takeover-'))
 
@@ -13,10 +15,26 @@ interface Connected {
   t: StreamableHTTPClientTransport
 }
 
-async function connectClient(host: string, port: number): Promise<Connected> {
+const HeartbeatNotification = z.object({
+  jsonrpc: z.literal('2.0'),
+  method: z.literal('notifications/heartbeat'),
+  params: z.any().optional(),
+})
+
+async function connectClient(
+  host: string,
+  port: number,
+  onHeartbeat?: () => void
+): Promise<Connected> {
   const url = new URL(`http://${host}:${port}/mcp`)
   const t = new StreamableHTTPClientTransport(url)
   const c = new Client({ name: 'takeover-test', version: '0.0.0' })
+  if (onHeartbeat) {
+    c.setNotificationHandler(
+      HeartbeatNotification as any,
+      async () => { onHeartbeat() }
+    )
+  }
   await c.connect(t)
   return { c, t }
 }
@@ -24,6 +42,37 @@ async function connectClient(host: string, port: number): Promise<Connected> {
 async function parseTool(resp: unknown): Promise<Record<string, unknown>> {
   const r = resp as { content: Array<{ text: string }> }
   return JSON.parse(r.content[0].text)
+}
+
+const CODEX_THREAD_A = '11111111-1111-4111-8111-111111111111'
+
+function codexDelivery(thread_id: string) {
+  return {
+    kind: 'codex-appserver',
+    thread_id,
+    ws_url: 'ws://127.0.0.1:8799',
+  }
+}
+
+async function probeSession(
+  host: string,
+  port: number,
+  sessionId: string
+): Promise<Response> {
+  return fetch(`http://${host}:${port}/mcp`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'accept': 'application/json, text/event-stream',
+      'mcp-session-id': sessionId,
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/list',
+      params: {},
+    }),
+  })
 }
 
 describe('register_agent cross-session takeover', () => {
@@ -61,16 +110,7 @@ describe('register_agent cross-session takeover', () => {
 
     // The old session id MUST no longer be present on the daemon: a raw POST
     // with the old session id returns unknown_session.
-    const probeUrl = `http://${host}:${port}/mcp`
-    const probe = await fetch(probeUrl, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'accept': 'application/json, text/event-stream',
-        'mcp-session-id': sidA!,
-      },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })
-    })
+    const probe = await probeSession(host, port, sidA!)
     expect(probe.status).toBe(404)
     expect(await probe.text()).toBe('')
 
@@ -156,4 +196,78 @@ describe('register_agent cross-session takeover', () => {
     await b.c.close()
     await app.close()
   }, 15000)
+
+  it('keeps both MCP sessions usable for the same Codex thread', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    let lines: string[] = []
+    const fanout = new SseFanout({ heartbeatIntervalMs: 50 })
+    const { app, port, host } = await startServer({
+      dbPath: join(dir, 'data.db'),
+      port: 0,
+      mcpLog: line => { lines = [...lines, line] },
+      fanout,
+    })
+    let firstHeartbeats = 0
+    const first = await connectClient(
+      host,
+      port,
+      () => { firstHeartbeats += 1 }
+    )
+    const second = await connectClient(host, port)
+
+    try {
+      const firstRegistration = await parseTool(await first.c.callTool({
+        name: 'register_agent',
+        arguments: {
+          agent_type: 'codex',
+          name: 'alice',
+          delivery: codexDelivery(CODEX_THREAD_A),
+        },
+      }))
+      const secondRegistration = await parseTool(await second.c.callTool({
+        name: 'register_agent',
+        arguments: {
+          agent_type: 'codex',
+          name: 'alice',
+          delivery: codexDelivery(CODEX_THREAD_A),
+        },
+      }))
+
+      expect(secondRegistration.agent_id).toBe(firstRegistration.agent_id)
+      expect(lines.some(line => line.includes('register_agent takeover')))
+        .toBe(false)
+
+      const firstInbox = await parseTool(await first.c.callTool({
+        name: 'get_inbox',
+        arguments: {},
+      }))
+      expect(firstInbox.error).toBeUndefined()
+
+      await second.t.terminateSession()
+      await second.c.close()
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      const firstInboxAfterClose = await parseTool(await first.c.callTool({
+        name: 'get_inbox',
+        arguments: {},
+      }))
+      expect(firstInboxAfterClose.error).toBeUndefined()
+      const heartbeatsBeforeWait = firstHeartbeats
+      await new Promise(resolve => setTimeout(resolve, 150))
+      expect(firstHeartbeats).toBeGreaterThan(heartbeatsBeforeWait)
+    } finally {
+      const results = await Promise.allSettled([
+        first.c.close(),
+        second.c.close(),
+      ])
+      await app.close()
+      const failures = results.flatMap(result =>
+        result.status === 'rejected' ? [result.reason] : []
+      )
+      if (failures.length > 0) {
+        throw new AggregateError(failures, 'Failed to close test clients.')
+      }
+    }
+  }, 15000)
+
 })

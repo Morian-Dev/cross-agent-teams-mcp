@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,6 +7,29 @@ import { applySchema } from '../src/storage/schema.js'
 import { RegisterAgentService } from '../src/mcp/register-agent.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-reg-svc-'))
+const CODEX_THREAD_A = '11111111-1111-4111-8111-111111111111'
+const CODEX_THREAD_B = '22222222-2222-4222-8222-222222222222'
+
+function codexDelivery(thread_id: string) {
+  return {
+    kind: 'codex-appserver' as const,
+    thread_id,
+    ws_url: 'ws://127.0.0.1:8799',
+  }
+}
+
+function registerCodex(
+  svc: RegisterAgentService,
+  connection_id: string,
+  thread_id: string
+) {
+  return svc.register({
+    connection_id,
+    agent_type: 'codex',
+    name: 'alice',
+    delivery: codexDelivery(thread_id),
+  })
+}
 
 describe('RegisterAgentService', () => {
   const cleanups: string[] = []
@@ -36,6 +59,107 @@ describe('RegisterAgentService', () => {
     if ('error' in r2) throw new Error('r2 unexpected error')
     expect(r2.agent_id).toBe(r1.agent_id)
     expect(closes).toEqual(['conn-1'])
+  })
+
+  it('same Codex thread can bind the same identity from two connections', () => {
+    const closes: string[] = []
+    const { svc } = setup({
+      closeSessionByConnectionId: (connectionId) => {
+        closes.push(connectionId)
+        return true
+      },
+    })
+    const first = registerCodex(svc, 'conn-1', CODEX_THREAD_A)
+    const second = registerCodex(svc, 'conn-2', CODEX_THREAD_A)
+    if ('error' in first || 'error' in second) {
+      throw new Error('unexpected error')
+    }
+    expect(second.agent_id).toBe(first.agent_id)
+    expect(closes).toEqual([])
+  })
+
+  it('different Codex thread takes over every connection for the old thread', () => {
+    const closes: string[] = []
+    const { svc } = setup({
+      closeSessionByConnectionId: (connectionId) => {
+        closes.push(connectionId)
+        return true
+      },
+    })
+    registerCodex(svc, 'conn-1', CODEX_THREAD_A)
+    registerCodex(svc, 'conn-2', CODEX_THREAD_A)
+    expect(closes).toEqual([])
+
+    registerCodex(svc, 'conn-3', CODEX_THREAD_B)
+    expect([...closes].sort()).toEqual(['conn-1', 'conn-2'])
+  })
+
+  it('releasing one Codex connection preserves its same-thread peer', () => {
+    const closes: string[] = []
+    const { svc } = setup({
+      closeSessionByConnectionId: (connectionId) => {
+        closes.push(connectionId)
+        return true
+      },
+    })
+    registerCodex(svc, 'conn-1', CODEX_THREAD_A)
+    const second = registerCodex(svc, 'conn-2', CODEX_THREAD_A)
+    if ('error' in second) throw new Error('unexpected error')
+
+    svc.releaseConnection(second.agent_id, 'conn-2')
+    registerCodex(svc, 'conn-3', CODEX_THREAD_B)
+    expect(closes).toEqual(['conn-1'])
+  })
+
+  it('retains a prior binding when its takeover close callback throws', () => {
+    let attempts: string[] = []
+    let failFirstClose = true
+    let lines: string[] = []
+    const { svc } = setup({
+      closeSessionByConnectionId: (connectionId) => {
+        attempts = [...attempts, connectionId]
+        if (failFirstClose) {
+          failFirstClose = false
+          throw new Error('close failed')
+        }
+        return true
+      },
+      log: line => { lines = [...lines, line] },
+    })
+    svc.register({ connection_id: 'conn-1', name: 'alice' })
+
+    const second = svc.register({ connection_id: 'conn-2', name: 'alice' })
+    expect('error' in second).toBe(false)
+    expect(lines.some(line => line.includes('close failed'))).toBe(true)
+
+    svc.register({ connection_id: 'conn-3', name: 'alice' })
+    expect(attempts).toEqual(['conn-1', 'conn-1', 'conn-2'])
+  })
+
+  it('reports the close error when the configured logger also throws', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const closeError = new Error('close failed')
+    const logError = new Error('log failed')
+    const { svc } = setup({
+      closeSessionByConnectionId: () => { throw closeError },
+      log: () => { throw logError },
+    })
+    svc.register({ connection_id: 'conn-1', name: 'alice' })
+
+    svc.register({ connection_id: 'conn-2', name: 'alice' })
+
+    expect(consoleError).toHaveBeenCalledWith(
+      'RegisterAgentService logger failed.',
+      logError
+    )
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining('close failed'),
+      closeError
+    )
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining('register_agent takeover: old=conn-1')
+    )
+    consoleError.mockRestore()
   })
 
   it('same identity different connection succeeds after releaseConnection', () => {

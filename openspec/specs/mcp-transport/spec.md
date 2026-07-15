@@ -111,16 +111,19 @@ Before any business tool is released, the project SHALL include an automated Pha
 
 The SSE fanout sink for an MCP session SHALL be attached to `SseFanout` keyed by the session's final `agent_id` (as returned by `register_agent`), **not** by the MCP session id. Attachment MUST be deferred until the first successful `register_agent` call on that session.
 
-When `register_agent` succeeds and returns `agent_id=X`:
+当 `register_agent` 成功并返回 `agent_id=X` 时:
 
-1. If another sink is currently attached under key `X` (e.g. from a prior session that reused the same identity), the transport MUST `fanout.detach(X)` on the old sink before attaching the new one.
-2. The transport MUST call `fanout.attach(X, team, sink)` with `sink` bound to the current session's `StreamableHTTPServerTransport`.
-3. The transport MUST update `agentIdHolder.current = X` so subsequent `from_agent_id` spoof checks compare against `X`.
+1. Transport MUST 调用 `fanout.attach(X, team, sink)`, 其中 `sink` 绑定到当前 session 的 `StreamableHTTPServerTransport`.  如果 key `X` 已存在 sink, `attach` MUST 原子替换旧 sink, 并保持 `X` 下仅有一个活动 sink.
+2. Transport MUST 更新 `agentIdHolder.current = X`, 使后续 `from_agent_id` 防伪检查与 `X` 比较.
+3. Transport MUST 在 session 记录中保存成功注册的 `team`, 以便并发同身份 session 关闭时恢复 fanout 所有权.
 
-When an MCP session closes (`transport.onclose`):
+当 MCP session 关闭并触发 `transport.onclose` 时:
 
-1. If the session had completed registration (i.e. `agentIdHolder.current` is set), the transport MUST `fanout.detach(agentIdHolder.current)`.
-2. If the session closed before any successful `register_agent`, the transport MUST perform no fanout detach (there was nothing attached).
+1. 如果该 session 已完成注册, 且另一个活动 session 持有相同 `agent_id`, transport MUST 将 fanout sink 恢复为另一个活动 session 的 sink.
+2. 如果该 session 是该 `agent_id` 的唯一活动 session, transport MUST 执行 `fanout.detach(agentIdHolder.current)`.
+3. 如果该 session 从未成功调用 `register_agent`, transport MUST 不修改 fanout.
+
+Takeover 或 orphan GC 发起强制关闭时, transport MUST 调用同一个幂等 session 清理器, 立即从 `sessions`, Authorization owner 和注册连接账本中撤销该 session.  SDK transport 的异步 `close()` 失败 MUST 被显式记录, 但不得恢复已撤销的路由.  SDK 后续触发 `onclose` 时, 同一个清理器 MUST 安全地 no-op.
 
 #### Scenario: Fanout attached after register_agent, not at session init
 
@@ -144,11 +147,18 @@ When an MCP session closes (`transport.onclose`):
 - **AND** `sess-A`'s old sink was detached before `sess-B`'s attach (net: exactly one sink under `X`)
 - **AND** subsequent `fanout.emit('X', event)` reaches `sess-B`'s SSE stream, not `sess-A`'s
 
-#### Scenario: Session close detaches the agent_id sink
+#### Scenario: 唯一 session 关闭后移除 agent_id sink
 
-- **GIVEN** session `sess-A` is registered and holds sink under `agent_id='X'`
-- **WHEN** the HTTP transport emits `onclose`
-- **THEN** `SseFanout` has no sink attached under `'X'`
+- **GIVEN** `sess-A` 是 `agent_id='X'` 的唯一活动 session, 并持有该 key 下的 sink
+- **WHEN** HTTP transport 触发 `onclose`
+- **THEN** `SseFanout` 在 key `'X'` 下没有 sink
+
+#### Scenario: 关闭并发 Codex session 后恢复剩余 session 的 sink
+
+- **GIVEN** `sess-A` 和 `sess-B` 属于同一 Codex thread, 都持有 `agent_id='X'`, 且当前 sink 属于 `sess-B`
+- **WHEN** `sess-B` 的 HTTP transport 触发 `onclose`
+- **THEN** `SseFanout` 在 key `'X'` 下绑定 `sess-A` 的 sink
+- **AND** `SseFanout` 在 key `'X'` 下仍只有一个 sink
 
 #### Scenario: Close before register is a no-op for fanout
 
@@ -336,4 +346,3 @@ The GC MUST NOT emit orphan-reap log lines by default. When an explicit MCP tran
 - **WHEN** the GC reaps `sess-O`
 - **THEN** the SSE fanout no longer holds a sink for `sess-O`
 - **AND** the channel-wake fanout no longer holds a sink for `sess-O`'s session id
-
