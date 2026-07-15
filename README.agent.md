@@ -20,7 +20,7 @@ Target UX after setup:
    `free-` prefix = yolo mode (skip approvals/sandbox), no prefix = normal
    approval mode.
 
-## 0. Before you start: prerequisites and three things to align with the user
+## 0. Before you start: prerequisites and four things to align with the user
 
 Prerequisites (check before anything else): macOS with zsh; Node.js >= 20
 (ships `npx`).  Per agent, only needed if the device will run it:
@@ -44,6 +44,15 @@ poke delivery.
 3. **consent to edit ~/.zshrc**: this repo never silently modifies the user's
    shell config.  Show the section 2.1 snippet to the user and write it only
    after approval.
+4. **install scope — global vs per-project**: ask the user which they want
+   before running any section 3 install.  Global = configure once, every
+   project on the device can use xats afterwards — much simpler to operate.
+   Per-project = the config lives inside each project, and **every new
+   project needs the same install command again** — more hassle, but nothing
+   is written outside the project.  Caveats: codex is global-only by design,
+   and the claude-code push-wake channel only exists project-level (details
+   in section 3).  Whatever the user picks, the section 8 hand-off must
+   explain the matching usage.
 
 ## 1. Architecture in one minute (why these steps)
 
@@ -392,7 +401,8 @@ local-only teams.
 ## 3. Project-level vs global install (ask the user first)
 
 Before running any install command in this section, **ask the user which
-level they want**, then follow the matching branch:
+level they want** (the section 0 item 4 alignment should already have
+settled this — do not re-ask if it did), then follow the matching branch:
 
 - **Project-level** — the config lives inside the project
   (`opencode.json` / `.mcp.json`); only that project can use xats, and
@@ -415,7 +425,7 @@ hand-off).  Global installs need no such reminder.
 
 ### 3.1 opencode
 
-**Project-level (default)** — in the project root:
+**Project-level** — if the user chose per-project; run in the project root:
 
 ```bash
 npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a opencode -y
@@ -474,7 +484,8 @@ useless.  Use the `--global` form from section 2.2 (device-level, once).
 
 ### 3.3 claude-code
 
-**Project-level (default)** — in the project root:
+**Project-level** — if the user chose per-project (also the right pick when
+they chose global but want push wake, see below); run in the project root:
 
 ```bash
 npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a claude-code
@@ -613,7 +624,17 @@ user.  It must contain:
    including the very terminal the user is sitting in — do not have the new
    functions and env yet.  Run `source ~/.zshrc` there once, or open a new
    terminal.
-4. **The per-project reminder** (only when project-level installs were
-   chosen in section 3): every new project needs the same one-liner again —
-   opencode (`-a opencode -y`) / claude-code (`-a claude-code`).  Skip this
-   point for global installs; codex never needs a per-project step.
+4. **Scope-specific usage** (match what was chosen in section 0 item 4 /
+   section 3):
+   - **Global installs**: every project on the device is covered — `cd`
+     into any project and launch with the point 1 commands, nothing else
+     to configure.  Exception to state explicitly: if claude-code was set
+     up global (tools-only), it has no push wake anywhere; a project that
+     needs push wake must additionally run the project-level
+     `-a claude-code` install.
+   - **Project-level installs**: only projects already installed are
+     covered.  Spell out the enable-a-new-project recipe: in each new
+     project root run the same one-liner(s) again — opencode
+     (`-a opencode -y`) / claude-code (`-a claude-code`) — then launch
+     with the point 1 commands as usual.  codex never needs a per-project
+     step (its config is device-level).
