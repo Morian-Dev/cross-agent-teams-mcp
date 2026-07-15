@@ -549,6 +549,7 @@ reused, no duplicate row.
 | `Deserialize error: data did not match any variant of untagged enum JsonRpcMessage` | Actually a daemon 401: the app-server cannot see the token env.  Restart from a shell that has it exported (`stop-xats` + `start-xats`) |
 | xats MCP tools invisible inside codex | MCP config is not in the CODEX_HOME the app-server reads (global `~/.codex/config.toml`), or top-level `experimental_use_rmcp_client = true` is missing |
 | 401 despite a configured token | Legacy `[mcp_servers.X.headers]` form (silently ignored on 0.130+); or a stale project-level `.codex/config.toml` overriding global auth.  Audit: `find ~ -path '*/.codex/config.toml' -print` |
+| `mcpsmgr add` succeeded but the written config lacks `bearer_token_env_var` / has wrong servers (codex 401 / -32601) | Stale bundle cache on a device that installed xats before — only with mcpsmgr <= 0.4.9 (fixed in 0.4.10, see section 7).  Re-run with `mcpsmgr@latest`, or on old versions `npx -y mcpsmgr@latest uninstall cross-agent-teams` then re-add |
 | codex session lands in the wrong directory | Launcher lost `-C "$PWD"` |
 | `register_agent` response carries `hint` | Not inside tmux, or pre-register failed/expired (120s TTL).  Still functional, just no pane auto-bind; call `bind_runtime_identity` to bind manually if needed |
 | opencode gets no push wake | Not launched via the launcher (missing `OPENCODE_XATS_BASE_URL`), or `base_url` not passed at registration |
@@ -580,6 +581,17 @@ The mcpsmgr steps in this document require **mcpsmgr >= 0.4.8**
 Old versions have none of the above (project-level codex config without the
 rmcp toggle, plaintext / silently-skipped tokens) — do not run this document's
 flow with them.
+
+Known issue in <= 0.4.9, fixed in 0.4.10: if the device installed the xats
+bundle before (`~/.mcps-manager/bundles.json` has an entry), `add
+jtianling/cross-agent-teams-mcp` reused the stale central-store definition
+without re-fetching the manifest, so `bearer_token_env_var` and per-agent
+server filtering silently did not apply (symptom: codex 401 / -32601 right
+after an apparently successful add).  Fresh devices were unaffected.  Since
+0.4.10, `add` re-fetches the manifest on a bundle hit and asks to reinstall
+when it changed (`-y` auto-agrees; offline falls back to the old behavior).
+On <= 0.4.9 the workaround is
+`npx -y mcpsmgr@latest uninstall cross-agent-teams`, then `add`.
 
 ## 8. Hand-off: what to tell the user when you are done
 

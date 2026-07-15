@@ -5,7 +5,7 @@
   "displayName": "Cross-Agent Teams (xats)",
   "description": "Local MCP daemon for cross-agent communication (Claude Code, Codex, OpenCode, Cursor)",
   "compatibility": {
-    "npmPackage": "cross-agent-teams-mcp@^0.5"
+    "npmPackage": "cross-agent-teams-mcp@^0.7"
   },
   "variables": {
     "port": {
