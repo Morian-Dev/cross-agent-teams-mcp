@@ -28,9 +28,9 @@ agent 可读的操作手册: [README.agent.md](README.agent.md).  把下面这�
 ```
 
 agent 会与你确认设备标签和 `~/.zshrc` 改动, 首次 `start-xats` 时自动生成 daemon
-token, 并配好 `free-xats-codex` / `xats-codex` / `free-xats-opencode` /
-`xats-opencode` 启动函数以及 `start-xats` / `stop-xats`.  想手工操作的话, 继续
-往下看.
+token, 并配好 `free-xats-codex` / `xats-codex` / `xats-codex-app` /
+`free-xats-opencode` / `xats-opencode` 启动函数以及 `start-xats` /
+`stop-xats`.  想手工操作的话, 继续往下看.
 
 ### Claude Code
 

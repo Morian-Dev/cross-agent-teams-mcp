@@ -29,9 +29,9 @@ and follow it to set up xats on this device.
 
 The agent will confirm a device label and the `~/.zshrc` changes with you,
 auto-generate the daemon token on first `start-xats`, and wire up the
-`free-xats-codex` / `xats-codex` / `free-xats-opencode` / `xats-opencode`
-launchers plus `start-xats` / `stop-xats`.  Prefer doing it by hand?  Continue
-below.
+`free-xats-codex` / `xats-codex` / `xats-codex-app` /
+`free-xats-opencode` / `xats-opencode` launchers plus `start-xats` /
+`stop-xats`.  Prefer doing it by hand?  Continue below.
 
 ### Claude Code
 
