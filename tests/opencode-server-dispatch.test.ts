@@ -77,7 +77,7 @@ describe('dispatchOpencodeServerPoke', () => {
     expect(calls[0].init.headers['Authorization']).toBeUndefined()
   })
 
-  it('attaches Authorization: Bearer header when auth_token_ref resolves', async () => {
+  it('attaches Authorization: Basic header when auth_token_ref resolves', async () => {
     const { fetch: fetchMock, calls } = makeFetch({ status: 204 })
     await dispatchOpencodeServerPoke(
       {
@@ -89,7 +89,27 @@ describe('dispatchOpencodeServerPoke', () => {
         env: { OPENCODE_SERVER_PASSWORD: 'secret-token' },
       }
     )
-    expect(calls[0].init.headers['Authorization']).toBe('Bearer secret-token')
+    const expected = `Basic ${Buffer.from('opencode:secret-token').toString('base64')}`
+    expect(calls[0].init.headers['Authorization']).toBe(expected)
+  })
+
+  it('honors OPENCODE_SERVER_USERNAME for Basic auth', async () => {
+    const { fetch: fetchMock, calls } = makeFetch({ status: 204 })
+    await dispatchOpencodeServerPoke(
+      {
+        delivery: { ...DELIVERY, auth_token_ref: 'OPENCODE_SERVER_PASSWORD' },
+        content: 'hello',
+      },
+      {
+        fetch: fetchMock,
+        env: {
+          OPENCODE_SERVER_PASSWORD: 'pw',
+          OPENCODE_SERVER_USERNAME: 'alice',
+        },
+      }
+    )
+    const expected = `Basic ${Buffer.from('alice:pw').toString('base64')}`
+    expect(calls[0].init.headers['Authorization']).toBe(expected)
   })
 
   it('returns missing_auth_token (no network call) when auth_token_ref is unset in env', async () => {

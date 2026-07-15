@@ -55,6 +55,8 @@ export interface RuntimeUiPidMatch {
 
 export type CodexThreadMatch = RuntimeUiPidMatch
 
+export type OpencodeSessionMatch = RuntimeUiPidMatch
+
 export const REACHABLE_MS = 4 * 24 * 60 * 60 * 1000
 
 type DbAgentRow = {
@@ -149,6 +151,55 @@ export class AgentsRepo {
          END = ?
        ORDER BY last_seen_at DESC`
     ).all(localDevice, thread_id) as CodexThreadMatch[]
+  }
+
+  /**
+   * Precise opencode reverse lookup. base_url matched trailing-slash-tolerant;
+   * scoped to localDevice (remote servers unreachable here).
+   */
+  findByOpencodeSession(
+    base_url: string,
+    session_id: string,
+    localDevice: string
+  ): OpencodeSessionMatch[] {
+    return this.db.prepare(
+      `SELECT agent_id, device, team, name, role, last_seen_at
+       FROM agents
+       WHERE device = ?
+         AND role != '__channel_proxy__'
+         AND delivery_kind = 'opencode-server'
+         AND CASE
+           WHEN json_valid(delivery_payload)
+           THEN json_extract(delivery_payload, '$.session_id')
+         END = ?
+         AND CASE
+           WHEN json_valid(delivery_payload)
+           THEN rtrim(json_extract(delivery_payload, '$.base_url'), '/')
+         END = rtrim(?, '/')
+       ORDER BY last_seen_at DESC`
+    ).all(localDevice, session_id, base_url) as OpencodeSessionMatch[]
+  }
+
+  /**
+   * Broad base_url-only lookup for reconnect credential recovery.
+   * Multi-row (ambiguous) results must be surfaced, not auto-picked.
+   */
+  findByOpencodeBaseUrl(
+    base_url: string,
+    localDevice: string
+  ): OpencodeSessionMatch[] {
+    return this.db.prepare(
+      `SELECT agent_id, device, team, name, role, last_seen_at
+       FROM agents
+       WHERE device = ?
+         AND role != '__channel_proxy__'
+         AND delivery_kind = 'opencode-server'
+         AND CASE
+           WHEN json_valid(delivery_payload)
+           THEN rtrim(json_extract(delivery_payload, '$.base_url'), '/')
+         END = rtrim(?, '/')
+       ORDER BY last_seen_at DESC`
+    ).all(localDevice, base_url) as OpencodeSessionMatch[]
   }
 
   register(input: RegisterInput): {

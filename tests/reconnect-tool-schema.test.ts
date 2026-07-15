@@ -41,7 +41,7 @@ describe('reconnect tool schema validation', () => {
     cleanups.length = 0
   })
 
-  it('exposes reconnect with ui_pid and thread_id in tools/list', async () => {
+  it('exposes reconnect with ui_pid, thread_id and base_url in tools/list', async () => {
     const { dir, server, client, transport } = await setup()
     cleanups.push(dir)
     const resp = await client.listTools()
@@ -54,11 +54,16 @@ describe('reconnect tool schema validation', () => {
         thread_id: expect.anything(),
         ws_url: expect.anything(),
         auth_token_ref: expect.anything(),
+        base_url: expect.anything(),
+        session_id: expect.anything(),
       }),
     })
     expect(tool!.description).toContain('thread_id=$CODEX_THREAD_ID')
     expect(tool!.description).toContain('thread/resume')
     expect(tool!.description).toContain('stale stored identity')
+    expect(tool!.description).toContain('base_url=$OPENCODE_XATS_BASE_URL')
+    expect(tool!.description).toContain('auth_ambiguous')
+    expect(tool!.description).toContain('mix ref and no-ref')
     await transport.close()
     await client.close()
     await server.close()
@@ -143,6 +148,84 @@ describe('reconnect tool schema validation', () => {
 
     await transport.close()
     await client.close()
+    await server.close()
+  })
+
+  it('rejects invalid opencode reconnect keys at the schema layer', async () => {
+    const { dir, server, client, transport } = await setup()
+    cleanups.push(dir)
+
+    // non-http base_url
+    const badProto = await client.callTool({
+      name: 'reconnect',
+      arguments: { base_url: 'ftp://127.0.0.1:18888' },
+    }) as { isError?: boolean }
+    expect(badProto.isError).toBe(true)
+
+    // unparseable base_url
+    const unparseable = await client.callTool({
+      name: 'reconnect',
+      arguments: { base_url: 'not-a-url' },
+    }) as { isError?: boolean }
+    expect(unparseable.isError).toBe(true)
+
+    // session_id without base_url
+    const sessionWithoutBase = await client.callTool({
+      name: 'reconnect',
+      arguments: { session_id: 'ses_xyz' },
+    }) as { isError?: boolean }
+    expect(sessionWithoutBase.isError).toBe(true)
+
+    // session_id not starting with "ses"
+    const badSession = await client.callTool({
+      name: 'reconnect',
+      arguments: { base_url: 'http://127.0.0.1:18888', session_id: 'nope' },
+    }) as { isError?: boolean }
+    expect(badSession.isError).toBe(true)
+
+    // auth_token_ref without any primary key
+    const orphanAuth = await client.callTool({
+      name: 'reconnect',
+      arguments: { auth_token_ref: 'OPENSEND_TOKEN' },
+    }) as { isError?: boolean }
+    expect(orphanAuth.isError).toBe(true)
+
+    // mixed primary keys: base_url + ui_pid
+    const mixed = await client.callTool({
+      name: 'reconnect',
+      arguments: { base_url: 'http://127.0.0.1:18888', ui_pid: 25079 },
+    }) as { isError?: boolean }
+    expect(mixed.isError).toBe(true)
+
+    await transport.close()
+    await client.close()
+    await server.close()
+  })
+
+  it('accepts opencode reconnect shapes at the schema layer (no row mutation)', async () => {
+    const { dir, db, server, client, transport } = await setup()
+    cleanups.push(dir)
+
+    const shapes = [
+      { base_url: 'http://127.0.0.1:18888' },
+      { base_url: 'http://127.0.0.1:18888', session_id: 'ses_xyz' },
+      { base_url: 'http://127.0.0.1:18888', auth_token_ref: 'OPENSEND_TOKEN' },
+    ]
+    for (const args of shapes) {
+      // Schema acceptance = the call is NOT rejected with isError at the
+      // schema layer. Runtime errors (e.g. opencode_unreachable because no
+      // live server is configured here) are fine and still prove acceptance.
+      const resp = await client.callTool({ name: 'reconnect', arguments: args }) as {
+        isError?: boolean
+      }
+      expect(resp.isError, `reconnect(${JSON.stringify(args)}) should pass schema`).toBeFalsy()
+    }
+
+    const count = db.prepare(`SELECT COUNT(*) AS c FROM agents`).get() as { c: number }
+    expect(count.c).toBe(0)
+    await transport.close()
+    await client.close()
+    db.close()
     await server.close()
   })
 })

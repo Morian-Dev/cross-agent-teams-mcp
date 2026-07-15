@@ -33,6 +33,18 @@ function makeFetch(handlers: RouteHandler[]): typeof fetch {
 const healthHandler: RouteHandler = (url) =>
   url.endsWith('/global/health') ? { status: 200, body: '{"healthy":true}' } : null
 
+function sessionListHandler(ids: string[]): RouteHandler {
+  return (url) =>
+    url.endsWith('/session')
+      ? {
+          status: 200,
+          body: JSON.stringify(
+            ids.map((id, i) => ({ id, time_updated: 1000 + i }))
+          ),
+        }
+      : null
+}
+
 describe('RegisterOpencodeSelfService', () => {
   const cleanups: string[] = []
   afterEach(() => {
@@ -40,24 +52,23 @@ describe('RegisterOpencodeSelfService', () => {
     cleanups.length = 0
   })
 
-  function setup(fetchMock: typeof fetch) {
+  function setup(fetchMock: typeof fetch, env?: NodeJS.ProcessEnv) {
     const dir = tmp()
     cleanups.push(dir)
     const db = openDb(join(dir, 'data.db'))
     applySchema(db)
     const registerSvc = new RegisterAgentService(db)
-    const svc = new RegisterOpencodeSelfService(registerSvc, { fetch: fetchMock })
+    const svc = new RegisterOpencodeSelfService(registerSvc, { fetch: fetchMock, env })
     return { db, svc }
   }
 
   it('writes opencode-server delivery when session_id is explicit', async () => {
-    const fetchMock = makeFetch([healthHandler])
+    const fetchMock = makeFetch([healthHandler, sessionListHandler(['ses_xyz'])])
     const { db, svc } = setup(fetchMock)
 
     const result = await svc.register({
       connection_id: 'conn-1',
       name: 'oc-1',
-      team: 'default',
       base_url: BASE_URL,
       session_id: 'ses_xyz',
     })
@@ -250,8 +261,8 @@ describe('RegisterOpencodeSelfService', () => {
   })
 
   it('preserves auth_token_ref in delivery when supplied', async () => {
-    const fetchMock = makeFetch([healthHandler])
-    const { db, svc } = setup(fetchMock)
+    const fetchMock = makeFetch([healthHandler, sessionListHandler(['ses_abc'])])
+    const { db, svc } = setup(fetchMock, { OPENCODE_SERVER_PASSWORD: 'secret' })
 
     await svc.register({
       connection_id: 'conn-1',
@@ -272,7 +283,7 @@ describe('RegisterOpencodeSelfService', () => {
   })
 
   it('persists explicit model when supplied', async () => {
-    const fetchMock = makeFetch([healthHandler])
+    const fetchMock = makeFetch([healthHandler, sessionListHandler(['ses_abc'])])
     const { db, svc } = setup(fetchMock)
 
     await svc.register({
@@ -295,6 +306,9 @@ describe('RegisterOpencodeSelfService', () => {
       (url) => {
         seenUrls.push(url)
         if (url.endsWith('/global/health')) return { status: 200, body: '{"healthy":true}' }
+        if (url.endsWith('/session')) {
+          return { status: 200, body: JSON.stringify([{ id: 'ses_abc', time_updated: 1000 }]) }
+        }
         return null
       },
     ])
@@ -312,7 +326,7 @@ describe('RegisterOpencodeSelfService', () => {
   })
 
   it('returns envelope session_id matching caller-supplied value', async () => {
-    const fetchMock = makeFetch([healthHandler])
+    const fetchMock = makeFetch([healthHandler, sessionListHandler(['ses_explicit'])])
     const { svc } = setup(fetchMock)
 
     const result = await svc.register({
@@ -324,5 +338,91 @@ describe('RegisterOpencodeSelfService', () => {
 
     expect((result as { session_id: string }).session_id).toBe('ses_explicit')
     expect((result as { base_url: string }).base_url).toBe(BASE_URL)
+  })
+
+  it('returns session_not_found when explicit session_id is absent from the live list', async () => {
+    const fetchMock = makeFetch([healthHandler, sessionListHandler(['ses_other'])])
+    const { db, svc } = setup(fetchMock)
+
+    const result = await svc.register({
+      connection_id: 'conn-1',
+      name: 'oc-1',
+      base_url: BASE_URL,
+      session_id: 'ses_stale',
+    })
+
+    expect(result).toEqual({
+      error: 'session_not_found',
+      detail: { base_url: BASE_URL, session_id: 'ses_stale' },
+    })
+    const row = db.prepare('SELECT agent_id FROM agents WHERE name=?').get('oc-1')
+    expect(row).toBeUndefined()
+  })
+
+  it('returns missing_auth_token when auth_token_ref points at an unset env var', async () => {
+    const fetchMock = makeFetch([healthHandler, sessionListHandler(['ses_abc'])])
+    const { db, svc } = setup(fetchMock, {})
+
+    const result = await svc.register({
+      connection_id: 'conn-1',
+      name: 'oc-1',
+      base_url: BASE_URL,
+      session_id: 'ses_abc',
+      auth_token_ref: 'MISSING_TOKEN',
+    })
+
+    expect(result).toEqual({
+      error: 'missing_auth_token',
+      detail: { ref: 'MISSING_TOKEN' },
+    })
+    const row = db.prepare('SELECT agent_id FROM agents WHERE name=?').get('oc-1')
+    expect(row).toBeUndefined()
+  })
+
+  it('sends Authorization header on health and session when auth_token_ref resolves', async () => {
+    const seenHeaders: Record<string, string>[] = []
+    const fetchMock = makeFetch([
+      (url, init) => {
+        seenHeaders.push((init?.headers ?? {}) as Record<string, string>)
+        if (url.endsWith('/global/health')) return { status: 200, body: '{"healthy":true}' }
+        if (url.endsWith('/session')) {
+          return { status: 200, body: JSON.stringify([{ id: 'ses_abc', time_updated: 1000 }]) }
+        }
+        return null
+      },
+    ])
+    const { svc } = setup(fetchMock, { OPENCODE_SERVER_PASSWORD: 'tok123' })
+
+    const result = await svc.register({
+      connection_id: 'conn-1',
+      name: 'oc-1',
+      base_url: BASE_URL,
+      session_id: 'ses_abc',
+      auth_token_ref: 'OPENCODE_SERVER_PASSWORD',
+    })
+
+    expect(result).toMatchObject({ agent_id: expect.any(String) })
+    expect(seenHeaders.length).toBeGreaterThanOrEqual(2)
+    const expected = `Basic ${Buffer.from('opencode:tok123').toString('base64')}`
+    for (const h of seenHeaders) {
+      expect(h['Authorization']).toBe(expected)
+    }
+  })
+
+  it('returns opencode_unreachable (not no_active_session) when /session is non-2xx', async () => {
+    const fetchMock = makeFetch([
+      healthHandler,
+      (url) => (url.endsWith('/session') ? { status: 500, body: 'boom' } : null),
+    ])
+    const { svc } = setup(fetchMock)
+
+    const result = await svc.register({
+      connection_id: 'conn-1',
+      name: 'oc-1',
+      base_url: BASE_URL,
+    })
+
+    expect((result as { error: string }).error).toBe('opencode_unreachable')
+    expect((result as { detail: { cause: string } }).detail.cause).toMatch(/500/)
   })
 })

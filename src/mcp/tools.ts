@@ -24,6 +24,7 @@ import { RegisterCodexSelfService } from './register-codex-self.js'
 import { RegisterOpencodeSelfService } from './register-opencode-self.js'
 import {
   resolveCodexReconnect,
+  resolveOpencodeReconnect,
   resolveReconnect,
   type ReconnectResolution,
 } from './reconnect.js'
@@ -149,7 +150,8 @@ const RECONNECT_DESC = [
   'Invoke this when the user asks to "reconnect xats", "re-register xats", ' +
     '"重连 xats", or "重新注册 xats".',
   'Pass exactly one identity key: Claude Code passes `ui_pid=$PPID`; ' +
-    'Codex passes `thread_id=$CODEX_THREAD_ID`.',
+    'Codex passes `thread_id=$CODEX_THREAD_ID`; opencode passes ' +
+    '`base_url=$OPENCODE_XATS_BASE_URL` (and optionally `session_id`).',
   'Claude Code lookup uses local `runtime_ui_pid` and reuses the existing ' +
     'channel and pane binding paths.',
   'Codex lookup uses the local codex-appserver delivery `thread_id`. On a ' +
@@ -158,6 +160,24 @@ const RECONNECT_DESC = [
     'connection and fanout.',
   'Codex `ws_url` and `auth_token_ref` are optional and follow ' +
     'register_agent defaults.',
+  'opencode lookup uses the local `opencode-server` delivery ' +
+    '(base_url, session_id) pair. The daemon always revalidates the session ' +
+    'against `<base_url>/session` through the server before reusing an ' +
+    'identity: when `session_id` is omitted it picks the most recently ' +
+    'updated session; when supplied it confirms that id still exists. A ' +
+    'stale/unknown id returns `session_not_found` and no row is mutated. ' +
+    'For authenticated servers pass `auth_token_ref` (env-var name whose ' +
+    'value is the OPENCODE_SERVER_PASSWORD; username defaults to opencode or ' +
+    'OPENCODE_SERVER_USERNAME, both sent as HTTP Basic auth verbatim); ' +
+    '`missing_auth_token` is returned when the referenced env var is unset. ' +
+    'When reconnect omits `auth_token_ref`, the daemon first recovers a ' +
+    'stored ref from candidate rows: a single shared ref across candidates ' +
+    'is used to pre-validate the server (this is not identity selection) and ' +
+    'the row\'s ref is preserved on reuse. `auth_ambiguous` (zero write) is ' +
+    'returned when candidates carry multiple distinct non-empty refs, OR when ' +
+    'candidates mix ref and no-ref rows — in either case `detail.refs` lists ' +
+    'only the known non-empty refs (possibly a single element in the mixed ' +
+    'case); supply `auth_token_ref` explicitly to resolve.',
   'On a single match: returns { ok, agent_id, name, team, last_seen_at } ' +
     'plus the runtime-specific delivery fields.',
   'On zero matches: returns { need_register, reason } — reconnect does NOT ' +
@@ -167,7 +187,10 @@ const RECONNECT_DESC = [
   'Each candidate/match carries last_seen_at. A successful Codex resume ' +
     'proves the current app-server can load the thread, but cannot prove a ' +
     'stale stored identity still owns a reused thread id; surface stale or ' +
-    'ambiguous matches instead of silently trusting them.',
+    'ambiguous matches instead of trusting them without surfacing. The same ' +
+    'applies ' +
+    'to opencode: a reachable server proves the session exists, not that a ' +
+    'stale stored row still owns it.',
   'If you still remember (team, name), call register_agent directly instead ' +
     'of reconnect.',
 ].join(' ')
@@ -849,24 +872,55 @@ export function registerBusinessTools(
       message: 'ws_url must be a valid ws:// or wss:// URL',
     }).optional(),
     auth_token_ref: z.string().min(1).optional(),
+    base_url: z.string().min(1).refine(v => {
+      try {
+        const parsed = new URL(v)
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+      } catch {
+        return false
+      }
+    }, {
+      message: 'base_url must be a parseable http:// or https:// URL',
+    }).optional().describe(
+      'opencode server base URL (`$OPENCODE_XATS_BASE_URL`).'
+    ),
+    session_id: z.string().min(1).refine(v => v.startsWith('ses'), {
+      message: 'session_id must start with "ses"',
+    }).optional().describe(
+      'opencode session id. If omitted, the daemon resolves the most recently updated session from <base_url>/session before reverse-look-up.'
+    ),
   }).strict()
 
   const reconnectArgsSchema = reconnectInputSchema.superRefine((value, ctx) => {
     const keyCount = Number(value.ui_pid !== undefined)
       + Number(value.thread_id !== undefined)
+      + Number(value.base_url !== undefined)
     if (keyCount !== 1) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'provide exactly one of ui_pid or thread_id',
+        message: 'provide exactly one of ui_pid, thread_id, or base_url',
+      })
+    }
+    if (value.thread_id === undefined && value.ws_url !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'ws_url requires thread_id',
+      })
+    }
+    if (value.session_id !== undefined && value.base_url === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'session_id requires base_url',
       })
     }
     if (
-      value.thread_id === undefined
-      && (value.ws_url !== undefined || value.auth_token_ref !== undefined)
+      value.auth_token_ref !== undefined
+      && value.thread_id === undefined
+      && value.base_url === undefined
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'ws_url and auth_token_ref require thread_id',
+        message: 'auth_token_ref requires thread_id or base_url',
       })
     }
   })
@@ -966,18 +1020,123 @@ export function registerBusinessTools(
     }
   }
 
+  type RecoveredAuth =
+    | { kind: 'ref'; ref: string }
+    | { kind: 'none' }
+    | { kind: 'ambiguous'; refs: string[] }
+
+  function recoverOpencodeAuth(
+    base_url: string,
+    session_id: string | undefined,
+    callerAuth: string | undefined,
+    localDevice: string
+  ): RecoveredAuth {
+    if (callerAuth !== undefined) return { kind: 'ref', ref: callerAuth }
+    const rows = session_id !== undefined
+      ? agents.findByOpencodeSession(base_url, session_id, localDevice)
+      : agents.findByOpencodeBaseUrl(base_url, localDevice)
+    const refs = new Set<string>()
+    let hasNoRef = false
+    for (const row of rows) {
+      const full = agents.findById(row.agent_id)
+      const ref = full?.delivery.kind === 'opencode-server'
+        ? full.delivery.auth_token_ref
+        : undefined
+      if (ref) refs.add(ref)
+      else hasNoRef = true
+    }
+    const sortedRefs = Array.from(refs).sort()
+    // Mixed auth state (some candidates carry a ref, others don't) can't be
+    // auto-resolved: pre-validating with the shared ref would later 401 when
+    // the precise match is a no-ref row. Surface auth_ambiguous instead.
+    if (refs.size > 0 && hasNoRef) return { kind: 'ambiguous', refs: sortedRefs }
+    if (refs.size === 1) return { kind: 'ref', ref: sortedRefs[0]! }
+    if (refs.size > 1) return { kind: 'ambiguous', refs: sortedRefs }
+    return { kind: 'none' }
+  }
+
+  function readStoredOpencodeAuth(agent_id: string): string | undefined {
+    const existing = agents.findById(agent_id)
+    if (
+      existing
+      && existing.delivery.kind === 'opencode-server'
+      && existing.delivery.auth_token_ref
+    ) {
+      return existing.delivery.auth_token_ref
+    }
+    return undefined
+  }
+
+  async function executeOpencodeReconnect(args: {
+    base_url: string
+    session_id?: string
+    auth_token_ref?: string
+  }): Promise<unknown> {
+    const localDevice = context?.localDevice ?? 'local'
+    const recovered = recoverOpencodeAuth(
+      args.base_url, args.session_id, args.auth_token_ref, localDevice
+    )
+    if (recovered.kind === 'ambiguous') {
+      return { error: 'auth_ambiguous', detail: { refs: recovered.refs } }
+    }
+    const preAuth = recovered.kind === 'ref' ? recovered.ref : undefined
+    const resolved = await registerOpencodeSelfSvc.resolveSessionId(
+      args.base_url, preAuth, args.session_id
+    )
+    if ('error' in resolved) return resolved
+    const sessionId = resolved.session_id
+
+    const resolution = resolveOpencodeReconnect(
+      agents, args.base_url, sessionId, localDevice
+    )
+    if (resolution.kind !== 'single') return unresolvedReconnect(resolution)
+    const match = resolution.match
+
+    const authTokenRef = args.auth_token_ref ?? readStoredOpencodeAuth(match.agent_id)
+    const res = await executeRegister({
+      agent_type: 'opencode',
+      name: match.name,
+      team: match.team,
+      device: match.device,
+      role: match.role,
+      base_url: args.base_url,
+      session_id: sessionId,
+      auth_token_ref: authTokenRef,
+    })
+    if (typeof res !== 'object' || res === null || !('agent_id' in res)) return res
+    const envelope = res as { agent_id: string; team: string }
+    return {
+      ok: true,
+      agent_id: envelope.agent_id,
+      name: match.name,
+      team: envelope.team,
+      session_id: sessionId,
+      base_url: args.base_url,
+      last_seen_at: match.last_seen_at,
+    }
+  }
+
   async function executeReconnect(args: {
     ui_pid?: number
     thread_id?: string
     ws_url?: string
     auth_token_ref?: string
+    base_url?: string
+    session_id?: string
   }): Promise<unknown> {
     if (args.ui_pid !== undefined) {
       return executeClaudeReconnect(args.ui_pid)
     }
-    return executeCodexReconnect({
-      thread_id: args.thread_id!,
-      ws_url: args.ws_url,
+    if (args.thread_id !== undefined) {
+      return executeCodexReconnect({
+        thread_id: args.thread_id,
+        ws_url: args.ws_url,
+        auth_token_ref: args.auth_token_ref,
+      })
+    }
+    return executeOpencodeReconnect({
+      base_url: args.base_url!,
+      session_id: args.session_id,
       auth_token_ref: args.auth_token_ref,
     })
   }
@@ -994,6 +1153,8 @@ export function registerBusinessTools(
       thread_id?: string
       ws_url?: string
       auth_token_ref?: string
+      base_url?: string
+      session_id?: string
     }) => {
       return run(async () => executeReconnect(reconnectArgsSchema.parse(args)))
     }

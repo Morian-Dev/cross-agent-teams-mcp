@@ -64,6 +64,76 @@ vi.mock('../src/mcp/register-codex-self.js', () => ({
   },
 }))
 
+// Stub the opencode self-register service so tests do not hit a real HTTP
+// server. resolveSessionId mirrors the real validation contract:
+//  - base_url containing "unreachable"     -> opencode_unreachable
+//  - auth_token_ref === 'MISSING_TOKEN'    -> missing_auth_token
+//  - preferredSessionId === 'ses_notfound' -> session_not_found
+//  - otherwise echoes the preferred id, or 'ses_resolved' when auto-resolving.
+// register() simulates a register-phase failure for 'ses_register_fail'.
+vi.mock('../src/mcp/register-opencode-self.js', () => ({
+  RegisterOpencodeSelfService: class {
+    constructor(private readonly registerSvc: {
+      register: (input: Record<string, unknown>) => Record<string, unknown>
+    }) {}
+
+    async resolveSessionId(
+      baseUrlRaw: string,
+      authTokenRef?: string,
+      preferredSessionId?: string
+    ): Promise<Record<string, unknown>> {
+      if (/unreachable/i.test(baseUrlRaw)) {
+        return {
+          error: 'opencode_unreachable',
+          detail: { base_url: baseUrlRaw, cause: 'connection refused' },
+        }
+      }
+      if (authTokenRef === 'MISSING_TOKEN') {
+        return { error: 'missing_auth_token', detail: { ref: 'MISSING_TOKEN' } }
+      }
+      if (preferredSessionId === 'ses_notfound') {
+        return {
+          error: 'session_not_found',
+          detail: { base_url: baseUrlRaw, session_id: 'ses_notfound' },
+        }
+      }
+      return { session_id: preferredSessionId ?? 'ses_resolved' }
+    }
+
+    async register(
+      input: Record<string, unknown>
+    ): Promise<Record<string, unknown>> {
+      const sessionId = input.session_id as string
+      if (sessionId === 'ses_register_fail') {
+        return {
+          error: 'opencode_unreachable',
+          detail: { base_url: input.base_url, cause: 'health check failed' },
+        }
+      }
+      const result = this.registerSvc.register({
+        connection_id: input.connection_id,
+        agent_type: 'opencode',
+        model: input.model,
+        device: input.device,
+        name: input.name,
+        role: input.role,
+        team: input.team,
+        delivery: {
+          kind: 'opencode-server',
+          session_id: sessionId,
+          base_url: input.base_url,
+          ...(input.auth_token_ref === undefined
+            ? {}
+            : { auth_token_ref: input.auth_token_ref }),
+        },
+      })
+      return 'error' in result
+        ? result
+        : { ...result, session_id: sessionId, base_url: input.base_url }
+    }
+  },
+}))
+
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-reconnect-tool-'))
 
 async function parseTool(resp: unknown): Promise<Record<string, unknown>> {
@@ -166,6 +236,42 @@ function seedCodexAgent(
     JSON.stringify({
       thread_id: args.thread_id,
       ws_url: 'ws://127.0.0.1:8799',
+    }),
+    args.last_processed_event_id ?? 0,
+  )
+}
+
+function seedOpencodeAgent(
+  db: ReturnType<typeof openDb>,
+  args: {
+    agent_id: string
+    session_id: string
+    base_url?: string
+    device?: string
+    team?: string
+    name: string
+    last_seen_at: string
+    registered_at?: string
+    last_processed_event_id?: number
+    auth_token_ref?: string
+  }
+): void {
+  db.prepare(
+    `INSERT INTO agents (
+       agent_id, agent_type, device, team, role, name, registered_at, last_seen_at,
+       delivery_kind, delivery_payload, last_processed_event_id
+     ) VALUES (?, 'opencode', ?, ?, 'worker', ?, ?, ?, 'opencode-server', ?, ?)`
+  ).run(
+    args.agent_id,
+    args.device ?? 'local',
+    args.team ?? 'default',
+    args.name,
+    args.registered_at ?? args.last_seen_at,
+    args.last_seen_at,
+    JSON.stringify({
+      session_id: args.session_id,
+      base_url: args.base_url ?? 'http://127.0.0.1:18888',
+      ...(args.auth_token_ref === undefined ? {} : { auth_token_ref: args.auth_token_ref }),
     }),
     args.last_processed_event_id ?? 0,
   )
@@ -504,6 +610,478 @@ describe('reconnect tool', () => {
       `SELECT last_seen_at FROM agents WHERE agent_id='C'`
     ).get() as { last_seen_at: string }
     expect(row.last_seen_at).toBe('2024-01-02T00:00:00.000Z')
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  const OC_BASE_URL = 'http://127.0.0.1:18888'
+
+  it('reconnects a single local opencode identity by (base_url, session_id)', async () => {
+    const { dir, db, server, client, transport, holder } = await setup()
+    cleanups.push(dir)
+    const registeredAt = '2024-01-01T00:00:00.000Z'
+    const lastSeen = '2024-01-02T00:00:00.000Z'
+    seedOpencodeAgent(db, {
+      agent_id: 'O',
+      session_id: 'ses_oc1',
+      base_url: OC_BASE_URL,
+      name: 'xats-opencode',
+      last_seen_at: lastSeen,
+      registered_at: registeredAt,
+      last_processed_event_id: 42,
+    })
+
+    const resp = await client.callTool({
+      name: 'reconnect',
+      arguments: { base_url: OC_BASE_URL, session_id: 'ses_oc1' },
+    })
+    const obj = await parseTool(resp)
+
+    expect(obj).toMatchObject({
+      ok: true,
+      agent_id: 'O',
+      name: 'xats-opencode',
+      team: 'default',
+      session_id: 'ses_oc1',
+      base_url: OC_BASE_URL,
+      last_seen_at: lastSeen,
+    })
+    expect(holder.current).toBe('O')
+    const row = db.prepare(
+      `SELECT agent_id, registered_at, last_seen_at, last_processed_event_id
+       FROM agents WHERE agent_id='O'`
+    ).get() as {
+      agent_id: string
+      registered_at: string
+      last_seen_at: string
+      last_processed_event_id: number
+    }
+    expect(row.registered_at).toBe(registeredAt)
+    expect(row.last_processed_event_id).toBe(42)
+    expect(row.last_seen_at).not.toBe(lastSeen)
+
+    const count = db.prepare(
+      `SELECT COUNT(*) AS c FROM agents WHERE name='xats-opencode'`
+    ).get() as { c: number }
+    expect(count.c).toBe(1)
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it('auto-resolves session_id from base_url when session_id is omitted', async () => {
+    const { dir, db, server, client, transport } = await setup()
+    cleanups.push(dir)
+    // Mock resolveSessionId returns 'ses_resolved' for reachable base_urls.
+    seedOpencodeAgent(db, {
+      agent_id: 'O',
+      session_id: 'ses_resolved',
+      base_url: OC_BASE_URL,
+      name: 'xats-opencode',
+      last_seen_at: '2024-01-02T00:00:00.000Z',
+    })
+
+    const resp = await client.callTool({
+      name: 'reconnect',
+      arguments: { base_url: OC_BASE_URL },
+    })
+    const obj = await parseTool(resp)
+
+    expect(obj).toMatchObject({
+      ok: true,
+      agent_id: 'O',
+      name: 'xats-opencode',
+      session_id: 'ses_resolved',
+      base_url: OC_BASE_URL,
+    })
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it('returns need_register when no local opencode row matches (base_url, session_id)', async () => {
+    const { dir, db, server, client, transport } = await setup()
+    cleanups.push(dir)
+    seedOpencodeAgent(db, {
+      agent_id: 'O',
+      session_id: 'ses_other',
+      base_url: OC_BASE_URL,
+      name: 'xats-opencode',
+      last_seen_at: '2024-01-02T00:00:00.000Z',
+    })
+
+    const resp = await client.callTool({
+      name: 'reconnect',
+      arguments: { base_url: OC_BASE_URL, session_id: 'ses_nomatch' },
+    })
+    const obj = await parseTool(resp)
+
+    expect(obj.need_register).toBe(true)
+    expect(obj.reason).toContain('ses_nomatch')
+    const row = db.prepare(
+      `SELECT last_seen_at FROM agents WHERE agent_id='O'`
+    ).get() as { last_seen_at: string }
+    expect(row.last_seen_at).toBe('2024-01-02T00:00:00.000Z')
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it('returns ambiguous opencode candidates ordered by last_seen_at without mutation', async () => {
+    const { dir, db, server, client, transport } = await setup()
+    cleanups.push(dir)
+    seedOpencodeAgent(db, {
+      agent_id: 'O1',
+      session_id: 'ses_dup',
+      base_url: OC_BASE_URL,
+      name: 'older-oc',
+      last_seen_at: '2024-01-01T00:00:00.000Z',
+    })
+    seedOpencodeAgent(db, {
+      agent_id: 'O2',
+      session_id: 'ses_dup',
+      base_url: OC_BASE_URL,
+      name: 'newer-oc',
+      last_seen_at: '2024-06-01T00:00:00.000Z',
+    })
+
+    const resp = await client.callTool({
+      name: 'reconnect',
+      arguments: { base_url: OC_BASE_URL, session_id: 'ses_dup' },
+    })
+    const obj = await parseTool(resp)
+
+    expect(obj.ambiguous).toBe(true)
+    const candidates = obj.candidates as Array<{ name: string; last_seen_at: string }>
+    expect(candidates.map(c => c.name)).toEqual(['newer-oc', 'older-oc'])
+    const rows = db.prepare(
+      `SELECT agent_id, last_seen_at FROM agents ORDER BY agent_id`
+    ).all()
+    expect(rows).toEqual([
+      { agent_id: 'O1', last_seen_at: '2024-01-01T00:00:00.000Z' },
+      { agent_id: 'O2', last_seen_at: '2024-06-01T00:00:00.000Z' },
+    ])
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it('does not match a remote-device opencode row (returns need_register)', async () => {
+    const { dir, db, server, client, transport } = await setup()
+    cleanups.push(dir)
+    seedOpencodeAgent(db, {
+      agent_id: 'R',
+      session_id: 'ses_rem',
+      base_url: OC_BASE_URL,
+      device: 'gx',
+      name: 'remote-oc',
+      last_seen_at: '2024-01-02T00:00:00.000Z',
+    })
+
+    const resp = await client.callTool({
+      name: 'reconnect',
+      arguments: { base_url: OC_BASE_URL, session_id: 'ses_rem' },
+    })
+    const obj = await parseTool(resp)
+
+    expect(obj.need_register).toBe(true)
+    expect(obj.ok).toBeUndefined()
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it('returns opencode_unreachable without mutation when session resolve fails', async () => {
+    const { dir, db, server, client, transport } = await setup()
+    cleanups.push(dir)
+    const unreachableUrl = 'http://unreachable-host:9999'
+
+    const resp = await client.callTool({
+      name: 'reconnect',
+      arguments: { base_url: unreachableUrl },
+    })
+    const obj = await parseTool(resp)
+
+    expect(obj).toEqual({
+      error: 'opencode_unreachable',
+      detail: { base_url: unreachableUrl, cause: 'connection refused' },
+    })
+    const count = db.prepare(`SELECT COUNT(*) AS c FROM agents`).get() as { c: number }
+    expect(count.c).toBe(0)
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it('does not reclaim an opencode identity when register-phase health check fails', async () => {
+    const { dir, db, server, client, transport } = await setup()
+    cleanups.push(dir)
+    // Sentinel session_id makes the stubbed register() return opencode_unreachable.
+    seedOpencodeAgent(db, {
+      agent_id: 'O',
+      session_id: 'ses_register_fail',
+      base_url: OC_BASE_URL,
+      name: 'xats-opencode',
+      last_seen_at: '2024-01-02T00:00:00.000Z',
+    })
+
+    const resp = await client.callTool({
+      name: 'reconnect',
+      arguments: { base_url: OC_BASE_URL, session_id: 'ses_register_fail' },
+    })
+    const obj = await parseTool(resp)
+
+    expect(obj).toEqual({
+      error: 'opencode_unreachable',
+      detail: { base_url: OC_BASE_URL, cause: 'health check failed' },
+    })
+    const row = db.prepare(
+      `SELECT last_seen_at FROM agents WHERE agent_id='O'`
+    ).get() as { last_seen_at: string }
+    expect(row.last_seen_at).toBe('2024-01-02T00:00:00.000Z')
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it('returns session_not_found when explicit session_id is stale, without mutation', async () => {
+    const { dir, db, server, client, transport } = await setup()
+    cleanups.push(dir)
+    // A DB row exists for the stale id, but the live server list no longer has it.
+    seedOpencodeAgent(db, {
+      agent_id: 'O',
+      session_id: 'ses_notfound',
+      base_url: OC_BASE_URL,
+      name: 'xats-opencode',
+      last_seen_at: '2024-01-02T00:00:00.000Z',
+    })
+
+    const resp = await client.callTool({
+      name: 'reconnect',
+      arguments: { base_url: OC_BASE_URL, session_id: 'ses_notfound' },
+    })
+    const obj = await parseTool(resp)
+
+    expect(obj).toEqual({
+      error: 'session_not_found',
+      detail: { base_url: OC_BASE_URL, session_id: 'ses_notfound' },
+    })
+    const row = db.prepare(
+      `SELECT last_seen_at FROM agents WHERE agent_id='O'`
+    ).get() as { last_seen_at: string }
+    expect(row.last_seen_at).toBe('2024-01-02T00:00:00.000Z')
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it('returns missing_auth_token when auth_token_ref points at an unset env var', async () => {
+    const { dir, db, server, client, transport } = await setup()
+    cleanups.push(dir)
+    seedOpencodeAgent(db, {
+      agent_id: 'O',
+      session_id: 'ses_oc1',
+      base_url: OC_BASE_URL,
+      name: 'xats-opencode',
+      last_seen_at: '2024-01-02T00:00:00.000Z',
+    })
+
+    const resp = await client.callTool({
+      name: 'reconnect',
+      arguments: { base_url: OC_BASE_URL, session_id: 'ses_oc1', auth_token_ref: 'MISSING_TOKEN' },
+    })
+    const obj = await parseTool(resp)
+
+    expect(obj).toEqual({
+      error: 'missing_auth_token',
+      detail: { ref: 'MISSING_TOKEN' },
+    })
+    const row = db.prepare(
+      `SELECT last_seen_at FROM agents WHERE agent_id='O'`
+    ).get() as { last_seen_at: string }
+    expect(row.last_seen_at).toBe('2024-01-02T00:00:00.000Z')
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it('preserves the existing auth_token_ref when reconnect omits it', async () => {
+    const { dir, db, server, client, transport } = await setup()
+    cleanups.push(dir)
+    seedOpencodeAgent(db, {
+      agent_id: 'O',
+      session_id: 'ses_keep',
+      base_url: OC_BASE_URL,
+      name: 'xats-opencode',
+      last_seen_at: '2024-01-02T00:00:00.000Z',
+      auth_token_ref: 'OLD_TOKEN',
+    })
+
+    const resp = await client.callTool({
+      name: 'reconnect',
+      arguments: { base_url: OC_BASE_URL, session_id: 'ses_keep' },
+    })
+    const obj = await parseTool(resp)
+
+    expect(obj.ok).toBe(true)
+    const row = db.prepare(
+      `SELECT delivery_payload FROM agents WHERE agent_id='O'`
+    ).get() as { delivery_payload: string }
+    expect(JSON.parse(row.delivery_payload).auth_token_ref).toBe('OLD_TOKEN')
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it('overwrites the auth_token_ref when reconnect supplies a new one', async () => {
+    const { dir, db, server, client, transport } = await setup()
+    cleanups.push(dir)
+    seedOpencodeAgent(db, {
+      agent_id: 'O',
+      session_id: 'ses_keep',
+      base_url: OC_BASE_URL,
+      name: 'xats-opencode',
+      last_seen_at: '2024-01-02T00:00:00.000Z',
+      auth_token_ref: 'OLD_TOKEN',
+    })
+
+    const resp = await client.callTool({
+      name: 'reconnect',
+      arguments: { base_url: OC_BASE_URL, session_id: 'ses_keep', auth_token_ref: 'NEW_TOKEN' },
+    })
+    const obj = await parseTool(resp)
+
+    expect(obj.ok).toBe(true)
+    const row = db.prepare(
+      `SELECT delivery_payload FROM agents WHERE agent_id='O'`
+    ).get() as { delivery_payload: string }
+    expect(JSON.parse(row.delivery_payload).auth_token_ref).toBe('NEW_TOKEN')
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it('returns auth_ambiguous when candidates carry multiple distinct stored refs', async () => {
+    const { dir, db, server, client, transport } = await setup()
+    cleanups.push(dir)
+    seedOpencodeAgent(db, {
+      agent_id: 'A', session_id: 'ses_multi', base_url: OC_BASE_URL,
+      name: 'oc-a', last_seen_at: '2024-01-01T00:00:00.000Z', auth_token_ref: 'REF_A',
+    })
+    seedOpencodeAgent(db, {
+      agent_id: 'B', session_id: 'ses_multi', base_url: OC_BASE_URL,
+      name: 'oc-b', last_seen_at: '2024-06-01T00:00:00.000Z', auth_token_ref: 'REF_B',
+    })
+
+    const resp = await client.callTool({
+      name: 'reconnect',
+      arguments: { base_url: OC_BASE_URL, session_id: 'ses_multi' },
+    })
+    const obj = await parseTool(resp)
+
+    expect(obj).toEqual({
+      error: 'auth_ambiguous',
+      detail: { refs: ['REF_A', 'REF_B'] },
+    })
+    // Zero write: both rows unchanged.
+    const rows = db.prepare(
+      `SELECT agent_id, last_seen_at FROM agents ORDER BY agent_id`
+    ).all() as Array<{ agent_id: string; last_seen_at: string }>
+    expect(rows).toEqual([
+      { agent_id: 'A', last_seen_at: '2024-01-01T00:00:00.000Z' },
+      { agent_id: 'B', last_seen_at: '2024-06-01T00:00:00.000Z' },
+    ])
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it('returns auth_ambiguous when candidates mix ref and no-ref rows', async () => {
+    const { dir, db, server, client, transport } = await setup()
+    cleanups.push(dir)
+    seedOpencodeAgent(db, {
+      agent_id: 'A', session_id: 'ses_mix', base_url: OC_BASE_URL,
+      name: 'oc-a', last_seen_at: '2024-01-01T00:00:00.000Z', auth_token_ref: 'REF_A',
+    })
+    seedOpencodeAgent(db, {
+      agent_id: 'B', session_id: 'ses_mix', base_url: OC_BASE_URL,
+      name: 'oc-b', last_seen_at: '2024-06-01T00:00:00.000Z',
+    })
+
+    const resp = await client.callTool({
+      name: 'reconnect',
+      arguments: { base_url: OC_BASE_URL, session_id: 'ses_mix' },
+    })
+    const obj = await parseTool(resp)
+
+    expect(obj).toEqual({
+      error: 'auth_ambiguous',
+      detail: { refs: ['REF_A'] },
+    })
+    const rows = db.prepare(
+      `SELECT agent_id, last_seen_at FROM agents ORDER BY agent_id`
+    ).all() as Array<{ agent_id: string; last_seen_at: string }>
+    expect(rows).toEqual([
+      { agent_id: 'A', last_seen_at: '2024-01-01T00:00:00.000Z' },
+      { agent_id: 'B', last_seen_at: '2024-06-01T00:00:00.000Z' },
+    ])
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it('uses a single shared ref across multiple candidates to reach ambiguous (not unreachable)', async () => {
+    const { dir, db, server, client, transport } = await setup()
+    cleanups.push(dir)
+    seedOpencodeAgent(db, {
+      agent_id: 'A', session_id: 'ses_shared', base_url: OC_BASE_URL,
+      name: 'oc-a', last_seen_at: '2024-01-01T00:00:00.000Z', auth_token_ref: 'SHARED_REF',
+    })
+    seedOpencodeAgent(db, {
+      agent_id: 'B', session_id: 'ses_shared', base_url: OC_BASE_URL,
+      name: 'oc-b', last_seen_at: '2024-06-01T00:00:00.000Z', auth_token_ref: 'SHARED_REF',
+    })
+
+    const resp = await client.callTool({
+      name: 'reconnect',
+      arguments: { base_url: OC_BASE_URL, session_id: 'ses_shared' },
+    })
+    const obj = await parseTool(resp)
+
+    // Shared ref lets the server pre-validation proceed; the precise resolver
+    // then surfaces the multiple identity rows as ambiguous (no mutation).
+    expect(obj.ambiguous).toBe(true)
+    const candidates = obj.candidates as Array<{ name: string }>
+    expect(candidates.map(c => c.name)).toEqual(['oc-b', 'oc-a'])
 
     await transport.close()
     await client.close()

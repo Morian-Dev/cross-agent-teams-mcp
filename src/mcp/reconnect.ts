@@ -74,3 +74,27 @@ export function resolveCodexReconnect(
   }
   return { kind: 'ambiguous', candidates: rows.map(toCandidate) }
 }
+
+/** Pure-read opencode reverse lookup by (base_url, session_id). */
+export function resolveOpencodeReconnect(
+  repo: AgentsRepo,
+  base_url: string,
+  session_id: string,
+  localDevice: string
+): ReconnectResolution {
+  const rows = repo.findByOpencodeSession(base_url, session_id, localDevice)
+  if (rows.length === 0) {
+    return {
+      kind: 'need_register',
+      reason:
+        `No local opencode agent is registered for session_id ${session_id} ` +
+        `on base_url ${base_url}. ` +
+        'There is no prior identity to reconnect; call register_agent to ' +
+        'register a new identity.',
+    }
+  }
+  if (rows.length === 1) {
+    return { kind: 'single', match: toCandidate(rows[0]) }
+  }
+  return { kind: 'ambiguous', candidates: rows.map(toCandidate) }
+}

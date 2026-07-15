@@ -1,5 +1,6 @@
 import type { DeliveryOpencodeServer } from '../lib/delivery-spec.js'
-import { describeError, resolveAuthToken } from './codex-appserver-rpc.js'
+import { describeError } from './codex-appserver-rpc.js'
+import { opencodeAuthHeaders } from './opencode-auth.js'
 
 type FetchLike = typeof globalThis.fetch
 
@@ -40,13 +41,13 @@ export async function dispatchOpencodeServerPoke(
   const env = deps.env ?? process.env
   const fetchImpl = deps.fetch ?? globalThis.fetch
 
-  const authToken = resolveAuthToken(input.delivery.auth_token_ref, env)
-  if ('error' in authToken) return authToken
+  const auth = opencodeAuthHeaders(input.delivery.auth_token_ref, env)
+  if ('error' in auth) return auth
 
   const url = `${input.delivery.base_url.replace(/\/+$/, '')}/session/${encodeURIComponent(input.delivery.session_id)}/prompt_async`
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (authToken.ok !== undefined) {
-    headers['Authorization'] = `Bearer ${authToken.ok}`
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...auth.headers,
   }
   const body = JSON.stringify({
     parts: [{ type: 'text', text: input.content }],
