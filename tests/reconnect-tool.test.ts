@@ -455,7 +455,7 @@ describe('reconnect tool', () => {
     await server.close()
   })
 
-  it('reconnects a single local codex identity by thread_id', async () => {
+  it('reconnects a stale Codex CLI/App identity by CODEX_THREAD_ID', async () => {
     const { dir, db, server, client, transport, holder } = await setup()
     cleanups.push(dir)
     const threadId = '11111111-1111-4111-8111-111111111111'
@@ -526,9 +526,15 @@ describe('reconnect tool', () => {
     expect(obj.need_register).toBe(true)
     expect(obj.reason).toContain(threadId)
     const row = db.prepare(
-      `SELECT last_seen_at FROM agents WHERE agent_id='C'`
-    ).get() as { last_seen_at: string }
-    expect(row.last_seen_at).toBe('2024-01-02T00:00:00.000Z')
+      `SELECT agent_id, registered_at, last_seen_at, last_processed_event_id
+       FROM agents WHERE agent_id='C'`
+    ).get()
+    expect(row).toEqual({
+      agent_id: 'C',
+      registered_at: '2024-01-02T00:00:00.000Z',
+      last_seen_at: '2024-01-02T00:00:00.000Z',
+      last_processed_event_id: 0,
+    })
 
     await transport.close()
     await client.close()
@@ -586,7 +592,7 @@ describe('reconnect tool', () => {
   )
 
   it('does not reclaim a codex identity when thread/resume fails', async () => {
-    const { dir, db, server, client, transport } = await setup()
+    const { dir, db, server, client, transport, holder } = await setup()
     cleanups.push(dir)
     const threadId = '99999999-9999-4999-8999-999999999999'
     seedCodexAgent(db, {
@@ -607,9 +613,16 @@ describe('reconnect tool', () => {
       detail: { thread_id: threadId, cause: 'no rollout found' },
     })
     const row = db.prepare(
-      `SELECT last_seen_at FROM agents WHERE agent_id='C'`
-    ).get() as { last_seen_at: string }
-    expect(row.last_seen_at).toBe('2024-01-02T00:00:00.000Z')
+      `SELECT agent_id, registered_at, last_seen_at, last_processed_event_id
+       FROM agents WHERE agent_id='C'`
+    ).get()
+    expect(row).toEqual({
+      agent_id: 'C',
+      registered_at: '2024-01-02T00:00:00.000Z',
+      last_seen_at: '2024-01-02T00:00:00.000Z',
+      last_processed_event_id: 0,
+    })
+    expect(holder.current).toBeUndefined()
 
     await transport.close()
     await client.close()

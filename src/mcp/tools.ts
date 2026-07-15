@@ -150,14 +150,21 @@ const RECONNECT_DESC = [
   'Invoke this when the user asks to "reconnect xats", "re-register xats", ' +
     '"重连 xats", or "重新注册 xats".',
   'Pass exactly one identity key: Claude Code passes `ui_pid=$PPID`; ' +
-    'Codex passes `thread_id=$CODEX_THREAD_ID`; opencode passes ' +
+    'Codex CLI and Mac Codex App pass ' +
+    '`thread_id=$CODEX_THREAD_ID`; opencode passes ' +
     '`base_url=$OPENCODE_XATS_BASE_URL` (and optionally `session_id`).',
   'Claude Code lookup uses local `runtime_ui_pid` and reuses the existing ' +
     'channel and pane binding paths.',
+  'For Codex CLI and Mac Codex App, `CODEX_THREAD_ID` is the stable ' +
+    'conversation/thread identity when the same task is resumed after a ' +
+    'context clear, MCP session replacement, or conversation resume. Do not ' +
+    'use the ' +
+    'App pid, app-server pid, or an old database row as proof of identity.',
   'Codex lookup uses the local codex-appserver delivery `thread_id`. On a ' +
     'single match, the daemon verifies `thread/resume` through the configured ' +
     'Codex app-server before reusing the identity and rebinding the current ' +
-    'connection and fanout.',
+    'connection and fanout. No agent row is mutated when that verification ' +
+    'fails.',
   'Codex `ws_url` and `auth_token_ref` are optional and follow ' +
     'register_agent defaults.',
   'opencode lookup uses the local `opencode-server` delivery ' +
@@ -818,14 +825,14 @@ export function registerBusinessTools(
         'Register this session as an agent in a team. This is the unified registration entry point.',
         'DETECTION (run these probes BEFORE choosing `agent_type=`, in order; first match wins):',
         '1. `printenv OPENCODE_XATS_BASE_URL` non-empty → `agent_type="opencode"`; pass that value as `base_url`. Do NOT pass `session_id` — the daemon auto-resolves it as the most recently updated session on that base_url. The env var is set ONLY by the `free-xats-opencode` launcher, so its presence is itself the runtime assertion that the caller is opencode.',
-        '2. `printenv CODEX_THREAD_ID` non-empty → `agent_type="codex"`; pass that value as `thread_id` (REQUIRED for codex per the schema). Do NOT pass `ui_pid` (the launcher\'s `pre_register_codex_pane` flow handles tmux pane binding; supplying `ui_pid` from codex disables that auto-bind path).',
+        '2. `printenv CODEX_THREAD_ID` non-empty (Codex CLI or Mac Codex App) → `agent_type="codex"`; pass that value as `thread_id` (REQUIRED for codex per the schema). For Codex CLI, do NOT pass `ui_pid` because the launcher\'s `pre_register_codex_pane` flow handles tmux binding and an explicit pid disables that path. Mac Codex App has no tmux launcher flow; omit `ui_pid` because an App or app-server pid is not conversation-scoped, and reconnect identity is `thread_id` only.',
         '3. `printenv CLAUDECODE` non-empty OR `printenv CLAUDE_CODE_ENTRYPOINT` non-empty → `agent_type="claude-code"`; pass `$PPID` as `ui_pid` to enable channel auto-bind.',
         '4. None of the above → `agent_type="custom"` with `agent_type_name="<the harness you are running under, e.g. cursor, opencode, ...>"` (`agent_type_name` is required when `agent_type="custom"`). Detect the harness name from your runtime environment if you can — e.g. `printenv CURSOR_TRACE_ID` non-empty means cursor — but do NOT guess from system-wide signals like "binary X exists on PATH": such probes detect what the user has installed, not what runtime you are inside, and pick the wrong agent type. When unsure, prefer `agent_type_name="unknown"` over a wrong guess.',
         'Calling this tool again with the same `(device, team, name)` identity reuses the existing `agent_id` and refreshes `tmux_pane_id` and `model`; no duplicate row is created.',
         'Use `agent_type="custom"` for unsupported agent harnesses; provide `agent_type_name` for observability.',
         'opencode sessions: pass `agent_type="opencode"` and `base_url` (from `$OPENCODE_XATS_BASE_URL`, set by the `free-xats-opencode` launcher). Omit `session_id` — the daemon auto-resolves it via `<base_url>/session` (most recently updated). `auth_token_ref` is optional; set only when `OPENCODE_SERVER_PASSWORD` is configured on the opencode server. The schema REQUIRES `base_url` (parseable `http://` or `https://` URL) when `agent_type="opencode"`; missing/malformed `base_url` is rejected before any HTTP probe runs.',
         'Claude Code sessions: pass `agent_type="claude-code"` and PREFERRED: pass only `ui_pid` (from `$PPID`) so the daemon auto-binds channel delivery — do not pass `channel_session_id` explicitly. When BOTH `ui_pid` AND `channel_session_id` are supplied, the daemon runs a consistency check against the caller `ui_pid`\'s live channel proxy; if the proxy\'s csid does not match the supplied `channel_session_id`, the call is rejected with `channel_session_id_ui_pid_mismatch` before any agent row is written. To re-establish a prior identity on a fresh/resumed session where you no longer remember your (team, name) (changed csid, unchanged $PPID), prefer `reconnect({ ui_pid })` over the bind_channel→register fallback; `bind_channel` only rebinds a session already bound to your agent. If instead you still remember your (team, name) after a restart + resume (changed $PPID), call register_agent directly with that remembered (team, name) and the current $PPID rather than reconnect.',
-        'Codex sessions: pass `agent_type="codex"` and `thread_id` (from `$CODEX_THREAD_ID`) to register Codex app-server delivery. The schema REQUIRES `thread_id` when `agent_type="codex"`; missing or empty `thread_id` is rejected before any handshake runs. Launcher pre-reg callers without `thread_id` should use `pre_register_codex_pane` instead. `ws_url` defaults to `ws://127.0.0.1:8799` (env override `CROSS_AGENT_TEAMS_CODEX_WS_URL`); `model` defaults to `gpt` when omitted. For `agent_type="claude-code"` callers, `model` defaults to a Claude-specific value derived from MCP session client info when omitted.',
+        'Codex CLI and Mac Codex App sessions: pass `agent_type="codex"` and `thread_id` (from `$CODEX_THREAD_ID`) to register Codex app-server delivery. The schema REQUIRES `thread_id` when `agent_type="codex"`; missing or empty `thread_id` is rejected before any handshake runs. Codex CLI launcher callers without `thread_id` should use `pre_register_codex_pane`; Mac Codex App does not use that tmux launcher path. `ws_url` defaults to `ws://127.0.0.1:8799` (env override `CROSS_AGENT_TEAMS_CODEX_WS_URL`); `model` defaults to `gpt` when omitted. For `agent_type="claude-code"` callers, `model` defaults to a Claude-specific value derived from MCP session client info when omitted.',
         '`model` is OPTIONAL for any agent_type: omit it when you do not have an authoritative model identifier; the daemon stores NULL in that case. Pass an explicit `model` only when you have a stable identifier you would like surfaced via `list_agents`.',
         'Requests such as "register to xats" or "register to cross-agent-teams" refer to this MCP service, not to the `team` field; do not set `team` to `xats` or `cross-agent-teams` from those phrases.',
         'Do not treat the bare word "register" as a request for this tool unless the current conversation is already about cross-agent-teams registration.',
@@ -866,7 +873,7 @@ export function registerBusinessTools(
       'Claude UI process id (`$PPID` inside Claude Code).'
     ),
     thread_id: z.string().uuid().optional().describe(
-      'Codex thread id from `$CODEX_THREAD_ID`.'
+      'Codex CLI or Mac Codex App thread id from `$CODEX_THREAD_ID`.'
     ),
     ws_url: z.string().refine(isWebSocketUrl, {
       message: 'ws_url must be a valid ws:// or wss:// URL',

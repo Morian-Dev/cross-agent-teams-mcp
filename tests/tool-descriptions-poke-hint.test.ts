@@ -171,6 +171,8 @@ describe('tool descriptions: auto-poke and delivery status', () => {
     expect(d).toMatch(/codex/i)
     expect(d).toMatch(/thread_id/)
     expect(d).toMatch(/CODEX_THREAD_ID/)
+    expect(d).toMatch(/Mac Codex App/)
+    expect(d).toMatch(/not conversation-scoped/)
   })
 
   it('register_agent describes project_dir team derivation', async () => {

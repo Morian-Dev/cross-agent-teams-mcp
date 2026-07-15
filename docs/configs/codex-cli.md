@@ -54,6 +54,31 @@ register_agent({
 { "agent_id": "...", "team": "...", "thread_id": "...", "ws_url": "ws://127.0.0.1:8799" }
 ```
 
+### Mac Codex App reconnect
+
+Mac Codex App 的 MCP 工具进程同样会导出 `CODEX_THREAD_ID`.  对同一个 Codex task,
+已验证的 context clear, MCP session replacement, 以及 conversation resume 场景中,
+这个值仍然是同一个 conversation/thread identity.  因此忘记 `(team, name)` 后可以调用:
+
+```text
+reconnect({
+  thread_id: "<value of $CODEX_THREAD_ID>"
+})
+```
+
+`thread_id` 只用于查找本机候选身份.  daemon 在复用旧身份前仍会连接当前配置的
+Codex app-server 并执行 `thread/resume`.  只有恢复握手成功后才会复用原
+`agent_id`, takeover 旧 MCP session, 并重绑当前 connection 和 fanout.  握手失败时
+不会修改 agent row.  App pid, app-server pid, 以及旧数据库行都不能单独作为恢复依据.
+
+Mac Codex App quit/relaunch 后是否继续导出同一个 `CODEX_THREAD_ID` 取决于 App 的
+conversation 恢复行为, 当前未验证, 不应仅凭旧 ID 假定身份仍然有效.  reconnect
+仍会用实际 `thread/resume` 作为恢复前的必要验证.
+
+Mac Codex App 仍需要可访问的 Codex app-server.  默认地址是
+`ws://127.0.0.1:8799`, 也可以通过 `CROSS_AGENT_TEAMS_CODEX_WS_URL` 或调用参数
+`ws_url` 覆盖.
+
 后续 `poke` 走 `codex-appserver` transport (websocket 直接进对方 thread 里 start a turn).
 
 下面的"方案 2"是更底层的入口和历史用法, 一般不需要.  Tmux pane 兜底 delivery 不再需要专门的本地脚本: `register_agent` 注册成功后会 best-effort 自动尝试 runtime 绑定; 如果响应里仍然带了 `hint`, 调用 `bind_runtime_identity(...)` 显式绑定即可.
