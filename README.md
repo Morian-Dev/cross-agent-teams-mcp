@@ -170,19 +170,19 @@ In this minimum mode, `send_message` to this Codex still drops a row in its mail
 
 To let other agents **wake** this Codex thread (not just mail it), you need `codex-appserver` delivery.  The setup has one non-obvious gotcha worth calling out:
 
-> **In `codex --remote` mode, MCP servers are loaded by the app-server, NOT by the TUI.**  The MCP entry above must therefore live in the `CODEX_HOME` that the **app-server** reads at startup — usually the global `~/.codex/config.toml`.  Setting `CODEX_HOME` on the TUI alone does nothing for MCP under `--remote`.
+> **In `codex --remote` mode, MCP servers are loaded by the app-server, NOT by the TUI.**  On current codex (verified on 0.144.x) the app-server resolves config **per thread from that thread's cwd**, merging a trusted project's `.codex/config.toml` layer on top of its own `CODEX_HOME` (usually the global `~/.codex/config.toml`).  So the MCP entry above can live either in the global config or in a trusted project's `.codex/config.toml` — pass `-C "$PWD"` so the thread cwd points at the project.  Setting `CODEX_HOME` on the TUI alone still does nothing for MCP under `--remote`.
 
 Start order:
 
 ```bash
-# 1) Long-lived codex app-server somewhere (its CODEX_HOME decides the MCP set).
+# 1) Long-lived codex app-server somewhere (its CODEX_HOME + each thread's project layer decide the MCP set).
 codex app-server --listen ws://127.0.0.1:8799
 
 # 2) Codex TUI in a separate terminal, connected to the same app-server.
 codex --remote ws://127.0.0.1:8799
 ```
 
-If the app-server's `CODEX_HOME` doesn't have `cross-agent-teams-mcp` configured, the codex agent inside `--remote` won't see the MCP tools at all and `register_agent` will never fire.
+If neither the app-server's `CODEX_HOME` nor the thread's trusted project `.codex/config.toml` has `cross-agent-teams-mcp` configured, the codex agent inside `--remote` won't see the MCP tools at all and `register_agent` will never fire.
 
 ##### Recommended: launcher with tmux pane auto-bind
 
@@ -190,16 +190,8 @@ For pokes to be injected directly into the running Codex thread (rather than lan
 
 ```zsh
 free-xats-codex() {
-    local xats_agent_id codex_home search_dir
+    local xats_agent_id
     xats_agent_id="$(uuidgen)"
-    search_dir="$PWD"
-    while [[ "$search_dir" != "/" ]]; do
-        if [[ -f "$search_dir/.codex/config.toml" ]]; then
-            codex_home="$search_dir/.codex"
-            break
-        fi
-        search_dir="${search_dir:h}"
-    done
 
     if [[ -n "$TMUX_PANE" ]]; then
         npx -y cross-agent-teams-mcp pre-register-codex-pane \
@@ -209,17 +201,10 @@ free-xats-codex() {
             || echo "[xats] pre-register failed (continuing without pane claim)" >&2
     fi
 
-    if [[ -n "$codex_home" ]]; then
-        CODEX_HOME="$codex_home" exec codex \
-            --remote ws://127.0.0.1:8799 \
-            -C "$PWD" \
-            -c xats.agent_id="\"$xats_agent_id\"" "$@"
-    else
-        exec codex \
-            --remote ws://127.0.0.1:8799 \
-            -C "$PWD" \
-            -c xats.agent_id="\"$xats_agent_id\"" "$@"
-    fi
+    exec codex \
+        --remote ws://127.0.0.1:8799 \
+        -C "$PWD" \
+        -c xats.agent_id="\"$xats_agent_id\"" "$@"
 }
 ```
 
@@ -227,6 +212,7 @@ What the launcher does:
 
 - Inside tmux (`$TMUX_PANE` set): pre-registers the pane → uuid mapping with the daemon (120s TTL).  When the codex agent later calls `register_agent({agent_type: "codex", thread_id: $CODEX_THREAD_ID, ...})`, the daemon resolves `tmux_pane_id` automatically by matching the pre-reg against the codex argv.
 - `--remote ws://127.0.0.1:8799` connects to the long-lived app-server from step (1) above.
+- `-C "$PWD"` sets the thread cwd, which is also what makes the app-server merge a trusted project's `.codex/config.toml` layer (project-level xats installs) — no `CODEX_HOME` needed.
 - `-c xats.agent_id="\"$uuid\""` exposes the uuid in codex's argv so the daemon can verify the pane.
 
 More detail (auth headers, lower-level `register_agent` form): [docs/configs/codex-cli.md](docs/configs/codex-cli.md).

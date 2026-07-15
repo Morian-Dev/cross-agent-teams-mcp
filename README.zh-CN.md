@@ -169,19 +169,19 @@ daemon 带了 `--token <t>` 时: 在启动 codex 的 shell 里 `export XATS_TOKE
 
 要让别的 agent 能**主动唤醒**这个 codex thread (而不只是发邮件), 需要 `codex-appserver` delivery.  这里有个不直观的坑要写清楚:
 
-> **`codex --remote` 模式下, MCP server 是 app-server 加载的, 不是 TUI 加载的**.  上面那段 MCP 配置必须放在 **app-server** 启动时读到的 `CODEX_HOME` 里 — 一般就是全局 `~/.codex/config.toml`.  仅在 TUI 这边设 `CODEX_HOME` 在 `--remote` 模式下对 MCP 不起作用.
+> **`codex --remote` 模式下, MCP server 是 app-server 加载的, 不是 TUI 加载的**.  当前版本的 codex (0.144.x 实测) 中, app-server 会**按每个 thread 的 cwd** 解析配置, 把受信任 (trusted) 项目的 `.codex/config.toml` layer 合并到自身 `CODEX_HOME` (一般是全局 `~/.codex/config.toml`) 之上.  所以上面那段 MCP 配置放全局配置或受信任项目的 `.codex/config.toml` 都可以 — 记得传 `-C "$PWD"` 让 thread cwd 指向项目.  仅在 TUI 这边设 `CODEX_HOME` 在 `--remote` 模式下对 MCP 依然不起作用.
 
 启动顺序:
 
 ```bash
-# 1) 在某个长跑终端起 codex app-server (它的 CODEX_HOME 决定 MCP set)
+# 1) 在某个长跑终端起 codex app-server (它的 CODEX_HOME + 各 thread 的项目 layer 共同决定 MCP set)
 codex app-server --listen ws://127.0.0.1:8799
 
 # 2) 在另一个终端启动 codex TUI, 连同一个 app-server
 codex --remote ws://127.0.0.1:8799
 ```
 
-如果第 1 步的 app-server 的 `CODEX_HOME` 里没配 `cross-agent-teams-mcp`, `--remote` 进去的 codex agent 根本看不到 MCP 工具, `register_agent` 调都调不到.
+如果 app-server 的 `CODEX_HOME` 和 thread 所在受信任项目的 `.codex/config.toml` 里都没配 `cross-agent-teams-mcp`, `--remote` 进去的 codex agent 根本看不到 MCP 工具, `register_agent` 调都调不到.
 
 ##### 推荐: launcher 函数 (tmux pane 自动绑定)
 
@@ -189,16 +189,8 @@ codex --remote ws://127.0.0.1:8799
 
 ```zsh
 free-xats-codex() {
-    local xats_agent_id codex_home search_dir
+    local xats_agent_id
     xats_agent_id="$(uuidgen)"
-    search_dir="$PWD"
-    while [[ "$search_dir" != "/" ]]; do
-        if [[ -f "$search_dir/.codex/config.toml" ]]; then
-            codex_home="$search_dir/.codex"
-            break
-        fi
-        search_dir="${search_dir:h}"
-    done
 
     if [[ -n "$TMUX_PANE" ]]; then
         npx -y cross-agent-teams-mcp pre-register-codex-pane \
@@ -208,17 +200,10 @@ free-xats-codex() {
             || echo "[xats] pre-register failed (continuing without pane claim)" >&2
     fi
 
-    if [[ -n "$codex_home" ]]; then
-        CODEX_HOME="$codex_home" exec codex \
-            --remote ws://127.0.0.1:8799 \
-            -C "$PWD" \
-            -c xats.agent_id="\"$xats_agent_id\"" "$@"
-    else
-        exec codex \
-            --remote ws://127.0.0.1:8799 \
-            -C "$PWD" \
-            -c xats.agent_id="\"$xats_agent_id\"" "$@"
-    fi
+    exec codex \
+        --remote ws://127.0.0.1:8799 \
+        -C "$PWD" \
+        -c xats.agent_id="\"$xats_agent_id\"" "$@"
 }
 ```
 
@@ -226,6 +211,7 @@ free-xats-codex() {
 
 - tmux 内 (`$TMUX_PANE` 非空): 先发一条 pre-register (pane_id + UUID + 120s TTL) 给 daemon.  codex agent 之后调 `register_agent({agent_type: "codex", thread_id: $CODEX_THREAD_ID, ...})` 时, daemon 会用 pending pre-reg + 匹配 codex 进程 argv 自动绑 `tmux_pane_id`.
 - `--remote ws://127.0.0.1:8799` 让 codex 连步骤 (1) 起好的 app-server.
+- `-C "$PWD"` 设定 thread cwd, 同时也是 app-server 合并受信任项目 `.codex/config.toml` layer (项目级 xats 安装) 的依据 — 不需要 `CODEX_HOME`.
 - `-c xats.agent_id="\"$uuid\""` 把 UUID 暴露在 codex argv 里, daemon 用它反向校验 pane.
 
 详细配置 (auth header, 底层 `register_agent` 用法): [docs/configs/codex-cli.md](docs/configs/codex-cli.md).

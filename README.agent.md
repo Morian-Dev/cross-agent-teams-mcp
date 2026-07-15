@@ -11,9 +11,8 @@ Target UX after setup:
    (daemon + codex app-server; the app-server part is skipped automatically
    on a device without codex);
 2. Each project needs at most one
-   `npx mcpsmgr add jtianling/cross-agent-teams-mcp -a <agent>` run
-   (currently only opencode / claude-code need it; codex does not, see
-   section 3);
+   `npx mcpsmgr add jtianling/cross-agent-teams-mcp -a <agent>` run per
+   agent — and none at all for agents installed globally (see section 3);
 3. Running `free-xats-codex` / `xats-codex` / `xats-codex-app` /
    `free-xats-opencode` / `xats-opencode` launches the corresponding agent
    with xats transport poke etc. working out of the box.
@@ -49,10 +48,11 @@ poke delivery.
    project on the device can use xats afterwards — much simpler to operate.
    Per-project = the config lives inside each project, and **every new
    project needs the same install command again** — more hassle, but nothing
-   is written outside the project.  Caveats: codex is global-only by design,
-   and the claude-code push-wake channel only exists project-level (details
-   in section 3).  Whatever the user picks, the section 8 hand-off must
-   explain the matching usage.
+   is written outside the project.  All three agents support both levels.
+   Caveats: the claude-code push-wake channel only exists project-level, and
+   codex project-level additionally requires the repo to be trusted by Codex
+   (details in section 3).  Whatever the user picks, the section 8 hand-off
+   must explain the matching usage.
 
 ## 1. Architecture in one minute (why these steps)
 
@@ -60,10 +60,17 @@ poke delivery.
   process, one per device.
 - **codex**: the TUI connects with `--remote`, and the macOS app connects with
   `CODEX_APP_SERVER_WS_URL`, to the same resident codex app-server (port
-  8799).  Key constraint: **in remote mode, MCP servers are loaded by the
-  app-server's CODEX_HOME**, usually the global
-  `~/.codex/config.toml`.  So codex's xats MCP config is **device-level**;
-  a project-level `.codex/config.toml` does not affect MCP under `--remote`.
+  8799).  Config resolution under `--remote` (verified on codex 0.144.x):
+  the shared app-server resolves configuration **per thread from that
+  thread's cwd**, merging layers CLI override > project
+  `<repo>/.codex/config.toml` (trusted repos only) > user
+  `~/.codex/config.toml` > system.  This is why the launcher passes
+  `-C "$PWD"`.  So codex's xats MCP config can live at either level:
+  global `~/.codex/config.toml` (section 2.2) or project
+  `.codex/config.toml` (section 3.2).  `CODEX_HOME` is NOT needed for
+  project-level installs — exporting it only for the remote TUI does
+  nothing; if used at all (full state isolation: config + auth + sessions),
+  it must be set on the app-server process.
 - **opencode**: every instance ships its own HTTP server.  The launcher
   allocates a random loopback port and exports `OPENCODE_XATS_BASE_URL`;
   the daemon push-wakes it through `prompt_async` — no tmux dependency.
@@ -322,6 +329,10 @@ Key points (understand before changing anything):
 
 ### 2.2 Global ~/.codex/config.toml
 
+This is codex's **global** branch (the simple path).  If the user chose
+per-project for codex in section 0 item 4, skip this subsection — still run
+`start-xats` (2.3), then follow section 3.2 per project.
+
 Recommended: use mcpsmgr (>= 0.4.8, see section 7).  Mind the three-step
 order:
 
@@ -414,7 +425,7 @@ What actually exists per agent (do not offer branches that do not work):
 
 | Agent | Project-level | Global |
 | --- | --- | --- |
-| codex | none — `--remote` ignores project MCP config (see 3.2) | the only mode; already done in section 2.2 |
+| codex | `mcpsmgr add` into the project `.codex/config.toml`, repo must be Codex-trusted (3.2) | `mcpsmgr add --global` into `~/.codex/config.toml` (2.2) |
 | opencode | `mcpsmgr add` into `opencode.json` (3.1) | `mcpsmgr add --global` into `~/.config/opencode/opencode.json` (3.1) |
 | claude-code | `mcpsmgr add` into `.mcp.json` (3.3) | tools-only via `claude mcp add --scope user`; push-wake channel stays project-level (3.3) |
 
@@ -474,13 +485,31 @@ Writes the same `mcp` block into `~/.config/opencode/opencode.json`
 The token rules above apply unchanged.  A side benefit: the plaintext token
 stays in the home directory instead of a committable project file.
 
-### 3.2 codex — global only, no project-level option
+### 3.2 codex
 
-codex's xats MCP config is device-level (section 2.2); do **not** run mcpsmgr
-per project for it, and do not offer the user a project-level branch — it
-does not exist.  Note: old mcpsmgr (<= 0.4.7) without `--global` writes a
-project-level `.codex/config.toml` which `--remote` mode ignores for MCP —
-useless.  Use the `--global` form from section 2.2 (device-level, once).
+**Global** — already done in section 2.2 (`--global` writes
+`~/.codex/config.toml`); nothing more per project.
+
+**Project-level** — if the user chose per-project; run in the project root:
+
+```bash
+npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a codex -y
+```
+
+Writes the project `<repo>/.codex/config.toml`.  For it to take effect:
+
+- the repo must be **trusted** by Codex, otherwise the project config layer
+  is ignored;
+- the shared app-server keeps running per section 2 (`start-xats`) with
+  `CROSS_AGENT_TEAMS_MCP_TOKEN` in its environment — the project config
+  only names the env var, it does not carry the token value;
+- launch from the project root with `free-xats-codex` / `xats-codex`: the
+  launcher's `-C "$PWD"` is what routes the thread to this project's config
+  layer.
+
+Do not set `CODEX_HOME` for this — see section 1.  (Historical note: this
+runbook used to claim `--remote` ignores project MCP config; that does not
+hold on current codex, verified on 0.144.x.)
 
 ### 3.3 claude-code
 
@@ -558,7 +587,7 @@ reused, no duplicate row.
 | Need daemon / app-server logs (startup errors, noise) | `tail -f ~/.config/xats/daemon.log` / `app-server.log`.  App-server noise like `failed to refresh available models: timeout` is non-fatal |
 | daemon vanished after its terminal was closed | It was started with a plain `&` (job gets SIGHUP with the terminal).  The current snippet's `&!` (disown) prevents this; restart with `start-xats` |
 | `Deserialize error: data did not match any variant of untagged enum JsonRpcMessage` | Actually a daemon 401: the app-server cannot see the token env.  Restart from a shell that has it exported (`stop-xats` + `start-xats`) |
-| xats MCP tools invisible inside codex | MCP config is not in the CODEX_HOME the app-server reads (global `~/.codex/config.toml`), or top-level `experimental_use_rmcp_client = true` is missing |
+| xats MCP tools invisible inside codex | Global install: config missing from `~/.codex/config.toml`, or top-level `experimental_use_rmcp_client = true` missing.  Project-level install: repo not trusted by Codex, or the thread cwd misses the project (launcher lost `-C "$PWD"`) |
 | 401 despite a configured token | Legacy `[mcp_servers.X.headers]` form (silently ignored on 0.130+); or a stale project-level `.codex/config.toml` overriding global auth.  Audit: `find ~ -path '*/.codex/config.toml' -print` |
 | `mcpsmgr add` succeeded but the written config lacks `bearer_token_env_var` / has wrong servers (codex 401 / -32601) | Stale bundle cache on a device that installed xats before — only with mcpsmgr <= 0.4.9 (fixed in 0.4.10, see section 7).  Re-run with `mcpsmgr@latest`, or on old versions `npx -y mcpsmgr@latest uninstall cross-agent-teams` then re-add |
 | codex session lands in the wrong directory | Launcher lost `-C "$PWD"` |
@@ -634,7 +663,8 @@ user.  It must contain:
      `-a claude-code` install.
    - **Project-level installs**: only projects already installed are
      covered.  Spell out the enable-a-new-project recipe: in each new
-     project root run the same one-liner(s) again — opencode
-     (`-a opencode -y`) / claude-code (`-a claude-code`) — then launch
-     with the point 1 commands as usual.  codex never needs a per-project
-     step (its config is device-level).
+     project root run the same one-liner(s) again — codex (`-a codex -y`,
+     repo must be Codex-trusted) / opencode (`-a opencode -y`) /
+     claude-code (`-a claude-code`) — then launch with the point 1
+     commands as usual.  Agents installed globally need no per-project
+     step.
