@@ -53,3 +53,24 @@ export function resolveReconnect(
   }
   return { kind: 'ambiguous', candidates: rows.map(toCandidate) }
 }
+
+export function resolveCodexReconnect(
+  repo: AgentsRepo,
+  thread_id: string,
+  localDevice: string
+): ReconnectResolution {
+  const rows = repo.findByCodexThreadId(thread_id, localDevice)
+  if (rows.length === 0) {
+    return {
+      kind: 'need_register',
+      reason:
+        `No local Codex agent is registered for thread_id ${thread_id}. ` +
+        'There is no prior identity to reconnect; call register_agent to ' +
+        'register a new identity.',
+    }
+  }
+  if (rows.length === 1) {
+    return { kind: 'single', match: toCandidate(rows[0]) }
+  }
+  return { kind: 'ambiguous', candidates: rows.map(toCandidate) }
+}

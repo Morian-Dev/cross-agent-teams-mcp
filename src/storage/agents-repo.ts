@@ -53,6 +53,8 @@ export interface RuntimeUiPidMatch {
   last_seen_at: string
 }
 
+export type CodexThreadMatch = RuntimeUiPidMatch
+
 export const REACHABLE_MS = 4 * 24 * 60 * 60 * 1000
 
 type DbAgentRow = {
@@ -129,6 +131,24 @@ export class AgentsRepo {
          AND runtime_ui_pid = ?
        ORDER BY last_seen_at DESC`
     ).all(localDevice, ui_pid) as RuntimeUiPidMatch[]
+  }
+
+  findByCodexThreadId(
+    thread_id: string,
+    localDevice: string
+  ): CodexThreadMatch[] {
+    return this.db.prepare(
+      `SELECT agent_id, device, team, name, role, last_seen_at
+       FROM agents
+       WHERE device = ?
+         AND role != '__channel_proxy__'
+         AND delivery_kind = 'codex-appserver'
+         AND CASE
+           WHEN json_valid(delivery_payload)
+           THEN json_extract(delivery_payload, '$.thread_id')
+         END = ?
+       ORDER BY last_seen_at DESC`
+    ).all(localDevice, thread_id) as CodexThreadMatch[]
   }
 
   register(input: RegisterInput): {

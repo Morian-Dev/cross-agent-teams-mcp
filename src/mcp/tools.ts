@@ -22,7 +22,11 @@ import { AutoBindChannelService } from './auto-bind-channel.js'
 import { BindRuntimeIdentityService } from './bind-runtime-identity.js'
 import { RegisterCodexSelfService } from './register-codex-self.js'
 import { RegisterOpencodeSelfService } from './register-opencode-self.js'
-import { resolveReconnect } from './reconnect.js'
+import {
+  resolveCodexReconnect,
+  resolveReconnect,
+  type ReconnectResolution,
+} from './reconnect.js'
 import { UnregisterSelfService } from './unregister-self.js'
 import { listAgentsForTeam } from './list-agents.js'
 import { detectTmuxPane } from '../daemon/tmux-pane-detect.js'
@@ -140,17 +144,42 @@ const BROADCAST_TO_ROLE_DESC = [
 ].join(' ')
 
 const RECONNECT_DESC = [
-  'Recover this session\'s prior xats identity when you no longer remember your own (team, name) — for example after a context clear, where the Claude UI process ($PPID) is unchanged but the MCP/channel session is fresh and bind_channel returns unknown_agent. Prefer this over the bind_channel→register_agent fallback for re-establishing on a fresh session: it re-establishes the identity AND rebinds the channel in one call.',
-  'Route by whether you still remember your (team, name): if you DO remember it after a restart + resume (you closed Claude Code and resumed the conversation, so $PPID has CHANGED but the context survived), call register_agent with that remembered (team, name) and the current $PPID instead of reconnect — reconnect would reverse-look-up the changed $PPID, find no match, and return need_register. Use reconnect only when you do NOT remember your (team, name).',
-  'Invoke this when the user asks to "reconnect xats", "re-register xats", "重连 xats", or "重新注册 xats".',
-  '`ui_pid` is the Claude UI process id — pass `$PPID` from a Bash tool call inside Claude Code (the same value register_agent takes as `ui_pid`).',
-  'The daemon reverse-looks-up the most recent local claude-code agent row whose runtime_ui_pid matches `ui_pid`, then re-establishes that identity (cross-session takeover + channel/pane auto-bind) reusing the existing agent_id.',
-  'On a single match: returns { ok, agent_id, name, team, channel_session_id, last_seen_at }.',
-  'On zero matches: returns { need_register, reason } — reconnect does NOT auto-register; call register_agent to create a new identity.',
-  'On multiple matches (e.g. the same UI process previously registered under two names): returns { ambiguous, candidates } ordered by last_seen_at descending — surface them so the user can pick, then register_agent with the chosen name.',
-  'Each candidate/match carries last_seen_at; if it looks stale the matched ui_pid may have been reused by an unrelated process — surface it to the user before trusting the recovered identity.',
-  'Scope is the daemon\'s configured local device label for claude-code only; codex (thread_id-based) reconnect is out of scope.',
+  'Recover this session\'s prior xats identity when you no longer remember ' +
+    'your own (team, name), such as after a context clear.',
+  'Invoke this when the user asks to "reconnect xats", "re-register xats", ' +
+    '"重连 xats", or "重新注册 xats".',
+  'Pass exactly one identity key: Claude Code passes `ui_pid=$PPID`; ' +
+    'Codex passes `thread_id=$CODEX_THREAD_ID`.',
+  'Claude Code lookup uses local `runtime_ui_pid` and reuses the existing ' +
+    'channel and pane binding paths.',
+  'Codex lookup uses the local codex-appserver delivery `thread_id`. On a ' +
+    'single match, the daemon verifies `thread/resume` through the configured ' +
+    'Codex app-server before reusing the identity and rebinding the current ' +
+    'connection and fanout.',
+  'Codex `ws_url` and `auth_token_ref` are optional and follow ' +
+    'register_agent defaults.',
+  'On a single match: returns { ok, agent_id, name, team, last_seen_at } ' +
+    'plus the runtime-specific delivery fields.',
+  'On zero matches: returns { need_register, reason } — reconnect does NOT ' +
+    'auto-register; call register_agent to create a new identity.',
+  'On multiple matches: returns { ambiguous, candidates } ordered by ' +
+    'last_seen_at descending and does not choose or mutate a row.',
+  'Each candidate/match carries last_seen_at. A successful Codex resume ' +
+    'proves the current app-server can load the thread, but cannot prove a ' +
+    'stale stored identity still owns a reused thread id; surface stale or ' +
+    'ambiguous matches instead of silently trusting them.',
+  'If you still remember (team, name), call register_agent directly instead ' +
+    'of reconnect.',
 ].join(' ')
+
+function isWebSocketUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'ws:' || url.protocol === 'wss:'
+  } catch {
+    return false
+  }
+}
 
 function suppressTmuxHint(
   args: { delivery?: { kind?: string } }
@@ -810,32 +839,64 @@ export function registerBusinessTools(
   )
 
   const reconnectInputSchema = z.object({
-    ui_pid: z.number().int().positive().describe(
-      'The Claude UI process id (`$PPID` from a Bash tool call inside Claude Code). The daemon reverse-looks-up the prior local claude-code identity registered under this runtime_ui_pid.'
+    ui_pid: z.number().int().positive().optional().describe(
+      'Claude UI process id (`$PPID` inside Claude Code).'
     ),
+    thread_id: z.string().uuid().optional().describe(
+      'Codex thread id from `$CODEX_THREAD_ID`.'
+    ),
+    ws_url: z.string().refine(isWebSocketUrl, {
+      message: 'ws_url must be a valid ws:// or wss:// URL',
+    }).optional(),
+    auth_token_ref: z.string().min(1).optional(),
   }).strict()
 
-  async function executeReconnect(ui_pid: number): Promise<unknown> {
-    const resolution = resolveReconnect(agents, ui_pid, context?.localDevice ?? 'local')
+  const reconnectArgsSchema = reconnectInputSchema.superRefine((value, ctx) => {
+    const keyCount = Number(value.ui_pid !== undefined)
+      + Number(value.thread_id !== undefined)
+    if (keyCount !== 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'provide exactly one of ui_pid or thread_id',
+      })
+    }
+    if (
+      value.thread_id === undefined
+      && (value.ws_url !== undefined || value.auth_token_ref !== undefined)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'ws_url and auth_token_ref require thread_id',
+      })
+    }
+  })
+
+  function unresolvedReconnect(
+    resolution: Exclude<ReconnectResolution, { kind: 'single' }>
+  ): unknown {
     if (resolution.kind === 'need_register') {
       return { need_register: true, reason: resolution.reason }
     }
-    if (resolution.kind === 'ambiguous') {
-      return {
-        ambiguous: true,
-        candidates: resolution.candidates.map(c => ({
-          agent_id: c.agent_id,
-          name: c.name,
-          team: c.team,
-          device: c.device,
-          role: c.role,
-          last_seen_at: c.last_seen_at,
-        })),
-      }
+    return {
+      ambiguous: true,
+      candidates: resolution.candidates.map(candidate => ({
+        agent_id: candidate.agent_id,
+        name: candidate.name,
+        team: candidate.team,
+        device: candidate.device,
+        role: candidate.role,
+        last_seen_at: candidate.last_seen_at,
+      })),
     }
-    // Single match: drive the existing register/takeover/auto-bind path using the
-    // recovered identity. The recovered (device, team, name) replaces any
-    // caller-provided name, and ui_pid re-arms channel + runtime-pane auto-bind.
+  }
+
+  async function executeClaudeReconnect(ui_pid: number): Promise<unknown> {
+    const resolution = resolveReconnect(
+      agents,
+      ui_pid,
+      context?.localDevice ?? 'local'
+    )
+    if (resolution.kind !== 'single') return unresolvedReconnect(resolution)
     const match = resolution.match
     const res = await executeRegister({
       agent_type: 'claude-code',
@@ -863,15 +924,78 @@ export function registerBusinessTools(
     }
   }
 
+  async function executeCodexReconnect(args: {
+    thread_id: string
+    ws_url?: string
+    auth_token_ref?: string
+  }): Promise<unknown> {
+    const resolution = resolveCodexReconnect(
+      agents,
+      args.thread_id,
+      context?.localDevice ?? 'local'
+    )
+    if (resolution.kind !== 'single') return unresolvedReconnect(resolution)
+    const match = resolution.match
+    const res = await executeRegister({
+      agent_type: 'codex',
+      name: match.name,
+      team: match.team,
+      device: match.device,
+      role: match.role,
+      thread_id: args.thread_id,
+      ws_url: args.ws_url,
+      auth_token_ref: args.auth_token_ref,
+    })
+    if (typeof res !== 'object' || res === null || !('agent_id' in res)) {
+      return res
+    }
+    const envelope = res as {
+      agent_id: string
+      team: string
+      thread_id: string
+      ws_url: string
+    }
+    return {
+      ok: true,
+      agent_id: envelope.agent_id,
+      name: match.name,
+      team: envelope.team,
+      thread_id: envelope.thread_id,
+      ws_url: envelope.ws_url,
+      last_seen_at: match.last_seen_at,
+    }
+  }
+
+  async function executeReconnect(args: {
+    ui_pid?: number
+    thread_id?: string
+    ws_url?: string
+    auth_token_ref?: string
+  }): Promise<unknown> {
+    if (args.ui_pid !== undefined) {
+      return executeClaudeReconnect(args.ui_pid)
+    }
+    return executeCodexReconnect({
+      thread_id: args.thread_id!,
+      ws_url: args.ws_url,
+      auth_token_ref: args.auth_token_ref,
+    })
+  }
+
   server.registerTool(
     'reconnect',
     {
-      title: 'Reconnect to xats by ui_pid',
+      title: 'Reconnect to xats',
       description: RECONNECT_DESC,
       inputSchema: reconnectInputSchema,
     },
-    async (args: { ui_pid: number }) => {
-      return run(async () => executeReconnect(reconnectInputSchema.parse(args).ui_pid))
+    async (args: {
+      ui_pid?: number
+      thread_id?: string
+      ws_url?: string
+      auth_token_ref?: string
+    }) => {
+      return run(async () => executeReconnect(reconnectArgsSchema.parse(args)))
     }
   )
 

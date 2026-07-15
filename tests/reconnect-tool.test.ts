@@ -25,6 +25,44 @@ vi.mock('../src/daemon/runtime-identity.js', () => ({
     ui_pid: 25079,
   })),
 }))
+vi.mock('../src/mcp/register-codex-self.js', () => ({
+  RegisterCodexSelfService: class {
+    constructor(private readonly registerSvc: {
+      register: (input: Record<string, unknown>) => Record<string, unknown>
+    }) {}
+
+    async register(
+      input: Record<string, unknown>
+    ): Promise<Record<string, unknown>> {
+      const threadId = input.thread_id as string
+      if (threadId === '99999999-9999-4999-8999-999999999999') {
+        return {
+          error: 'codex_resume_failed',
+          detail: { thread_id: threadId, cause: 'no rollout found' },
+        }
+      }
+      const wsUrl = (input.ws_url as string | undefined)?.trim()
+        || 'ws://127.0.0.1:8799'
+      const result = this.registerSvc.register({
+        connection_id: input.connection_id,
+        agent_type: 'codex',
+        model: input.model,
+        device: input.device,
+        name: input.name,
+        role: input.role,
+        team: input.team,
+        delivery: {
+          kind: 'codex-appserver',
+          thread_id: threadId,
+          ws_url: wsUrl,
+        },
+      })
+      return 'error' in result
+        ? result
+        : { ...result, thread_id: threadId, ws_url: wsUrl }
+    }
+  },
+}))
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-reconnect-tool-'))
 
@@ -59,7 +97,15 @@ async function setup(opts: { localDevice?: string } = {}) {
   await server.connect(st)
   const client = new Client({ name: 'claude-code', version: '0.0.0' })
   await client.connect(ct)
-  return { dir, db, server, client, transport: ct, repo: new AgentsRepo(db) }
+  return {
+    dir,
+    db,
+    server,
+    client,
+    transport: ct,
+    holder,
+    repo: new AgentsRepo(db),
+  }
 }
 
 function seedAgent(
@@ -88,6 +134,39 @@ function seedAgent(
     args.registered_at ?? args.last_seen_at,
     args.last_seen_at,
     args.runtime_ui_pid,
+    args.last_processed_event_id ?? 0,
+  )
+}
+
+function seedCodexAgent(
+  db: ReturnType<typeof openDb>,
+  args: {
+    agent_id: string
+    thread_id: string
+    device?: string
+    team?: string
+    name: string
+    last_seen_at: string
+    registered_at?: string
+    last_processed_event_id?: number
+  }
+): void {
+  db.prepare(
+    `INSERT INTO agents (
+       agent_id, agent_type, device, team, role, name, registered_at, last_seen_at,
+       delivery_kind, delivery_payload, last_processed_event_id
+     ) VALUES (?, 'codex', ?, ?, 'worker', ?, ?, ?, 'codex-appserver', ?, ?)`
+  ).run(
+    args.agent_id,
+    args.device ?? 'local',
+    args.team ?? 'default',
+    args.name,
+    args.registered_at ?? args.last_seen_at,
+    args.last_seen_at,
+    JSON.stringify({
+      thread_id: args.thread_id,
+      ws_url: 'ws://127.0.0.1:8799',
+    }),
     args.last_processed_event_id ?? 0,
   )
 }
@@ -263,6 +342,168 @@ describe('reconnect tool', () => {
 
     expect(obj.need_register).toBe(true)
     expect(obj.ok).toBeUndefined()
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it('reconnects a single local codex identity by thread_id', async () => {
+    const { dir, db, server, client, transport, holder } = await setup()
+    cleanups.push(dir)
+    const threadId = '11111111-1111-4111-8111-111111111111'
+    const registeredAt = '2024-01-01T00:00:00.000Z'
+    const lastSeen = '2024-01-02T00:00:00.000Z'
+    seedCodexAgent(db, {
+      agent_id: 'C',
+      thread_id: threadId,
+      name: 'xats-codex',
+      last_seen_at: lastSeen,
+      registered_at: registeredAt,
+      last_processed_event_id: 42,
+    })
+
+    const resp = await client.callTool({
+      name: 'reconnect',
+      arguments: { thread_id: threadId },
+    })
+    const obj = await parseTool(resp)
+
+    expect(obj).toMatchObject({
+      ok: true,
+      agent_id: 'C',
+      name: 'xats-codex',
+      team: 'default',
+      thread_id: threadId,
+      ws_url: 'ws://127.0.0.1:8799',
+      last_seen_at: lastSeen,
+    })
+    expect(holder.current).toBe('C')
+    const row = db.prepare(
+      `SELECT agent_id, registered_at, last_seen_at, last_processed_event_id
+       FROM agents WHERE agent_id='C'`
+    ).get() as {
+      agent_id: string
+      registered_at: string
+      last_seen_at: string
+      last_processed_event_id: number
+    }
+    expect(row.agent_id).toBe('C')
+    expect(row.registered_at).toBe(registeredAt)
+    expect(row.last_processed_event_id).toBe(42)
+    expect(row.last_seen_at).not.toBe(lastSeen)
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it('returns need_register when no local codex row matches thread_id', async () => {
+    const { dir, db, server, client, transport } = await setup()
+    cleanups.push(dir)
+    const threadId = '22222222-2222-4222-8222-222222222222'
+    seedCodexAgent(db, {
+      agent_id: 'C',
+      thread_id: '11111111-1111-4111-8111-111111111111',
+      name: 'xats-codex',
+      last_seen_at: '2024-01-02T00:00:00.000Z',
+    })
+
+    const resp = await client.callTool({
+      name: 'reconnect',
+      arguments: { thread_id: threadId },
+    })
+    const obj = await parseTool(resp)
+
+    expect(obj.need_register).toBe(true)
+    expect(obj.reason).toContain(threadId)
+    const row = db.prepare(
+      `SELECT last_seen_at FROM agents WHERE agent_id='C'`
+    ).get() as { last_seen_at: string }
+    expect(row.last_seen_at).toBe('2024-01-02T00:00:00.000Z')
+
+    await transport.close()
+    await client.close()
+    db.close()
+    await server.close()
+  })
+
+  it(
+    'returns ambiguous codex candidates ordered by last_seen_at without mutation',
+    async () => {
+      const { dir, db, server, client, transport } = await setup()
+      cleanups.push(dir)
+      const threadId = '33333333-3333-4333-8333-333333333333'
+      seedCodexAgent(db, {
+        agent_id: 'C1',
+        thread_id: threadId,
+        name: 'older-codex',
+        last_seen_at: '2024-01-01T00:00:00.000Z',
+      })
+      seedCodexAgent(db, {
+        agent_id: 'C2',
+        thread_id: threadId,
+        name: 'newer-codex',
+        last_seen_at: '2024-06-01T00:00:00.000Z',
+      })
+
+      const resp = await client.callTool({
+        name: 'reconnect',
+        arguments: { thread_id: threadId },
+      })
+      const obj = await parseTool(resp)
+
+      expect(obj.ambiguous).toBe(true)
+      const candidates = obj.candidates as Array<{
+        name: string
+        last_seen_at: string
+      }>
+      expect(candidates.map(candidate => candidate.name)).toEqual([
+        'newer-codex',
+        'older-codex',
+      ])
+      const rows = db.prepare(
+        `SELECT agent_id, last_seen_at FROM agents ORDER BY agent_id`
+      ).all()
+      expect(rows).toEqual([
+        { agent_id: 'C1', last_seen_at: '2024-01-01T00:00:00.000Z' },
+        { agent_id: 'C2', last_seen_at: '2024-06-01T00:00:00.000Z' },
+      ])
+
+      await transport.close()
+      await client.close()
+      db.close()
+      await server.close()
+    }
+  )
+
+  it('does not reclaim a codex identity when thread/resume fails', async () => {
+    const { dir, db, server, client, transport } = await setup()
+    cleanups.push(dir)
+    const threadId = '99999999-9999-4999-8999-999999999999'
+    seedCodexAgent(db, {
+      agent_id: 'C',
+      thread_id: threadId,
+      name: 'xats-codex',
+      last_seen_at: '2024-01-02T00:00:00.000Z',
+    })
+
+    const resp = await client.callTool({
+      name: 'reconnect',
+      arguments: { thread_id: threadId },
+    })
+    const obj = await parseTool(resp)
+
+    expect(obj).toEqual({
+      error: 'codex_resume_failed',
+      detail: { thread_id: threadId, cause: 'no rollout found' },
+    })
+    const row = db.prepare(
+      `SELECT last_seen_at FROM agents WHERE agent_id='C'`
+    ).get() as { last_seen_at: string }
+    expect(row.last_seen_at).toBe('2024-01-02T00:00:00.000Z')
 
     await transport.close()
     await client.close()

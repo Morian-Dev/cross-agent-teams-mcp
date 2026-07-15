@@ -41,7 +41,7 @@ describe('reconnect tool schema validation', () => {
     cleanups.length = 0
   })
 
-  it('exposes reconnect with a required ui_pid in tools/list', async () => {
+  it('exposes reconnect with ui_pid and thread_id in tools/list', async () => {
     const { dir, server, client, transport } = await setup()
     cleanups.push(dir)
     const resp = await client.listTools()
@@ -49,9 +49,16 @@ describe('reconnect tool schema validation', () => {
     expect(tool).toBeDefined()
     expect(tool!.inputSchema).toMatchObject({
       type: 'object',
-      properties: expect.objectContaining({ ui_pid: expect.anything() }),
-      required: expect.arrayContaining(['ui_pid']),
+      properties: expect.objectContaining({
+        ui_pid: expect.anything(),
+        thread_id: expect.anything(),
+        ws_url: expect.anything(),
+        auth_token_ref: expect.anything(),
+      }),
     })
+    expect(tool!.description).toContain('thread_id=$CODEX_THREAD_ID')
+    expect(tool!.description).toContain('thread/resume')
+    expect(tool!.description).toContain('stale stored identity')
     await transport.close()
     await client.close()
     await server.close()
@@ -96,6 +103,44 @@ describe('reconnect tool schema validation', () => {
       }
       expect(resp.isError, `ui_pid=${bad} should be rejected`).toBe(true)
     }
+    await transport.close()
+    await client.close()
+    await server.close()
+  })
+
+  it('rejects invalid thread_id and mixed reconnect keys', async () => {
+    const { dir, server, client, transport } = await setup()
+    cleanups.push(dir)
+    const invalid = await client.callTool({
+      name: 'reconnect',
+      arguments: { thread_id: 'not-a-uuid' },
+    }) as { isError?: boolean }
+    expect(invalid.isError).toBe(true)
+
+    const mixed = await client.callTool({
+      name: 'reconnect',
+      arguments: {
+        ui_pid: 25079,
+        thread_id: '11111111-1111-4111-8111-111111111111',
+      },
+    }) as { isError?: boolean }
+    expect(mixed.isError).toBe(true)
+
+    const claudeWithCodexOption = await client.callTool({
+      name: 'reconnect',
+      arguments: { ui_pid: 25079, ws_url: 'ws://127.0.0.1:8799' },
+    }) as { isError?: boolean }
+    expect(claudeWithCodexOption.isError).toBe(true)
+
+    const invalidWsUrl = await client.callTool({
+      name: 'reconnect',
+      arguments: {
+        thread_id: '11111111-1111-4111-8111-111111111111',
+        ws_url: 'https://example.com',
+      },
+    }) as { isError?: boolean }
+    expect(invalidWsUrl.isError).toBe(true)
+
     await transport.close()
     await client.close()
     await server.close()
