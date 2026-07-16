@@ -54,18 +54,39 @@ class MockWebSocket implements WebSocketLike {
 }
 
 function createHarness(args: {
-  onCreate?: (ws: MockWebSocket) => void
-  onSend: (message: JsonRpcMessage, ws: MockWebSocket) => void
+  onCreate?: (ws: MockWebSocket, url: string) => void
+  onSend: (message: JsonRpcMessage, ws: MockWebSocket, url: string) => void
 }) {
   const calls: Array<{ url: string; headers?: Record<string, string> }> = []
   return {
     calls,
     factory: ({ url, headers }: { url: string; headers?: Record<string, string> }) => {
-      const ws = new MockWebSocket(args.onSend)
+      const ws = new MockWebSocket((message, socket) => {
+        args.onSend(message, socket, url)
+      })
       calls.push({ url, headers })
-      args.onCreate?.(ws)
+      args.onCreate?.(ws, url)
       return ws
     },
+  }
+}
+
+function replyToCodexProbe(
+  message: JsonRpcMessage,
+  ws: MockWebSocket,
+  resume: 'accept' | 'reject'
+): void {
+  if (message.method === 'initialize' && message.id) {
+    ws.reply(message.id, { result: { ok: true } })
+  }
+  if (message.method === 'thread/resume' && message.id) {
+    if (resume === 'accept') {
+      ws.reply(message.id, { result: { ok: true } })
+    } else {
+      ws.reply(message.id, {
+        error: { code: -32600, message: 'no rollout found' },
+      })
+    }
   }
 }
 
@@ -476,5 +497,185 @@ describe('RegisterCodexSelfService', () => {
         cause: { code: -32600, message: 'no rollout found' },
       },
     })
+  })
+
+  it('matches a unique endpoint and de-duplicates configured URLs', async () => {
+    const harness = createHarness({
+      onCreate: (ws) => queueMicrotask(() => ws.emit('open', {})),
+      onSend: (message, ws, url) => {
+        replyToCodexProbe(
+          message,
+          ws,
+          url === 'ws://127.0.0.1:8800' ? 'accept' : 'reject'
+        )
+      },
+    })
+    const { db, svc } = setup(harness, {
+      CROSS_AGENT_TEAMS_CODEX_WS_URLS: JSON.stringify([
+        'ws://127.0.0.1:8799',
+        'ws://127.0.0.1:8799/',
+        'ws://127.0.0.1:8800',
+      ]),
+    })
+
+    const result = await svc.register({
+      connection_id: 'conn-1',
+      name: 'lead',
+      thread_id: '11111111-1111-4111-8111-111111111111',
+    })
+
+    expect(result).toEqual({
+      agent_id: expect.any(String),
+      team: 'default',
+      thread_id: '11111111-1111-4111-8111-111111111111',
+      ws_url: 'ws://127.0.0.1:8800',
+    })
+    expect(harness.calls.map(call => call.url)).toEqual([
+      'ws://127.0.0.1:8799',
+      'ws://127.0.0.1:8800',
+    ])
+    const row = db.prepare(
+      'SELECT delivery_payload FROM agents WHERE team=? AND name=?'
+    ).get('default', 'lead') as { delivery_payload: string }
+    expect(JSON.parse(row.delivery_payload).ws_url).toBe('ws://127.0.0.1:8800')
+  })
+
+  it('prefers an explicit URL over both endpoint environment settings', async () => {
+    const harness = createHarness({
+      onCreate: (ws) => queueMicrotask(() => ws.emit('open', {})),
+      onSend: (message, ws) => replyToCodexProbe(message, ws, 'accept'),
+    })
+    const { svc } = setup(harness, {
+      CROSS_AGENT_TEAMS_CODEX_WS_URL: 'ws://127.0.0.1:8899',
+      CROSS_AGENT_TEAMS_CODEX_WS_URLS: '["ws://127.0.0.1:8799"]',
+    })
+
+    const result = await svc.register({
+      connection_id: 'conn-1',
+      name: 'lead',
+      thread_id: '11111111-1111-4111-8111-111111111111',
+      ws_url: 'ws://127.0.0.1:8811',
+    })
+
+    expect(result).toMatchObject({ ws_url: 'ws://127.0.0.1:8811' })
+    expect(harness.calls.map(call => call.url)).toEqual([
+      'ws://127.0.0.1:8811',
+    ])
+  })
+
+  it('prefers the legacy single URL over the multi-endpoint setting', async () => {
+    const harness = createHarness({
+      onCreate: (ws) => queueMicrotask(() => ws.emit('open', {})),
+      onSend: (message, ws) => replyToCodexProbe(message, ws, 'accept'),
+    })
+    const { svc } = setup(harness, {
+      CROSS_AGENT_TEAMS_CODEX_WS_URL: 'ws://127.0.0.1:8899',
+      CROSS_AGENT_TEAMS_CODEX_WS_URLS: '["ws://127.0.0.1:8799"]',
+    })
+
+    const result = await svc.register({
+      connection_id: 'conn-1',
+      name: 'lead',
+      thread_id: '11111111-1111-4111-8111-111111111111',
+    })
+
+    expect(result).toMatchObject({ ws_url: 'ws://127.0.0.1:8899' })
+    expect(harness.calls.map(call => call.url)).toEqual([
+      'ws://127.0.0.1:8899',
+    ])
+  })
+
+  it.each([
+    ['invalid JSON', 'not-json'],
+    ['a non-WebSocket URL', '["http://127.0.0.1:8799"]'],
+  ])('rejects %s in the multi-endpoint setting without mutation', async (
+    _name,
+    value
+  ) => {
+    const harness = createHarness({ onSend: () => undefined })
+    const { db, svc } = setup(harness, {
+      CROSS_AGENT_TEAMS_CODEX_WS_URLS: value,
+    })
+
+    const result = await svc.register({
+      connection_id: 'conn-1',
+      name: 'lead',
+      thread_id: '11111111-1111-4111-8111-111111111111',
+    })
+
+    expect(result).toMatchObject({
+      error: 'codex_endpoint_config_invalid',
+      detail: { env: 'CROSS_AGENT_TEAMS_CODEX_WS_URLS' },
+    })
+    expect(harness.calls).toEqual([])
+    const row = db.prepare(
+      'SELECT agent_id FROM agents WHERE team=? AND name=?'
+    ).get('default', 'lead')
+    expect(row).toBeUndefined()
+  })
+
+  it('returns aggregated resume attempts when no endpoint accepts', async () => {
+    const harness = createHarness({
+      onCreate: (ws) => queueMicrotask(() => ws.emit('open', {})),
+      onSend: (message, ws) => replyToCodexProbe(message, ws, 'reject'),
+    })
+    const { db, svc } = setup(harness, {
+      CROSS_AGENT_TEAMS_CODEX_WS_URLS: JSON.stringify([
+        'ws://127.0.0.1:8799',
+        'ws://127.0.0.1:8800',
+      ]),
+    })
+
+    const result = await svc.register({
+      connection_id: 'conn-1',
+      name: 'lead',
+      thread_id: '11111111-1111-4111-8111-111111111111',
+    })
+
+    expect(result).toMatchObject({
+      error: 'codex_resume_failed',
+      detail: {
+        thread_id: '11111111-1111-4111-8111-111111111111',
+        attempts: [
+          { ws_url: 'ws://127.0.0.1:8799', error: 'codex_resume_failed' },
+          { ws_url: 'ws://127.0.0.1:8800', error: 'codex_resume_failed' },
+        ],
+      },
+    })
+    const row = db.prepare(
+      'SELECT agent_id FROM agents WHERE team=? AND name=?'
+    ).get('default', 'lead')
+    expect(row).toBeUndefined()
+  })
+
+  it('rejects an ambiguous endpoint match without mutating agent state', async () => {
+    const harness = createHarness({
+      onCreate: (ws) => queueMicrotask(() => ws.emit('open', {})),
+      onSend: (message, ws) => replyToCodexProbe(message, ws, 'accept'),
+    })
+    const { db, svc } = setup(harness, {
+      CROSS_AGENT_TEAMS_CODEX_WS_URLS: JSON.stringify([
+        'ws://127.0.0.1:8799',
+        'ws://127.0.0.1:8800',
+      ]),
+    })
+
+    const result = await svc.register({
+      connection_id: 'conn-1',
+      name: 'lead',
+      thread_id: '11111111-1111-4111-8111-111111111111',
+    })
+
+    expect(result).toEqual({
+      error: 'codex_endpoint_ambiguous',
+      detail: {
+        thread_id: '11111111-1111-4111-8111-111111111111',
+        ws_urls: ['ws://127.0.0.1:8799', 'ws://127.0.0.1:8800'],
+      },
+    })
+    const row = db.prepare(
+      'SELECT agent_id FROM agents WHERE team=? AND name=?'
+    ).get('default', 'lead')
+    expect(row).toBeUndefined()
   })
 })

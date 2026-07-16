@@ -27,9 +27,10 @@ Read https://raw.githubusercontent.com/jtianling/cross-agent-teams-mcp/HEAD/READ
 and follow it to set up xats on this device.
 ```
 
-The agent will confirm a device label and the `~/.zshrc` changes with you,
-auto-generate the daemon token on first `start-xats`, and wire up the
-`free-xats-codex` / `xats-codex` / `xats-codex-app` /
+The agent will confirm a device label, whether Codex App also needs xats, and
+the `~/.zshrc` changes with you, auto-generate the daemon token on first
+`start-xats`, and wire up the `free-xats-codex` / `xats-codex` /
+optional `xats-codex-app` /
 `free-xats-opencode` / `xats-opencode` launchers plus `start-xats` /
 `stop-xats`.  Prefer doing it by hand?  Continue below.
 
@@ -150,7 +151,8 @@ Codex talks to the daemon over Streamable HTTP.  Wake-ups go through Codex's own
 
 ##### Minimum config (mailbox only, no push wake)
 
-`~/.codex/config.toml`:
+For an isolated CLI runtime use `~/.codex-cli/config.toml`.  The desktop App
+keeps its own copy in the default `~/.codex/config.toml`:
 
 ```toml
 experimental_use_rmcp_client = true
@@ -170,19 +172,32 @@ In this minimum mode, `send_message` to this Codex still drops a row in its mail
 
 To let other agents **wake** this Codex thread (not just mail it), you need `codex-appserver` delivery.  The setup has one non-obvious gotcha worth calling out:
 
-> **In `codex --remote` mode, MCP servers are loaded by the app-server, NOT by the TUI.**  On current codex (verified on 0.144.x) the app-server resolves config **per thread from that thread's cwd**, merging a trusted project's `.codex/config.toml` layer on top of its own `CODEX_HOME` (usually the global `~/.codex/config.toml`).  So the MCP entry above can live either in the global config or in a trusted project's `.codex/config.toml` — pass `-C "$PWD"` so the thread cwd points at the project.  Setting `CODEX_HOME` on the TUI alone still does nothing for MCP under `--remote`.
+> **In `codex --remote` mode, MCP servers are loaded by the app-server, NOT by the TUI.**  On current codex (verified on 0.144.x) the app-server resolves config **per thread from that thread's cwd**, merging a trusted project's `.codex/config.toml` layer on top of its own `CODEX_HOME`.  The CLI server should use `~/.codex-cli`; the App server should keep the default `~/.codex`.  Pass `-C "$PWD"` so the thread cwd points at the project.  Setting `CODEX_HOME` on the TUI alone still does nothing for MCP under `--remote`.
 
 Start order:
 
 ```bash
-# 1) Long-lived codex app-server somewhere (its CODEX_HOME + each thread's project layer decide the MCP set).
-codex app-server --listen ws://127.0.0.1:8799
+# 1) Resident CLI server with isolated state.
+mkdir -p ~/.codex-cli
+CODEX_HOME=~/.codex-cli codex app-server --listen ws://127.0.0.1:8799
 
-# 2) Codex TUI in a separate terminal, connected to the same app-server.
+# 2) Codex TUI in a separate terminal, connected only to the CLI server.
 codex --remote ws://127.0.0.1:8799
 ```
 
-If neither the app-server's `CODEX_HOME` nor the thread's trusted project `.codex/config.toml` has `cross-agent-teams-mcp` configured, the codex agent inside `--remote` won't see the MCP tools at all and `register_agent` will never fire.
+If the desktop App also needs xats poke, it must use a second server on 8800,
+started from the current Codex/ChatGPT App bundle with
+`features.code_mode_host=true`, and launch with
+`CODEX_APP_SERVER_WS_URL=ws://127.0.0.1:8800`.  Do not use the PATH binary for
+that server: version alignment is required for App/app-server protocol
+compatibility.  This external app-server mode does not support the ChatGPT in
+Chrome plugin.  Configure the daemon with
+`CROSS_AGENT_TEAMS_CODEX_WS_URLS='["ws://127.0.0.1:8799","ws://127.0.0.1:8800"]'`;
+registration probes the supplied `thread_id` and persists the unique matching
+endpoint.  See [README.agent.md](README.agent.md) for the complete lifecycle
+functions and migration steps.
+
+If neither the active app-server's `CODEX_HOME` nor the thread's trusted project `.codex/config.toml` has `cross-agent-teams-mcp` configured, the codex agent inside `--remote` won't see the MCP tools at all and `register_agent` will never fire.
 
 ##### Recommended: launcher with tmux pane auto-bind
 
@@ -370,7 +385,7 @@ Each remote teammate's Claude Code needs **two** changes from the default loopba
 }
 ```
 
-For Codex CLI, edit `~/.codex/config.toml`:
+For an isolated Codex CLI, edit `~/.codex-cli/config.toml`:
 
 ```toml
 [mcp_servers.cross-agent-teams-mcp]
@@ -420,3 +435,30 @@ The `--token` + Codex `--remote` combination surfaces three caveats that don't s
 - Full tool reference and schema: launch the daemon and call `tools/list` on the MCP endpoint.
 - Per-agent config details: `docs/configs/`.
 - Source: [github.com/jtianling/cross-agent-teams-mcp](https://github.com/jtianling/cross-agent-teams-mcp).
+
+## Codex App 和 Codex CLI 隔离运行
+
+如果既要通过 SSH 长期使用 Codex CLI, 又希望 Codex App 能被 xats poke
+唤醒, 两者不能共享同一个 app-server 和 `CODEX_HOME`.  已验证可用的隔离
+方式如下:
+
+- xats daemon 使用 `9100`.
+- Codex CLI 使用 `8799` 和 `~/.codex-cli`, 通过 `xats-codex` 或
+  `free-xats-codex` 启动.
+- Codex App 使用 `8800` 和默认的 `~/.codex`, 通过 `xats-codex-app`
+  启动.
+- daemon 同时接收两个 WebSocket endpoint, 注册时根据
+  `CODEX_THREAD_ID` 找到唯一匹配的 endpoint.  因此 App 和 CLI 即使打开
+  同一个 project, session 也不会互相接管.
+
+这条路径已经验证可以正常注册, 收取邮件, 被 poke 唤醒并回复消息.  但它
+有一个明确限制: `xats-codex-app` 通过外部 app-server 启动 Codex App,
+当前不能使用 ChatGPT in Chrome 插件.  `features.code_mode_host=true` 和
+App bundle 内置的 codex binary 只能保证 App 与 app-server 版本匹配,
+不能恢复 Chrome 插件能力.
+
+如果 Chrome 插件更重要, 不要为 Codex App 启用 xats.  只为 Codex CLI
+保留 `8799` 和 xats poke, Codex App 则继续点击 macOS 应用图标原生启动.
+这种方式下 App 可以使用 Chrome 插件, 但 App 本身不具备这里描述的
+xats poke 唤醒能力.  完整的自动配置分支和启动脚本见
+[README.agent.md](README.agent.md).

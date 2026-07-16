@@ -2,7 +2,11 @@ import { describe, it, expect } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { FastifyInstance } from 'fastify'
+import type {
+  FastifyInstance,
+  InjectOptions,
+  LightMyRequestResponse,
+} from 'fastify'
 import { buildServer } from '../src/daemon/server.js'
 import { SseFanout } from '../src/daemon/sse-fanout.js'
 
@@ -24,8 +28,20 @@ function sessionHeaders(sessionId: string): Record<string, string> {
   }
 }
 
+async function inject(
+  app: FastifyInstance,
+  options: InjectOptions
+): Promise<LightMyRequestResponse> {
+  const response = await app.inject(options)
+  const request = response.raw.req
+  if (typeof request.socket.destroySoon !== 'function') {
+    request.socket.destroySoon = () => request.destroy()
+  }
+  return response
+}
+
 async function initialize(app: FastifyInstance, id: number): Promise<string> {
-  const response = await app.inject({
+  const response = await inject(app, {
     method: 'POST',
     url: '/mcp',
     headers: requestHeaders(),
@@ -62,7 +78,7 @@ async function callTool(
   name: string,
   args: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
-  const response = await app.inject({
+  const response = await inject(app, {
     method: 'POST',
     url: '/mcp',
     headers: requestHeaders(sessionId),
@@ -113,7 +129,7 @@ describe('register_agent Codex lifecycle through Fastify inject', () => {
       )
       expect(secondRegistration.agent_id).toBe(firstRegistration.agent_id)
 
-      const closed = await app.inject({
+      const closed = await inject(app, {
         method: 'DELETE',
         url: '/mcp',
         headers: sessionHeaders(second),
@@ -125,7 +141,7 @@ describe('register_agent Codex lifecycle through Fastify inject', () => {
       expect(fanout.peek()).toEqual([
         { agent_id: firstRegistration.agent_id, team: 'default' },
       ])
-      const health = await app.inject({ method: 'GET', url: '/health' })
+      const health = await inject(app, { method: 'GET', url: '/health' })
       expect(health.json().mcp_sessions.registered).toBe(1)
     } finally {
       await app.close()
@@ -167,7 +183,7 @@ describe('register_agent Codex lifecycle through Fastify inject', () => {
       )
 
       for (const sessionId of [first, second]) {
-        const response = await app.inject({
+        const response = await inject(app, {
           method: 'POST',
           url: '/mcp',
           headers: requestHeaders(sessionId),

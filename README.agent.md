@@ -8,18 +8,18 @@
 Target UX after setup:
 
 1. Device-resident services are managed with `start-xats` / `stop-xats`
-   (daemon + codex app-server; the app-server part is skipped automatically
-   on a device without codex);
+   (one daemon + an isolated CLI app-server, plus an isolated App app-server
+   only when the user explicitly opts in);
 2. Each project needs at most one
    `npx mcpsmgr add jtianling/cross-agent-teams-mcp -a <agent>` run per
    agent — and none at all for agents installed globally (see section 3);
-3. Running `free-xats-codex` / `xats-codex` / `xats-codex-app` /
+3. Running `free-xats-codex` / `xats-codex` / optional `xats-codex-app` /
    `free-xats-opencode` / `xats-opencode` launches the corresponding agent
    with xats transport poke etc. working out of the box.
    `free-` prefix = yolo mode (skip approvals/sandbox), no prefix = normal
    approval mode.
 
-## 0. Before you start: prerequisites and four things to align with the user
+## 0. Before you start: prerequisites and five things to align with the user
 
 Prerequisites (check before anything else): macOS with zsh; Node.js >= 20
 (ships `npx`).  Per agent, only needed if the device will run it:
@@ -43,7 +43,28 @@ poke delivery.
 3. **consent to edit ~/.zshrc**: this repo never silently modifies the user's
    shell config.  Show the section 2.1 snippet to the user and write it only
    after approval.
-4. **install scope — global vs per-project**: ask the user which they want
+4. **Codex App xats support — explicit opt-in**: before planning Codex
+   runtimes, ask the user this question verbatim:
+
+   > 你是否也希望在 Codex App 中使用 xats, 并支持 poke 唤醒?  如果启用,
+   > App 需要通过 `xats-codex-app` 启动, 当前不能使用 ChatGPT in Chrome
+   > 插件.  如果不启用, App 继续从 macOS 图标原生启动并保留 Chrome 插件,
+   > xats 只用于 Codex CLI.
+
+   Do not infer the answer from the presence of a Codex/ChatGPT App bundle.
+   Record the answer in the zshrc snippet as
+   `XATS_CODEX_APP_ENABLED=1` for yes or `0` for no.
+
+   - **Yes**: use the current isolated split — CLI on 8799 with
+     `~/.codex-cli`, App on 8800 with default `~/.codex`, and install/configure
+     `xats-codex-app`.  xats registration and poke work in both surfaces, but
+     ChatGPT in Chrome does not work in the externally managed App runtime.
+   - **No**: preserve the CLI-only flow — start only the CLI app-server on
+     8799, do not start or stop port 8800, do not install xats into the App
+     home, and omit `xats-codex-app` from setup and hand-off commands.  The
+     user launches Codex App normally from its macOS icon; that native App is
+     outside the xats poke path.
+5. **install scope — global vs per-project**: ask the user which they want
    before running any section 3 install.  Global = configure once, every
    project on the device can use xats afterwards — much simpler to operate.
    Per-project = the config lives inside each project, and **every new
@@ -58,19 +79,29 @@ poke delivery.
 
 - **daemon** (port 9100): the hub for all agent communication; resident
   process, one per device.
-- **codex**: the TUI connects with `--remote`, and the macOS app connects with
-  `CODEX_APP_SERVER_WS_URL`, to the same resident codex app-server (port
-  8799).  Config resolution under `--remote` (verified on codex 0.144.x):
-  the shared app-server resolves configuration **per thread from that
-  thread's cwd**, merging layers CLI override > project
+- **codex CLI**: the TUI connects with `--remote` to a resident CLI
+  app-server on port 8799.  That process uses `CODEX_HOME=~/.codex-cli`, so
+  CLI config, auth, logs, and sessions stay separate from the desktop App.
+  Config resolution under `--remote` (verified on codex 0.144.x): the CLI
+  app-server resolves configuration **per thread from that thread's cwd**,
+  merging layers CLI override > project
   `<repo>/.codex/config.toml` (trusted repos only) > user
-  `~/.codex/config.toml` > system.  This is why the launcher passes
-  `-C "$PWD"`.  So codex's xats MCP config can live at either level:
-  global `~/.codex/config.toml` (section 2.2) or project
+  `~/.codex-cli/config.toml` > system.  This is why the launcher passes
+  `-C "$PWD"`.  The CLI xats MCP config can live at either level:
+  global `~/.codex-cli/config.toml` (section 2.2) or project
   `.codex/config.toml` (section 3.2).  `CODEX_HOME` is NOT needed for
   project-level installs — exporting it only for the remote TUI does
   nothing; if used at all (full state isolation: config + auth + sessions),
   it must be set on the app-server process.
+- **codex App, opt-in only**: when the user chose App xats support, the macOS
+  App connects through
+  `CODEX_APP_SERVER_WS_URL=ws://127.0.0.1:8800` to a second app-server.  That
+  process keeps the App default `~/.codex` state and MUST use the codex binary
+  inside the currently installed Codex/ChatGPT App bundle.  Keeping this
+  binary aligned with the App preserves App/app-server protocol compatibility,
+  but does not make ChatGPT in Chrome available.  Never fall back to a PATH
+  codex binary for this App runtime.  When the user chose no, skip port 8800
+  entirely and leave the natively launched App untouched.
 - **opencode**: every instance ships its own HTTP server.  The launcher
   allocates a random loopback port and exports `OPENCODE_XATS_BASE_URL`;
   the daemon push-wakes it through `prompt_async` — no tmux dependency.
@@ -94,7 +125,8 @@ comment out the old block** before writing the snippet below (zsh lets later
 definitions win, but stale aliases interfere with functions and stale variable
 names mislead debugging).
 
-Append the whole block to `~/.zshrc` (replace `<DEVICE>`):
+Append the whole block to `~/.zshrc` (replace `<DEVICE>` and change
+`XATS_CODEX_APP_ENABLED` to `1` only when the user opted in):
 
 ```zsh
 # ===== xats (cross-agent-teams-mcp) =====
@@ -104,10 +136,22 @@ Append the whole block to `~/.zshrc` (replace `<DEVICE>`):
 XATS_TOKEN_FILE="$HOME/.config/xats/token"
 [[ -f "$XATS_TOKEN_FILE" ]] && export CROSS_AGENT_TEAMS_MCP_TOKEN="$(<"$XATS_TOKEN_FILE")"
 XATS_DEVICE="<DEVICE>"
+# Safe default: CLI only.  Change to 1 only when the user opted in.
+XATS_CODEX_APP_ENABLED=0
 
-# Locate a codex CLI: prefer the app bundle (shared app-server for the macOS
-# app), fall back to PATH.  Prints nothing when codex is absent.
-_xats-codex-bin() {
+# Locate a CLI binary.  CLI prefers PATH but may use the App bundle binary.
+_xats-codex-cli-bin() {
+    local path_bin
+    path_bin="$(command -v codex 2>/dev/null)"
+    if [[ -n "$path_bin" ]]; then
+        echo "$path_bin"
+        return 0
+    fi
+    _xats-codex-app-bin
+}
+
+# Locate the current desktop App bundle binary.  No PATH fallback is allowed.
+_xats-codex-app-bin() {
     local app
     for app in /Applications/Codex.app /Applications/ChatGPT.app; do
         if [[ -x "$app/Contents/Resources/codex" ]]; then
@@ -115,7 +159,16 @@ _xats-codex-bin() {
             return 0
         fi
     done
-    command -v codex
+    return 1
+}
+
+_xats-wait-port() {
+    local port="$1" i
+    for i in {1..20}; do
+        nc -z 127.0.0.1 "$port" >/dev/null 2>&1 && return 0
+        sleep 0.5
+    done
+    return 1
 }
 
 start-xats() {
@@ -134,33 +187,76 @@ start-xats() {
         echo "[xats] token file was missing; persisted env token to $XATS_TOKEN_FILE"
     fi
 
-    npx -y cross-agent-teams-mcp@latest daemon \
-      --host 0.0.0.0 \
-      --port 9100 \
-      --token "$CROSS_AGENT_TEAMS_MCP_TOKEN" \
-      --device "$XATS_DEVICE" \
-      >>"${XATS_TOKEN_FILE:h}/daemon.log" 2>&1 &!
-
-    local codex_bin
-    codex_bin="$(_xats-codex-bin)"
-    if [[ -z "$codex_bin" ]]; then
-        echo "[xats] codex CLI not found (no Codex/ChatGPT app, not on PATH);" \
-          "daemon started, codex app-server skipped" >&2
-        return 0
+    local cli_bin app_bin candidates='[]'
+    cli_bin="$(_xats-codex-cli-bin)"
+    if [[ -n "$cli_bin" ]]; then
+        mkdir -p "$HOME/.codex-cli"
+        CODEX_HOME="$HOME/.codex-cli" "$cli_bin" \
+          app-server \
+          --analytics-default-enabled \
+          --listen ws://127.0.0.1:8799 \
+          >>"${XATS_TOKEN_FILE:h}/codex-cli-app-server.log" 2>&1 &!
+        if _xats-wait-port 8799; then
+            candidates='["ws://127.0.0.1:8799"]'
+        else
+            echo "[xats] CLI app-server failed; see" \
+              "${XATS_TOKEN_FILE:h}/codex-cli-app-server.log" >&2
+        fi
+    else
+        echo "[xats] codex CLI runtime skipped: no codex binary found" >&2
     fi
 
-    "$codex_bin" \
-      -c features.code_mode_host=true \
-      app-server \
-      --analytics-default-enabled \
-      --listen ws://127.0.0.1:8799 \
-      >>"${XATS_TOKEN_FILE:h}/app-server.log" 2>&1 &!
+    if [[ "$XATS_CODEX_APP_ENABLED" == 1 ]]; then
+        app_bin="$(_xats-codex-app-bin)"
+        if [[ -n "$app_bin" ]]; then
+            env -u CODEX_HOME "$app_bin" \
+              -c features.code_mode_host=true \
+              app-server \
+              --analytics-default-enabled \
+              --listen ws://127.0.0.1:8800 \
+              >>"${XATS_TOKEN_FILE:h}/codex-app-app-server.log" 2>&1 &!
+            if _xats-wait-port 8800; then
+                if [[ "$candidates" == '[]' ]]; then
+                    candidates='["ws://127.0.0.1:8800"]'
+                else
+                    candidates='["ws://127.0.0.1:8799","ws://127.0.0.1:8800"]'
+                fi
+            else
+                echo "[xats] App app-server failed; see" \
+                  "${XATS_TOKEN_FILE:h}/codex-app-app-server.log" >&2
+            fi
+        else
+            echo "[xats] App runtime skipped: no Codex/ChatGPT bundle binary" >&2
+        fi
+    fi
+
+    if [[ "$candidates" == '[]' ]]; then
+        env -u CROSS_AGENT_TEAMS_CODEX_WS_URL \
+          -u CROSS_AGENT_TEAMS_CODEX_WS_URLS \
+          npx -y cross-agent-teams-mcp@latest daemon \
+          --host 0.0.0.0 --port 9100 \
+          --token "$CROSS_AGENT_TEAMS_MCP_TOKEN" --device "$XATS_DEVICE" \
+          >>"${XATS_TOKEN_FILE:h}/daemon.log" 2>&1 &!
+    else
+        env -u CROSS_AGENT_TEAMS_CODEX_WS_URL \
+          CROSS_AGENT_TEAMS_CODEX_WS_URLS="$candidates" \
+          npx -y cross-agent-teams-mcp@latest daemon \
+          --host 0.0.0.0 --port 9100 \
+          --token "$CROSS_AGENT_TEAMS_MCP_TOKEN" --device "$XATS_DEVICE" \
+          >>"${XATS_TOKEN_FILE:h}/daemon.log" 2>&1 &!
+    fi
 }
 
 stop-xats() {
-    local label port found=0
-    local -a pids
-    for spec in "xats daemon:9100" "codex app-server:8799"; do
+    local label port spec found=0
+    local -a pids specs ports
+    specs=("xats daemon:9100" "codex CLI app-server:8799")
+    ports=(9100 8799)
+    if [[ "$XATS_CODEX_APP_ENABLED" == 1 ]]; then
+        specs+=("codex App app-server:8800")
+        ports+=(8800)
+    fi
+    for spec in "${specs[@]}"; do
         label="${spec%%:*}"; port="${spec##*:}"
         pids=("${(@f)$(lsof -ti tcp:${port} -sTCP:LISTEN 2>/dev/null)}")
         if [[ -n "${pids[1]}" ]]; then
@@ -173,7 +269,7 @@ stop-xats() {
     done
     (( found )) || { echo "[xats] nothing to stop"; return; }
     sleep 1
-    for port in 9100 8799; do
+    for port in "${ports[@]}"; do
         pids=("${(@f)$(lsof -ti tcp:${port} -sTCP:LISTEN 2>/dev/null)}")
         if [[ -n "${pids[1]}" ]]; then
             echo "[xats] force-killing survivors on port ${port} (pid ${pids[*]})"
@@ -183,6 +279,11 @@ stop-xats() {
 }
 
 xats-codex-app() {
+    if [[ "$XATS_CODEX_APP_ENABLED" != 1 ]]; then
+        echo "[xats] Codex App xats support is disabled;" \
+          "launch the App from its macOS icon" >&2
+        return 1
+    fi
     local app_bundle="/Applications/Codex.app"
     [[ -d "$app_bundle" ]] || app_bundle="/Applications/ChatGPT.app"
     if [[ ! -d "$app_bundle" ]]; then
@@ -203,7 +304,7 @@ xats-codex-app() {
         return 1
     fi
 
-    for port in 9100 8799; do
+    for port in 9100 8800; do
         if ! nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
             echo "[xats] service is not listening on port $port;" \
               "run start-xats first" >&2
@@ -220,7 +321,8 @@ xats-codex-app() {
         return 1
     fi
 
-    CODEX_APP_SERVER_WS_URL="ws://127.0.0.1:8799" \
+    env -u CODEX_HOME \
+      CODEX_APP_SERVER_WS_URL="ws://127.0.0.1:8800" \
       "$app_bin" >>"$log_dir/codex-app.log" 2>&1 &!
     app_pid=$!
     sleep 1
@@ -229,7 +331,7 @@ xats-codex-app() {
           "see $log_dir/codex-app.log" >&2
         return 1
     fi
-    echo "[xats] started Codex app with shared app-server"
+    echo "[xats] started Codex app with isolated App runtime on port 8800"
 }
 
 _xats-codex() {
@@ -241,23 +343,18 @@ _xats-codex() {
         echo "[xats] codex app-server not running, starting it" >&2
         mkdir -p "${XATS_TOKEN_FILE:h}"
         local codex_bin
-        codex_bin="$(_xats-codex-bin)"
+        codex_bin="$(_xats-codex-cli-bin)"
         if [[ -z "$codex_bin" ]]; then
             echo "[xats] codex CLI not found (no Codex/ChatGPT app, not on PATH)" >&2
             return 1
         fi
-        "$codex_bin" \
-            -c features.code_mode_host=true \
+        mkdir -p "$HOME/.codex-cli"
+        CODEX_HOME="$HOME/.codex-cli" "$codex_bin" \
             app-server \
             --analytics-default-enabled \
             --listen "$ws_url" \
-            >>"${XATS_TOKEN_FILE:h}/app-server.log" 2>&1 &!
-        local _i
-        for _i in {1..20}; do
-            nc -z 127.0.0.1 8799 >/dev/null 2>&1 && break
-            sleep 0.5
-        done
-        if ! nc -z 127.0.0.1 8799 >/dev/null 2>&1; then
+            >>"${XATS_TOKEN_FILE:h}/codex-cli-app-server.log" 2>&1 &!
+        if ! _xats-wait-port 8799; then
             echo "[xats] failed to start codex app-server on $ws_url" >&2
             return 1
         fi
@@ -271,7 +368,9 @@ _xats-codex() {
             || echo "[xats] pre-register failed (continuing without pane claim)" >&2
     fi
 
-    command codex "$@" \
+    local codex_bin
+    codex_bin="$(_xats-codex-cli-bin)"
+    "$codex_bin" "$@" \
         --remote "$ws_url" \
         -C "$PWD" \
         -c xats.agent_id="\"$xats_agent_id\""
@@ -306,10 +405,21 @@ Key points (understand before changing anything):
   This is intended behavior (the launcher is the session).
 - pre-register failing, or not being inside tmux, never blocks the launch —
   it only degrades to "no automatic pane binding".
-- `start-xats` always generates/persists the token and starts the daemon
-  first; the codex app-server is skipped with a warning when no codex CLI is
-  found (`_xats-codex-bin` checks the app bundle, then PATH).  A
-  claude-code/opencode-only device still gets a fully working daemon.
+- `start-xats` always generates/persists the token, starts the CLI runtime
+  when available, starts the App runtime only when
+  `XATS_CODEX_APP_ENABLED=1`, then starts one daemon with
+  `CROSS_AGENT_TEAMS_CODEX_WS_URLS` containing only listeners that came up.
+  It clears the legacy single endpoint env for that daemon process because
+  the compatibility precedence would otherwise mask the candidate list.
+  A claude-code/opencode-only device still gets a fully working daemon.
+- When App xats support is enabled, CLI and App logs are separate:
+  `~/.config/xats/codex-cli-app-server.log` and
+  `~/.config/xats/codex-app-app-server.log`.  The desktop App process log is
+  still `~/.config/xats/codex-app.log`.
+- The optional App runtime always comes from the current App bundle and clears
+  ambient `CODEX_HOME`; this keeps App and app-server versions aligned but
+  does not enable ChatGPT in Chrome.  The CLI runtime always sets
+  `CODEX_HOME=~/.codex-cli`.
 - If the env already carries a token but `~/.config/xats/token` is missing
   (e.g. the file was deleted while a shell kept the export), `start-xats`
   writes the env value back to the file so new shells pick it up again.
@@ -320,32 +430,49 @@ Key points (understand before changing anything):
   restarts, picks up upgrades), while `pre-register-codex-pane` in the
   launcher uses the bare package name so every codex launch hits the npx
   cache instead of a registry round-trip.
-- `start-xats` redirects both services to `~/.config/xats/daemon.log` /
-  `app-server.log` and disowns them (`&!`): no terminal spam, and they survive
+- `start-xats` redirects the daemon and enabled runtimes to their separate
+  log files and disowns them (`&!`): no terminal spam, and they survive
   the launching terminal closing (plain `&` jobs get SIGHUP).  The token
   echoes stay on the terminal on purpose.  Trade-off: if the user runs
   everything inside tmux and prefers live logs in the pane, plain `&` without
   redirection is a valid local variation.
 
-### 2.2 Global ~/.codex/config.toml
+### 2.2 Initialize isolated Codex homes and MCP config
 
-This is codex's **global** branch (the simple path).  If the user chose
-per-project for codex in section 0 item 4, skip this subsection — still run
-`start-xats` (2.3), then follow section 3.2 per project.
+Create the CLI home and authenticate it independently before its first use.
+Do not copy `auth.json`, sessions, or the complete App `~/.codex` directory:
 
-Recommended: use mcpsmgr (>= 0.4.8, see section 7).  Mind the three-step
-order:
-
-```bash
-source ~/.zshrc && start-xats   # first run: generates the token into env (see 2.3)
-npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a codex --global -y
-stop-xats && start-xats         # restart so the app-server loads the new MCP config
+```zsh
+mkdir -p "$HOME/.codex-cli"
+CODEX_HOME="$HOME/.codex-cli" "$(_xats-codex-cli-bin)" login
 ```
 
-What it writes is equivalent to the manual config below.  If mcpsmgr is not
-usable, or you need to merge by hand, append yourself (if the file already
-has `experimental_use_rmcp_client` or a same-named server block, merge rather
-than duplicating):
+The App keeps its existing login in the default `~/.codex`.  Existing
+sessions in that directory remain App sessions; the new CLI home starts with
+an empty session history.  This is the intentional migration boundary that
+prevents the App from taking over a CLI thread, regardless of the App xats
+choice.
+
+For the **global** branch, always install xats MCP into the CLI home.  Install
+it into the App home only when `XATS_CODEX_APP_ENABLED=1`.  The environment
+prefix makes the first command target `~/.codex-cli`; clearing `CODEX_HOME`
+makes the optional second command target the App default `~/.codex`:
+
+```zsh
+source ~/.zshrc && start-xats   # first run: generates the token into env (see 2.3)
+CODEX_HOME="$HOME/.codex-cli" \
+  npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a codex --global -y
+if [[ "$XATS_CODEX_APP_ENABLED" == 1 ]]; then
+  env -u CODEX_HOME \
+    npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a codex --global -y
+fi
+stop-xats && start-xats
+```
+
+This always writes the MCP block to `~/.codex-cli/config.toml`.  With App xats
+enabled, it also writes the same block to `~/.codex/config.toml`; otherwise
+leave the App home untouched.  If mcpsmgr is not usable, merge the block below
+into the same selected file or files rather than duplicating an existing key:
 
 ```toml
 experimental_use_rmcp_client = true
@@ -363,6 +490,12 @@ bearer_token_env_var = "CROSS_AGENT_TEAMS_MCP_TOKEN"
   `bearer_token_env_var` must match the one exported in section 2.1.
 - Version requirement: codex 0.124.0+ (exports `CODEX_THREAD_ID` to MCP tool
   processes, required for registration).
+- If the user chose project-level Codex config, still create and log in to
+  `~/.codex-cli`, but skip the global MCP install commands and follow 3.2.
+- SSH users run `xats-codex` normally.  It reconnects to the resident CLI
+  endpoint on 8799.  When App xats is enabled, its endpoint and session list
+  remain separate; otherwise the natively launched App remains outside this
+  runtime entirely.
 
 ### 2.3 Start resident services and verify
 
@@ -371,7 +504,10 @@ source ~/.zshrc
 start-xats
 # wait a few seconds, then verify:
 nc -z 127.0.0.1 9100 && echo daemon-ok
-nc -z 127.0.0.1 8799 && echo appserver-ok   # skip on a device without codex
+nc -z 127.0.0.1 8799 && echo cli-appserver-ok
+if [[ "$XATS_CODEX_APP_ENABLED" == 1 ]]; then
+  nc -z 127.0.0.1 8800 && echo app-appserver-ok
+fi
 ```
 
 The first run prints the auto-generated token — **relay it to the user**.
@@ -412,7 +548,7 @@ local-only teams.
 ## 3. Project-level vs global install (ask the user first)
 
 Before running any install command in this section, **ask the user which
-level they want** (the section 0 item 4 alignment should already have
+level they want** (the section 0 item 5 alignment should already have
 settled this — do not re-ask if it did), then follow the matching branch:
 
 - **Project-level** — the config lives inside the project
@@ -425,7 +561,7 @@ What actually exists per agent (do not offer branches that do not work):
 
 | Agent | Project-level | Global |
 | --- | --- | --- |
-| codex | `mcpsmgr add` into the project `.codex/config.toml`, repo must be Codex-trusted (3.2) | `mcpsmgr add --global` into `~/.codex/config.toml` (2.2) |
+| codex | `mcpsmgr add` into the project `.codex/config.toml`, repo must be Codex-trusted (3.2) | always install into `~/.codex-cli`; also install into `~/.codex` only when App xats is enabled (2.2) |
 | opencode | `mcpsmgr add` into `opencode.json` (3.1) | `mcpsmgr add --global` into `~/.config/opencode/opencode.json` (3.1) |
 | claude-code | `mcpsmgr add` into `.mcp.json` (3.3) | tools-only via `claude mcp add --scope user`; push-wake channel stays project-level (3.3) |
 
@@ -487,8 +623,8 @@ stays in the home directory instead of a committable project file.
 
 ### 3.2 codex
 
-**Global** — already done in section 2.2 (`--global` writes
-`~/.codex/config.toml`); nothing more per project.
+**Global** — already done in section 2.2 for the CLI home and, when App xats
+is enabled, the App home; nothing more per project.
 
 **Project-level** — if the user chose per-project; run in the project root:
 
@@ -500,7 +636,8 @@ Writes the project `<repo>/.codex/config.toml`.  For it to take effect:
 
 - the repo must be **trusted** by Codex, otherwise the project config layer
   is ignored;
-- the shared app-server keeps running per section 2 (`start-xats`) with
+- the CLI app-server, plus the App app-server only when enabled, keeps running
+  per section 2 (`start-xats`) with
   `CROSS_AGENT_TEAMS_MCP_TOKEN` in its environment — the project config
   only names the env var, it does not carry the token value;
 - launch from the project root with `free-xats-codex` / `xats-codex`: the
@@ -537,7 +674,7 @@ for claude-code.
 | --- | --- |
 | `free-xats-codex` | yolo codex, connects to app-server, tmux pane pre-registered |
 | `xats-codex` | same, normal approval mode |
-| `xats-codex-app` | macOS Codex app, connects to the shared app-server for poke |
+| `xats-codex-app` | opt-in only: macOS Codex App on isolated port 8800 with xats poke; ChatGPT in Chrome is unavailable |
 | `free-xats-opencode` | yolo opencode, random port + push wake |
 | `xats-opencode` | same, normal approval mode |
 | `free-xats-claude` / `xats-claude` | claude-code with the xats channel attached |
@@ -568,33 +705,43 @@ reused, no duplicate row.
 
 ## 5. Verification checklist
 
-1. `nc -z 127.0.0.1 9100` succeeds; on a codex device `nc -z 127.0.0.1 8799`
-   succeeds too.
+1. `nc -z 127.0.0.1 9100` and CLI port 8799 succeed.  Only when App xats is
+   enabled, port 8800 must also succeed.
 2. Launch `free-xats-codex` inside tmux; `register_agent` from within the
    session succeeds and the response carries **no `hint`** (a hint means pane
    auto-binding did not converge).
 3. Launch `free-xats-opencode`; inside the session
    `printenv OPENCODE_XATS_BASE_URL` is non-empty and `register_agent`
    returns an `agent_id`.
-4. From another registered agent, `send_message` to the new agent returns
-   `poked: true`, and the new agent wakes up and reads it via `get_inbox`.
+4. When App xats is enabled, launch `xats-codex-app`, register an App task,
+   and confirm CLI/App registration responses persist 8799 and 8800
+   respectively.  Send a test message and confirm the App wakes and reads it
+   through `get_inbox`.
+5. When App xats is disabled, confirm port 8800 is not managed by these
+   functions and launch the App natively from its macOS icon.  Do not expect
+   xats poke in that App.
+6. From another registered agent, `send_message` to each xats-enabled Codex
+   agent returns `poked: true`, and each wakes up and reads it via
+   `get_inbox`.
 
 ## 6. Troubleshooting
 
 | Symptom | Cause and fix |
 | --- | --- |
-| `[xats] failed to start codex app-server` | codex CLI not installed / not on PATH, or port 8799 taken.  Check `~/.config/xats/app-server.log`, or run `codex app-server --listen ws://127.0.0.1:8799` manually to see the raw error |
-| Need daemon / app-server logs (startup errors, noise) | `tail -f ~/.config/xats/daemon.log` / `app-server.log`.  App-server noise like `failed to refresh available models: timeout` is non-fatal |
+| `[xats] failed to start codex app-server` | codex binary missing, port 8799 is taken, or enabled App port 8800 is taken.  Check `~/.config/xats/codex-cli-app-server.log` and, when enabled, `codex-app-app-server.log` |
+| Need daemon / app-server logs (startup errors, noise) | `tail -f ~/.config/xats/daemon.log` plus the CLI runtime log and, when enabled, the App runtime log.  App-server noise like `failed to refresh available models: timeout` is non-fatal |
 | daemon vanished after its terminal was closed | It was started with a plain `&` (job gets SIGHUP with the terminal).  The current snippet's `&!` (disown) prevents this; restart with `start-xats` |
 | `Deserialize error: data did not match any variant of untagged enum JsonRpcMessage` | Actually a daemon 401: the app-server cannot see the token env.  Restart from a shell that has it exported (`stop-xats` + `start-xats`) |
-| xats MCP tools invisible inside codex | Global install: config missing from `~/.codex/config.toml`, or top-level `experimental_use_rmcp_client = true` missing.  Project-level install: repo not trusted by Codex, or the thread cwd misses the project (launcher lost `-C "$PWD"`) |
+| xats MCP tools invisible inside codex | Global install: config missing from the active runtime home (`~/.codex-cli` for CLI, or `~/.codex` for an xats-enabled App), or top-level `experimental_use_rmcp_client = true` missing.  Project-level install: repo not trusted by Codex, or the thread cwd misses the project (launcher lost `-C "$PWD"`) |
+| Chrome plugin unavailable through `xats-codex-app` | Expected limitation of the external app-server mode.  `features.code_mode_host=true` and the App bundle binary do not restore it.  If Chrome is required, disable App xats, quit this App instance, and launch the App natively from its macOS icon |
+| App shows or takes over CLI sessions | Both surfaces still point at one endpoint or one `CODEX_HOME`.  Verify CLI uses 8799 + `~/.codex-cli`, App uses 8800 + default `~/.codex` |
 | 401 despite a configured token | Legacy `[mcp_servers.X.headers]` form (silently ignored on 0.130+); or a stale project-level `.codex/config.toml` overriding global auth.  Audit: `find ~ -path '*/.codex/config.toml' -print` |
 | `mcpsmgr add` succeeded but the written config lacks `bearer_token_env_var` / has wrong servers (codex 401 / -32601) | Stale bundle cache on a device that installed xats before — only with mcpsmgr <= 0.4.9 (fixed in 0.4.10, see section 7).  Re-run with `mcpsmgr@latest`, or on old versions `npx -y mcpsmgr@latest uninstall cross-agent-teams` then re-add |
 | codex session lands in the wrong directory | Launcher lost `-C "$PWD"` |
 | `register_agent` response carries `hint` | Not inside tmux, or pre-register failed/expired (120s TTL).  Still functional, just no pane auto-bind; call `bind_runtime_identity` to bind manually if needed |
 | opencode gets no push wake | Not launched via the launcher (missing `OPENCODE_XATS_BASE_URL`), or `base_url` not passed at registration |
 | All tools return `unknown_session` / `unknown_agent` after a daemon restart | Reconnect the MCP server, then `reconnect` (claude-code: `ui_pid=$PPID`; codex: `thread_id=$CODEX_THREAD_ID`) or, if the session still remembers its (team, name), `register_agent` with them |
-| Everything points at 9100 but connections fail or hit a foreign process | Port 9100 was taken at daemon startup, so it fell back to 9101/9102 (it tries the next two ports).  Check the `listening on` line in `~/.config/xats/daemon.log`, free port 9100 (`lsof -i tcp:9100`), then restart.  Note `stop-xats` only sweeps 9100/8799 — kill a fallback-port daemon by pid |
+| Everything points at 9100 but connections fail or hit a foreign process | Port 9100 was taken at daemon startup, so it fell back to 9101/9102 (it tries the next two ports).  Check the `listening on` line in `~/.config/xats/daemon.log`, free port 9100 (`lsof -i tcp:9100`), then restart.  Note `stop-xats` sweeps 9100/8799 plus 8800 only when App xats is enabled — kill a fallback-port daemon by pid |
 
 ## 7. mcpsmgr version requirement
 
@@ -612,8 +759,10 @@ The mcpsmgr steps in this document require **mcpsmgr >= 0.4.8**
    header; when the token is absent, empty `http_headers` / `headers` blocks
    are omitted entirely (opencode still gets a plaintext Bearer when a token
    exists — its config format has no env reference mechanism).
-3. `--global` (codex only): writes the global `~/.codex/config.toml`; this is
-   the one-shot entry used in section 2.2.  Other agents reject `--global`.
+3. `--global` (codex only): writes the active Codex home's global
+   `config.toml`.  Section 2.2 always runs it with
+   `CODEX_HOME=~/.codex-cli`, and runs it with the default App home only when
+   App xats is enabled.  Other agents reject `--global`.
 4. Non-interactive token: repeatable `--var NAME=VALUE`; source priority is
    `--var` > `process.env` > interactive prompt; with a value in env, `-y` no
    longer silently skips it.
@@ -642,8 +791,11 @@ user.  It must contain:
    - `start-xats` / `stop-xats` — manage the resident daemon + codex
      app-server;
    - `free-xats-codex` / `xats-codex` — launch codex TUI (yolo / normal);
-   - `xats-codex-app` — launch the macOS Codex app against the shared
-     app-server;
+   - when App xats was enabled, `xats-codex-app` — launch the macOS Codex App
+     against the isolated port 8800 runtime; also state that ChatGPT in Chrome
+     is unavailable in this mode;
+   - when App xats was disabled, tell the user to launch Codex App from its
+     macOS icon and state that this native App does not receive xats pokes;
    - `free-xats-opencode` / `xats-opencode` — launch opencode (yolo /
      normal);
    - `free-xats-claude` / `xats-claude` — launch Claude Code with the xats
@@ -653,7 +805,7 @@ user.  It must contain:
    including the very terminal the user is sitting in — do not have the new
    functions and env yet.  Run `source ~/.zshrc` there once, or open a new
    terminal.
-4. **Scope-specific usage** (match what was chosen in section 0 item 4 /
+4. **Scope-specific usage** (match what was chosen in section 0 item 5 /
    section 3):
    - **Global installs**: every project on the device is covered — `cd`
      into any project and launch with the point 1 commands, nothing else
