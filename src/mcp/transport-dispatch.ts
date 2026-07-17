@@ -158,6 +158,13 @@ async function dispatchCodex(
       content: input.content,
     })
     if ('ok' in result && result.ok) return result
+    if (
+      'error' in result &&
+      (result.error === 'codex_turn_start_unconfirmed' ||
+        result.error === 'codex_wake_unconfirmed')
+    ) {
+      return result
+    }
     if (paneId) return dispatchTmux(deps, paneId, input.content, input.skipGuard)
     return result
   }

@@ -252,6 +252,11 @@ export function createAutoPokeImpl(
     )
     if ('ok' in res && res.ok) return { ok: true }
     const err = (res as { error?: string }).error
+    if (err === 'codex_turn_start_unconfirmed' || err === 'codex_wake_unconfirmed') {
+      // The app-server accepted the turn input. Confirmation uncertainty must
+      // not trigger tmux fallback or retry duplicate delivery.
+      return { ok: true }
+    }
     if (err === 'tmux_unavailable') return { ok: false, reason: 'tmux_unavailable' }
     if (err === 'tmux_pane_not_set') return { ok: false, reason: 'no_pane' }
     if (err === 'no_transport_available') return { ok: false, reason: 'no_pane' }
