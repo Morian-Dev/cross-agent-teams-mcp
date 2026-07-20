@@ -55,7 +55,7 @@ const deliverySchema = z.object({
   kind: z.string(),
 }).passthrough()
 
-const agentTypeSchema = z.enum(['codex', 'claude-code', 'opencode', 'custom'])
+const agentTypeSchema = z.enum(['codex', 'claude-code', 'opencode', 'kimi-code', 'custom'])
 
 const detectTmuxPaneSchema = z.object({
   agent: z.enum(['codex', 'claude-code', 'opencode', 'custom']),
@@ -290,6 +290,8 @@ function inferRuntimeAgentKind(
   clientInfo: SessionClientInfo | undefined
 ): DetectAgentKind | undefined {
   if (args.agent_type === 'custom') return undefined
+  // kimi-code has no tmux runtime-bind matcher; its delivery is HTTP-only.
+  if (args.agent_type === 'kimi-code') return undefined
   if (args.agent_type) return args.agent_type
   if (args.delivery?.kind === 'codex-appserver') return 'codex'
 
@@ -480,12 +482,13 @@ export function registerBusinessTools(
     if (
       value.auth_token_ref !== undefined &&
       value.agent_type !== 'codex' &&
-      value.agent_type !== 'opencode'
+      value.agent_type !== 'opencode' &&
+      value.agent_type !== 'kimi-code'
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['agent_type'],
-        message: 'agent_type=codex or agent_type=opencode is required when auth_token_ref is provided',
+        message: 'agent_type=codex, agent_type=opencode, or agent_type=kimi-code is required when auth_token_ref is provided',
       })
     }
     if (value.channel_session_id !== undefined && value.agent_type !== 'claude-code') {
@@ -552,18 +555,48 @@ export function registerBusinessTools(
         }
       }
     }
-    if (value.base_url !== undefined && value.agent_type !== 'opencode') {
+    if (value.agent_type === 'kimi-code') {
+      if (value.base_url === undefined || value.base_url.trim().length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['base_url'],
+          message:
+            'base_url is required when agent_type="kimi-code". '
+            + 'Read it from $KIMI_XATS_BASE_URL (set by the xats-kimi launcher).',
+        })
+      } else {
+        let parsedUrl: URL | null = null
+        try { parsedUrl = new URL(value.base_url) } catch { /* invalid */ }
+        if (!parsedUrl || (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:')) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['base_url'],
+            message: 'base_url must be a parseable http:// or https:// URL when agent_type="kimi-code".',
+          })
+        }
+      }
+      if (value.session_id === undefined || value.session_id.trim().length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['session_id'],
+          message:
+            'session_id is required when agent_type="kimi-code" (the daemon does NOT auto-resolve it). '
+            + 'Read it from $KIMI_XATS_SESSION_ID (exported by the xats-kimi launcher, which pre-creates the session via the kimi server REST API).',
+        })
+      }
+    }
+    if (value.base_url !== undefined && value.agent_type !== 'opencode' && value.agent_type !== 'kimi-code') {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['agent_type'],
-        message: 'agent_type=opencode is required when base_url is provided',
+        message: 'agent_type=opencode or agent_type=kimi-code is required when base_url is provided',
       })
     }
-    if (value.session_id !== undefined && value.agent_type !== 'opencode') {
+    if (value.session_id !== undefined && value.agent_type !== 'opencode' && value.agent_type !== 'kimi-code') {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['agent_type'],
-        message: 'agent_type=opencode is required when session_id is provided',
+        message: 'agent_type=opencode or agent_type=kimi-code is required when session_id is provided',
       })
     }
   })
@@ -635,6 +668,46 @@ export function registerBusinessTools(
         }
       }
       return opencodeRes
+    }
+    // kimi-code HTTP branch: register via the kimi-server delivery path.
+    // No register-time health check (start-xats may launch the kimi server
+    // later; reachability failures surface at poke time as kimi_connect_failed).
+    if (
+      args.agent_type === 'kimi-code' &&
+      args.base_url !== undefined &&
+      args.session_id !== undefined
+    ) {
+      const kimiRes = registerSvc.register({
+        connection_id: connectionId,
+        agent_type: 'kimi-code',
+        model: args.model,
+        device: args.device,
+        name: args.name,
+        role: args.role,
+        team: args.team,
+        project_dir: args.project_dir,
+        delivery: {
+          kind: 'kimi-server',
+          session_id: args.session_id,
+          base_url: args.base_url,
+          ...(args.auth_token_ref === undefined
+            ? {}
+            : { auth_token_ref: args.auth_token_ref }),
+        },
+      })
+      if ('agent_id' in kimiRes) {
+        if (onRegisterSuccess) {
+          try { onRegisterSuccess(kimiRes.agent_id, kimiRes.team) } catch { /* best-effort */ }
+        } else if (fanout) {
+          try { fanout.rebind(kimiRes.agent_id, kimiRes.team) } catch { /* best-effort */ }
+        }
+        return {
+          ...kimiRes,
+          session_id: args.session_id,
+          base_url: args.base_url,
+        }
+      }
+      return kimiRes
     }
     if (
       args.agent_type === 'claude-code' &&
@@ -829,13 +902,15 @@ export function registerBusinessTools(
       description: [
         'Register this session as an agent in a team. This is the unified registration entry point.',
         'DETECTION (run these probes BEFORE choosing `agent_type=`, in order; first match wins):',
-        '1. `printenv OPENCODE_XATS_BASE_URL` non-empty → `agent_type="opencode"`; pass that value as `base_url`. Do NOT pass `session_id` — the daemon auto-resolves it as the most recently updated session on that base_url. The env var is set ONLY by the `free-xats-opencode` launcher, so its presence is itself the runtime assertion that the caller is opencode.',
-        '2. `printenv CODEX_THREAD_ID` non-empty (Codex CLI or Mac Codex App) → `agent_type="codex"`; pass that value as `thread_id` (REQUIRED for codex per the schema). For Codex CLI, do NOT pass `ui_pid` because the launcher\'s `pre_register_codex_pane` flow handles tmux binding and an explicit pid disables that path. Mac Codex App has no tmux launcher flow; omit `ui_pid` because an App or app-server pid is not conversation-scoped, and reconnect identity is `thread_id` only.',
-        '3. `printenv CLAUDECODE` non-empty OR `printenv CLAUDE_CODE_ENTRYPOINT` non-empty → `agent_type="claude-code"`; pass `$PPID` as `ui_pid` to enable channel auto-bind.',
-        '4. None of the above → `agent_type="custom"` with `agent_type_name="<the harness you are running under, e.g. cursor, opencode, ...>"` (`agent_type_name` is required when `agent_type="custom"`). Detect the harness name from your runtime environment if you can — e.g. `printenv CURSOR_TRACE_ID` non-empty means cursor — but do NOT guess from system-wide signals like "binary X exists on PATH": such probes detect what the user has installed, not what runtime you are inside, and pick the wrong agent type. When unsure, prefer `agent_type_name="unknown"` over a wrong guess.',
+        '1. `printenv KIMI_XATS_BASE_URL` non-empty → `agent_type="kimi-code"`; pass that value as `base_url`, and pass `session_id` from `printenv KIMI_XATS_SESSION_ID`. The `xats-kimi` launcher pre-creates the session via the kimi server REST API and exports BOTH variables, so the session id is exact — do NOT derive it from `~/.kimi-code/session_index.jsonl` (its last `workDir`-matching entry can belong to a DIFFERENT kimi session in the same directory; pokes bound that way are delivered to the wrong session). `session_id` is REQUIRED for kimi-code — the daemon does NOT auto-resolve it. These env vars are set ONLY by the `xats-kimi` launcher, so their presence is itself the runtime assertion that the caller is kimi-code.',
+        '2. `printenv OPENCODE_XATS_BASE_URL` non-empty → `agent_type="opencode"`; pass that value as `base_url`. Do NOT pass `session_id` — the daemon auto-resolves it as the most recently updated session on that base_url. The env var is set ONLY by the `free-xats-opencode` launcher, so its presence is itself the runtime assertion that the caller is opencode.',
+        '3. `printenv CODEX_THREAD_ID` non-empty (Codex CLI or Mac Codex App) → `agent_type="codex"`; pass that value as `thread_id` (REQUIRED for codex per the schema). For Codex CLI, do NOT pass `ui_pid` because the launcher\'s `pre_register_codex_pane` flow handles tmux binding and an explicit pid disables that path. Mac Codex App has no tmux launcher flow; omit `ui_pid` because an App or app-server pid is not conversation-scoped, and reconnect identity is `thread_id` only.',
+        '4. `printenv CLAUDECODE` non-empty OR `printenv CLAUDE_CODE_ENTRYPOINT` non-empty → `agent_type="claude-code"`; pass `$PPID` as `ui_pid` to enable channel auto-bind.',
+        '5. None of the above → `agent_type="custom"` with `agent_type_name="<the harness you are running under, e.g. cursor, opencode, ...>"` (`agent_type_name` is required when `agent_type="custom"`). Detect the harness name from your runtime environment if you can — e.g. `printenv CURSOR_TRACE_ID` non-empty means cursor — but do NOT guess from system-wide signals like "binary X exists on PATH": such probes detect what the user has installed, not what runtime you are inside, and pick the wrong agent type. When unsure, prefer `agent_type_name="unknown"` over a wrong guess.',
         'Calling this tool again with the same `(device, team, name)` identity reuses the existing `agent_id` and refreshes `tmux_pane_id` and `model`; no duplicate row is created.',
         'Use `agent_type="custom"` for unsupported agent harnesses; provide `agent_type_name` for observability.',
         'opencode sessions: pass `agent_type="opencode"` and `base_url` (from `$OPENCODE_XATS_BASE_URL`, set by the `free-xats-opencode` launcher). Omit `session_id` — the daemon auto-resolves it via `<base_url>/session` (most recently updated). `auth_token_ref` is optional; set only when `OPENCODE_SERVER_PASSWORD` is configured on the opencode server. The schema REQUIRES `base_url` (parseable `http://` or `https://` URL) when `agent_type="opencode"`; missing/malformed `base_url` is rejected before any HTTP probe runs.',
+        'kimi-code sessions: pass `agent_type="kimi-code"`, `base_url` (from `$KIMI_XATS_BASE_URL`, set by the `xats-kimi` launcher), and `session_id` (REQUIRED — from `$KIMI_XATS_SESSION_ID`, which the launcher exports after pre-creating the session via the kimi server REST API; the daemon does NOT auto-resolve it and does NOT health-check the server at register time. Do NOT fall back to `~/.kimi-code/session_index.jsonl` guessing: with several kimi sessions in one directory its last `workDir` match can be a different session, and pokes then wake that wrong session while reporting delivered). `auth_token_ref` is optional; when omitted the daemon reads the bearer token from `~/.kimi-code/server.token` at poke time. The schema REQUIRES `base_url` (parseable `http://` or `https://` URL) and a non-empty `session_id` when `agent_type="kimi-code"`; missing/malformed values are rejected before any row is written.',
         'Claude Code sessions: pass `agent_type="claude-code"` and PREFERRED: pass only `ui_pid` (from `$PPID`) so the daemon auto-binds channel delivery — do not pass `channel_session_id` explicitly. When BOTH `ui_pid` AND `channel_session_id` are supplied, the daemon runs a consistency check against the caller `ui_pid`\'s live channel proxy; if the proxy\'s csid does not match the supplied `channel_session_id`, the call is rejected with `channel_session_id_ui_pid_mismatch` before any agent row is written. To re-establish a prior identity on a fresh/resumed session where you no longer remember your (team, name) (changed csid, unchanged $PPID), prefer `reconnect({ ui_pid })` over the bind_channel→register fallback; `bind_channel` only rebinds a session already bound to your agent. If instead you still remember your (team, name) after a restart + resume (changed $PPID), call register_agent directly with that remembered (team, name) and the current $PPID rather than reconnect.',
         'Codex CLI and Mac Codex App sessions: pass `agent_type="codex"` and `thread_id` (from `$CODEX_THREAD_ID`) to register Codex app-server delivery. The schema REQUIRES `thread_id` when `agent_type="codex"`; missing or empty `thread_id` is rejected before any handshake runs. Codex CLI launcher callers without `thread_id` should use `pre_register_codex_pane`; Mac Codex App does not use that tmux launcher path. Endpoint precedence is explicit `ws_url`, legacy `CROSS_AGENT_TEAMS_CODEX_WS_URL`, JSON array `CROSS_AGENT_TEAMS_CODEX_WS_URLS`, then `ws://127.0.0.1:8799`. With multiple configured endpoints, the daemon probes `thread_id` and registers only a unique match. `model` defaults to `gpt` when omitted. For `agent_type="claude-code"` callers, `model` defaults to a Claude-specific value derived from MCP session client info when omitted.',
         '`model` is OPTIONAL for any agent_type: omit it when you do not have an authoritative model identifier; the daemon stores NULL in that case. Pass an explicit `model` only when you have a stable identifier you would like surfaced via `list_agents`.',

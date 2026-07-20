@@ -21,11 +21,19 @@ export type DeliveryOpencodeServer = {
   auth_token_ref?: string;
 };
 
+export type DeliveryKimiServer = {
+  kind: 'kimi-server';
+  session_id: string;
+  base_url: string;
+  auth_token_ref?: string;
+};
+
 export type DeliverySpec =
   | DeliveryNone
   | DeliveryClaudeChannel
   | DeliveryCodexAppserver
-  | DeliveryOpencodeServer;
+  | DeliveryOpencodeServer
+  | DeliveryKimiServer;
 
 export type DeliveryKind = DeliverySpec['kind'];
 
@@ -34,6 +42,7 @@ export const DELIVERY_KINDS: readonly DeliveryKind[] = [
   'claude-channel',
   'codex-appserver',
   'opencode-server',
+  'kimi-server',
 ] as const;
 
 export type DeliveryRow = {
@@ -113,6 +122,30 @@ export function parseDeliveryRow(row: DeliveryRow): DeliverySpec {
       };
     }
     return { kind: 'opencode-server', session_id: sessionId, base_url: baseUrl };
+  }
+  if (kind === 'kimi-server') {
+    const sessionId = record.session_id;
+    if (typeof sessionId !== 'string' || sessionId.length === 0) {
+      throw new Error('corrupt_delivery_payload');
+    }
+    const baseUrl = record.base_url;
+    if (typeof baseUrl !== 'string' || baseUrl.length === 0) {
+      throw new Error('corrupt_delivery_payload');
+    }
+    const hasAuthTokenRef = Object.prototype.hasOwnProperty.call(record, 'auth_token_ref');
+    if (hasAuthTokenRef) {
+      const authTokenRef = record.auth_token_ref;
+      if (typeof authTokenRef !== 'string' || authTokenRef.length === 0) {
+        throw new Error('corrupt_delivery_payload');
+      }
+      return {
+        kind: 'kimi-server',
+        session_id: sessionId,
+        base_url: baseUrl,
+        auth_token_ref: authTokenRef,
+      };
+    }
+    return { kind: 'kimi-server', session_id: sessionId, base_url: baseUrl };
   }
   throw new Error('corrupt_delivery_payload');
 }
@@ -230,6 +263,39 @@ export function validateDeliveryForWrite(input: unknown): ValidateDeliveryResult
     return {
       ok: {
         kind: 'opencode-server',
+        session_id: sessionId,
+        base_url: baseUrl,
+        ...(authTokenRef === undefined ? {} : { auth_token_ref: authTokenRef }),
+      },
+    };
+  }
+  if (kind === 'kimi-server') {
+    const sessionId = readTrimmedString(record, 'session_id');
+    if (sessionId === undefined || sessionId.length === 0) {
+      return { error: 'invalid_delivery', reason: 'invalid_session_id' };
+    }
+
+    const baseUrl = readTrimmedString(record, 'base_url');
+    if (baseUrl === undefined || baseUrl.length === 0) {
+      return { error: 'invalid_delivery', reason: 'invalid_base_url' };
+    }
+    try {
+      const parsed = new URL(baseUrl);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return { error: 'invalid_delivery', reason: 'invalid_base_url' };
+      }
+    } catch {
+      return { error: 'invalid_delivery', reason: 'invalid_base_url' };
+    }
+
+    const authTokenRef = readTrimmedString(record, 'auth_token_ref');
+    if (authTokenRef === '') {
+      return { error: 'invalid_delivery', reason: 'invalid_auth_token_ref' };
+    }
+
+    return {
+      ok: {
+        kind: 'kimi-server',
         session_id: sessionId,
         base_url: baseUrl,
         ...(authTokenRef === undefined ? {} : { auth_token_ref: authTokenRef }),

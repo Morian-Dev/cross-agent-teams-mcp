@@ -363,6 +363,17 @@ describe('serializeDelivery (Task 1.3)', () => {
         base_url: 'https://example.com',
         auth_token_ref: 'OPENCODE_SERVER_PASSWORD',
       },
+      {
+        kind: 'kimi-server',
+        session_id: 'session_a',
+        base_url: 'http://127.0.0.1:58627',
+      },
+      {
+        kind: 'kimi-server',
+        session_id: 'session_b',
+        base_url: 'https://example.com',
+        auth_token_ref: 'KIMI_SERVER_TOKEN',
+      },
     ];
     for (const spec of specs) {
       expect(parseDeliveryRow(serializeDelivery(spec))).toEqual(spec);
@@ -668,6 +679,190 @@ describe('Task 1.5 scenario coverage audit (agent-delivery/spec.md)', () => {
           auth_token_ref: '   ',
         }),
       ).toEqual({ error: 'invalid_delivery', reason: 'invalid_auth_token_ref' });
+    });
+  });
+});
+
+describe('kimi-server delivery kind (add-kimi-code-poke)', () => {
+  it('accepts kind kimi-server with session_id, base_url, optional auth_token_ref', () => {
+    const specWithout: DeliverySpec = {
+      kind: 'kimi-server',
+      session_id: 'session_abc',
+      base_url: 'http://127.0.0.1:58627',
+    };
+    const specWith: DeliverySpec = {
+      kind: 'kimi-server',
+      session_id: 'session_abc',
+      base_url: 'https://example.com',
+      auth_token_ref: 'KIMI_SERVER_TOKEN',
+    };
+    expect(specWithout.kind).toBe('kimi-server');
+    expect(specWith.kind).toBe('kimi-server');
+    if (specWith.kind === 'kimi-server') {
+      expectTypeOf(specWith.session_id).toEqualTypeOf<string>();
+      expectTypeOf(specWith.base_url).toEqualTypeOf<string>();
+    }
+  });
+
+  it('reconstructs kimi-server row with full payload including auth_token_ref', () => {
+    const row = {
+      delivery_kind: 'kimi-server',
+      delivery_payload:
+        '{"session_id":"session_abc","base_url":"http://127.0.0.1:58627","auth_token_ref":"KIMI_SERVER_TOKEN"}',
+    };
+    expect(parseDeliveryRow(row)).toEqual({
+      kind: 'kimi-server',
+      session_id: 'session_abc',
+      base_url: 'http://127.0.0.1:58627',
+      auth_token_ref: 'KIMI_SERVER_TOKEN',
+    });
+  });
+
+  it('reconstructs kimi-server row without auth_token_ref omits the optional key', () => {
+    const row = {
+      delivery_kind: 'kimi-server',
+      delivery_payload: '{"session_id":"session_abc","base_url":"http://127.0.0.1:58627"}',
+    };
+    const spec = parseDeliveryRow(row);
+    expect(spec).toEqual({
+      kind: 'kimi-server',
+      session_id: 'session_abc',
+      base_url: 'http://127.0.0.1:58627',
+    });
+    expect(Object.prototype.hasOwnProperty.call(spec, 'auth_token_ref')).toBe(false);
+  });
+
+  it('accepts a kimi-server session_id without any prefix constraint', () => {
+    const row = {
+      delivery_kind: 'kimi-server',
+      delivery_payload: '{"session_id":"01JXYZABC","base_url":"http://127.0.0.1:58627"}',
+    };
+    expect(parseDeliveryRow(row)).toEqual({
+      kind: 'kimi-server',
+      session_id: '01JXYZABC',
+      base_url: 'http://127.0.0.1:58627',
+    });
+  });
+
+  it('throws corrupt_delivery_payload for kimi-server missing session_id', () => {
+    const row = {
+      delivery_kind: 'kimi-server',
+      delivery_payload: '{"base_url":"http://127.0.0.1:58627"}',
+    };
+    expect(() => parseDeliveryRow(row)).toThrow('corrupt_delivery_payload');
+  });
+
+  it('throws corrupt_delivery_payload for kimi-server missing base_url', () => {
+    const row = {
+      delivery_kind: 'kimi-server',
+      delivery_payload: '{"session_id":"session_abc"}',
+    };
+    expect(() => parseDeliveryRow(row)).toThrow('corrupt_delivery_payload');
+  });
+
+  it('throws corrupt_delivery_payload for kimi-server with empty auth_token_ref', () => {
+    const row = {
+      delivery_kind: 'kimi-server',
+      delivery_payload:
+        '{"session_id":"session_abc","base_url":"http://127.0.0.1:58627","auth_token_ref":""}',
+    };
+    expect(() => parseDeliveryRow(row)).toThrow('corrupt_delivery_payload');
+  });
+
+  it('serializes kimi-server to JSON payload with session_id and base_url', () => {
+    const spec: DeliverySpec = {
+      kind: 'kimi-server',
+      session_id: 'session_abc',
+      base_url: 'http://127.0.0.1:58627',
+    };
+    expect(serializeDelivery(spec)).toEqual({
+      delivery_kind: 'kimi-server',
+      delivery_payload: '{"session_id":"session_abc","base_url":"http://127.0.0.1:58627"}',
+    });
+  });
+
+  it('serializes kimi-server with optional auth_token_ref when present', () => {
+    const spec: DeliverySpec = {
+      kind: 'kimi-server',
+      session_id: 'session_abc',
+      base_url: 'http://127.0.0.1:58627',
+      auth_token_ref: 'KIMI_SERVER_TOKEN',
+    };
+    const result = serializeDelivery(spec);
+    const parsed = JSON.parse(result.delivery_payload as string);
+    expect(parsed).toEqual({
+      session_id: 'session_abc',
+      base_url: 'http://127.0.0.1:58627',
+      auth_token_ref: 'KIMI_SERVER_TOKEN',
+    });
+  });
+
+  it('accepts kind kimi-server with valid session_id, base_url, optional auth_token_ref', () => {
+    const result = validateDeliveryForWrite({
+      kind: 'kimi-server',
+      session_id: 'session_abc',
+      base_url: 'http://127.0.0.1:58627',
+      auth_token_ref: 'KIMI_SERVER_TOKEN',
+    });
+    expect(result).toEqual({
+      ok: {
+        kind: 'kimi-server',
+        session_id: 'session_abc',
+        base_url: 'http://127.0.0.1:58627',
+        auth_token_ref: 'KIMI_SERVER_TOKEN',
+      },
+    });
+  });
+
+  it('accepts kind kimi-server with a session_id that has no prefix constraint', () => {
+    const result = validateDeliveryForWrite({
+      kind: 'kimi-server',
+      session_id: '01JXYZABC',
+      base_url: 'http://127.0.0.1:58627',
+    });
+    expect(result).toEqual({
+      ok: {
+        kind: 'kimi-server',
+        session_id: '01JXYZABC',
+        base_url: 'http://127.0.0.1:58627',
+      },
+    });
+  });
+
+  it('rejects kimi-server with empty session_id', () => {
+    const result = validateDeliveryForWrite({
+      kind: 'kimi-server',
+      session_id: '',
+      base_url: 'http://127.0.0.1:58627',
+    });
+    expect(result).toEqual({
+      error: 'invalid_delivery',
+      reason: 'invalid_session_id',
+    });
+  });
+
+  it('rejects kimi-server with ws:// base_url (protocol mismatch)', () => {
+    const result = validateDeliveryForWrite({
+      kind: 'kimi-server',
+      session_id: 'session_abc',
+      base_url: 'ws://127.0.0.1:58627',
+    });
+    expect(result).toEqual({
+      error: 'invalid_delivery',
+      reason: 'invalid_base_url',
+    });
+  });
+
+  it('rejects kimi-server with blank auth_token_ref', () => {
+    const result = validateDeliveryForWrite({
+      kind: 'kimi-server',
+      session_id: 'session_abc',
+      base_url: 'http://127.0.0.1:58627',
+      auth_token_ref: '   ',
+    });
+    expect(result).toEqual({
+      error: 'invalid_delivery',
+      reason: 'invalid_auth_token_ref',
     });
   });
 });

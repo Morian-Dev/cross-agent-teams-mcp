@@ -10,6 +10,10 @@ import {
   dispatchOpencodeServerPoke,
   type OpencodeServerDispatchResult,
 } from './opencode-server-dispatch.js'
+import {
+  dispatchKimiServerPoke,
+  type KimiServerDispatchResult,
+} from './kimi-server-dispatch.js'
 
 export interface DispatchDeps {
   channelWakeFanout?: ChannelWakeFanout
@@ -22,6 +26,10 @@ export interface DispatchDeps {
     delivery: Extract<DeliverySpec, { kind: 'opencode-server' }>
     content: string
   }) => Promise<OpencodeServerDispatchResult>
+  kimiServerDispatch?: (args: {
+    delivery: Extract<DeliverySpec, { kind: 'kimi-server' }>
+    content: string
+  }) => Promise<KimiServerDispatchResult>
 }
 
 export type TmuxPokeResult =
@@ -64,9 +72,14 @@ export type DispatchResult =
       session_id: string
     }
   | {
+      ok: true
+      transport_used: 'kimi-server'
+      session_id: string
+    }
+  | {
       error: string
       detail?: unknown
-      transport_used?: 'tmux-poke' | 'codex-appserver' | 'opencode-server'
+      transport_used?: 'tmux-poke' | 'codex-appserver' | 'opencode-server' | 'kimi-server'
     }
 
 export async function dispatchPoke(
@@ -78,6 +91,7 @@ export async function dispatchPoke(
   if (agentType === 'claude-code') return dispatchClaude(deps, target, input)
   if (agentType === 'codex') return dispatchCodex(deps, target, input)
   if (agentType === 'opencode') return dispatchOpencode(deps, target, input)
+  if (agentType === 'kimi-code') return dispatchKimi(deps, target, input)
   return dispatchUnknown(deps, target, input)
 }
 
@@ -86,6 +100,7 @@ function resolveAgentType(target: TargetRow): AgentType | null {
   if (target.delivery.kind === 'claude-channel') return 'claude-code'
   if (target.delivery.kind === 'codex-appserver') return 'codex'
   if (target.delivery.kind === 'opencode-server') return 'opencode'
+  if (target.delivery.kind === 'kimi-server') return 'kimi-code'
   return null
 }
 
@@ -199,6 +214,32 @@ async function dispatchOpencode(
     error: 'no_transport_available',
     detail: {
       opencode_bound: false,
+      tmux_pane_set: false,
+    },
+  }
+}
+
+async function dispatchKimi(
+  deps: DispatchDeps,
+  target: TargetRow,
+  input: DispatchInput
+): Promise<DispatchResult> {
+  if (target.delivery.kind === 'kimi-server') {
+    const result = await (deps.kimiServerDispatch ?? dispatchKimiServerPoke)({
+      delivery: target.delivery,
+      content: input.content,
+    })
+    return result
+  }
+  // kimi-code agent without a kimi-server delivery falls back to tmux
+  // (mirrors the legacy opencode branch: only an explicit kimi-server
+  // delivery pins the HTTP transport and forbids tmux fallback).
+  const paneId = target.tmux_pane_id
+  if (paneId) return dispatchTmux(deps, paneId, input.content, input.skipGuard)
+  return {
+    error: 'no_transport_available',
+    detail: {
+      kimi_bound: false,
       tmux_pane_set: false,
     },
   }
