@@ -6,11 +6,11 @@ xats has three native poke transports: `claude-channel` (MCP notification fanout
 
 Verified facts about Kimi Code (from official docs + live probing of `kimi server` on this machine):
 
-- `kimi server run` starts a local REST+WebSocket daemon (default port 58627, loopback-only, bearer auth). OpenAPI at `/openapi.json`.
+- `kimi web --no-open` starts a local REST+WebSocket daemon (default port 58627, loopback-only, bearer auth). OpenAPI at `/openapi.json`. It runs in the foreground, so callers background it. (The original `kimi server run` spelling was deprecated to a no-op stub in kimi 0.28.0; `kimi web kill` / `kimi web ps` / `kimi web rotate-token` replace the old lifecycle subcommands.)
 - `POST /api/v1/sessions/{session_id}/prompts` with body `{ content: [{ type: 'text', text }] }` submits a prompt into an existing session's prompt queue (active/queued/blocked) — this is the poke injection point, structurally identical to opencode's `prompt_async`.
 - The bearer token is persisted by kimi itself at `~/.kimi-code/server.token` and is stable across server restarts.
 - Kimi Code does NOT inject a session-id env var into MCP subprocesses, and there is no "who am I" REST endpoint. Sessions are listed in `~/.kimi-code/session_index.jsonl` (JSONL, each line `{sessionId, sessionDir, workDir, ...}`).
-- `kimi server run` without `--keep-alive` exits after 60s with no connected clients.
+- The 0.27-era 60s idle-exit (which `--keep-alive` existed to suppress) is gone as of 0.28.0: `kimi web` has no `--keep-alive` flag and stays up with no connected clients.
 
 Existing opencode-server transport (`src/mcp/opencode-server-dispatch.ts`, `src/lib/delivery-spec.ts`, `src/mcp/transport-dispatch.ts`, `openspec/specs/opencode-server-transport/spec.md`) is the direct template for every piece of this change.
 
@@ -49,9 +49,9 @@ The revised mechanism: `xats-kimi` pre-creates the session via `POST /api/v1/ses
 
 ### D5: Launcher + lifecycle in ~/.zshrc
 
-- `xats-kimi`: base_url = `${KIMI_XATS_BASE_URL:-http://127.0.0.1:58627}`; if port not listening, `kimi server run --keep-alive` and wait; pre-create the session via `POST /api/v1/sessions` (token from `~/.kimi-code/server.token`), fire an init prompt and wait for `agents/main`; then `KIMI_XATS_BASE_URL=... KIMI_XATS_SESSION_ID=... exec kimi --session <id> --yolo "$@"`. Yolo-only per user request (mirrors `free-xats-opencode`).
-- `start-xats`: after the existing daemon/codex blocks, if `kimi` binary exists and port 58627 is free, `kimi server run --keep-alive` (logged via `_xats-log-event`); skip silently when binary absent.
-- `stop-xats`: `kimi server kill` after daemon stop, with lsof/kill fallback on port 58627.
+- `xats-kimi`: base_url = `${KIMI_XATS_BASE_URL:-http://127.0.0.1:58627}`; if port not listening, `kimi web --no-open` (backgrounded) and wait; pre-create the session via `POST /api/v1/sessions` (token from `~/.kimi-code/server.token`), fire an init prompt and wait for `agents/main`; then `KIMI_XATS_BASE_URL=... KIMI_XATS_SESSION_ID=... exec kimi --session <id> --yolo "$@"`. Yolo-only per user request (mirrors `free-xats-opencode`).
+- `start-xats`: after the existing daemon/codex blocks, if `kimi` binary exists and port 58627 is free, `kimi web --no-open` backgrounded (logged via `_xats-log-event`); skip silently when binary absent.
+- `stop-xats`: `kimi web kill` after daemon stop, with lsof/kill fallback on port 58627.
 
 These are documented contracts in specs + README, then applied to the user's `~/.zshrc` (explicitly requested; file lives outside the repo).
 

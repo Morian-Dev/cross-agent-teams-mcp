@@ -268,7 +268,7 @@ agent 会自动检测 `$OPENCODE_XATS_BASE_URL`, 选 `agent_type="opencode"`, �
 
 #### kimi-code
 
-Kimi Code 自带 `kimi server` — 本地 REST+WebSocket 守护进程 (默认端口 58627, 仅 loopback, bearer 鉴权), 暴露 `POST /api/v1/sessions/{session_id}/prompts`, 可以把 prompt 塞进一个已存在 session 的队列.  daemon 用它作为专用唤醒通道 (`kimi-server` delivery kind) — 不需要 tmux pane 注入.  通过 `agent_type="kimi-code"` 加 `base_url` (指向 kimi server) 加显式 `session_id` 注册即可激活 (与 opencode 不同, daemon 不会自动解析 session_id).
+Kimi Code 自带 `kimi web` — 本地 REST+WebSocket 守护进程 (默认端口 58627, 仅 loopback, bearer 鉴权), 暴露 `POST /api/v1/sessions/{session_id}/prompts`, 可以把 prompt 塞进一个已存在 session 的队列.  (以前叫 `kimi server run`; kimi 0.28.0 把 `kimi server` 子命令废弃成了空壳, 现在只能用 `kimi web` 启动, 生命周期管理也移到了 `kimi web kill` / `kimi web ps`.)  daemon 用它作为专用唤醒通道 (`kimi-server` delivery kind) — 不需要 tmux pane 注入.  通过 `agent_type="kimi-code"` 加 `base_url` (指向 kimi server) 加显式 `session_id` 注册即可激活 (与 opencode 不同, daemon 不会自动解析 session_id).
 
 把下面的 `xats-kimi` zsh 函数加到 `~/.zshrc` (仅 yolo 模式):
 
@@ -282,8 +282,8 @@ xats-kimi() {
     if ! nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
         echo "[xats] kimi server not listening on port $port, starting it" >&2
         mkdir -p "$HOME/.config/xats"
-        kimi server run --keep-alive \
-            >>"$HOME/.config/xats/kimi-server.log" 2>&1
+        kimi web --no-open \
+            >>"$HOME/.config/xats/kimi-server.log" 2>&1 &!
         local i
         for i in {1..20}; do
             nc -z 127.0.0.1 "$port" >/dev/null 2>&1 && break
@@ -355,24 +355,47 @@ xats-kimi --model kimi-code/kimi-for-coding    # 透传用户参数
 
 launcher 做的事:
 
-- 把 base URL 解析为 `${KIMI_XATS_BASE_URL:-http://127.0.0.1:58627}` (`kimi server` 的默认端口).
-- 端口上没有监听时, 先启动 `kimi server run --keep-alive` (`--keep-alive` 是必须的 — 没有它, 没有客户端连接时服务器 60 秒后就退出) 并等待端口就绪.
+- 把 base URL 解析为 `${KIMI_XATS_BASE_URL:-http://127.0.0.1:58627}` (`kimi web` 的默认绑定端口).
+- 端口上没有监听时, 先启动 `kimi web --no-open` 并等待端口就绪.  `kimi web` 是前台运行的, 所以启动器用 `&!` (后台 + disown) 把它甩到后台, `--no-open` 阻止它自动开浏览器.  不传 `--host` 就保持 loopback 绑定.
 - 通过 `POST /api/v1/sessions` 预创建 session 并导出 `KIMI_XATS_SESSION_ID` (精确 id).  这一点很关键: 从 `~/.kimi-code/session_index.jsonl` 取 `workDir` 匹配的最后一行, 在同目录多个 kimi 会话时会拿错 — poke 会唤醒别的 session 却报告 `delivered`.
 - 通过 `POST /api/v1/sessions/<id>/profile` 给 session 设置 model (从 `~/.kimi-code/config.toml` 的 `default_model` 读) 和 `permission_mode: "yolo"`.  两者都是必须的: server 创建的 session 不带 model (所有 server 驱动的 turn 立刻以 `model.not_configured` 失败), 且 server 驱动的 turn 用的是 session 的 permission mode 而不是 CLI 的 `--yolo` 参数 — 不设置的话, poke 唤醒的 turn 里每次工具调用都会卡在无人应答的审批上.
 - 发一条初始化 prompt, 让 CLI 能挂载 server 创建的 session (否则 kimi 报 `Agent "main" was not found`).
 - `exec kimi --session <id> --yolo "$@"` 用挂了预创建 session 的 kimi TUI 替换当前 shell.
 
-`start-xats` 也会拉起 kimi server: 当 PATH 上有 `kimi` 二进制且端口空闲时, 运行 `kimi server run --keep-alive` 并记录结果 (通过 `_xats-log-event`); 二进制缺失时静默跳过.  `stop-xats` 通过 `kimi server kill` 停掉它, 子命令失败时回退到直接 kill 58627 端口上的监听进程.  `start-local-xats` / `stop-local-xats` 以同样方式管理 kimi server.
+`start-xats` 也会拉起 kimi server: 当 PATH 上有 `kimi` 二进制且端口空闲时, 运行 `kimi web --no-open` 并记录结果 (通过 `_xats-log-event`); 二进制缺失时静默跳过.  `stop-xats` 通过 `kimi web kill` 停掉它, 子命令失败时回退到直接 kill 58627 端口上的监听进程 (比如老版本 kimi 起的 server, `kimi web ps` 看不到).  `start-local-xats` / `stop-local-xats` 以同样方式管理 kimi server.
+
+**MCP 配置.**  上面的启动器和 poke 通道只解决了**唤醒**这一半, agent 还得能拿到 xats 工具本身.  kimi 按三个文件解析 MCP server, 后面的覆盖前面的: `$KIMI_CODE_HOME/mcp.json` (回落 `~/.kimi-code/mcp.json`)、`<git root>/.mcp.json`、以及 `<cwd>/.kimi-code/mcp.json` —— 注意最后一个锚在**当前工作目录**而不是 git root, 所以从子目录启动 kimi 是读不到仓库根那份的.
+
+因为 kimi 原生读 `<git root>/.mcp.json` —— 也就是 Claude Code 用的那个文件 —— 一个已经配好 Claude Code 的仓库看起来不用额外配置就能用.  别依赖这一点: `.mcp.json` 里还声明了 `cross-agent-teams-channel`, 这是 **Claude Code 专用**的 stdio server, kimi 会不停尝试启动它并不停报错.  给 kimi 单独一份 `<repo>/.kimi-code/mcp.json`, 显式禁用它:
+
+```json
+{
+  "mcpServers": {
+    "cross-agent-teams": {
+      "transport": "http",
+      "url": "http://127.0.0.1:9100/mcp",
+      "bearerTokenEnvVar": "CROSS_AGENT_TEAMS_MCP_TOKEN"
+    },
+    "cross-agent-teams-channel": { "enabled": false }
+  }
+}
+```
+
+`npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a kimi-code -y` 会帮你写 `cross-agent-teams` 那条 (`--global` 写到 `~/.kimi-code/mcp.json`), 但**不会**写禁用那条 —— 需要手动补.  而且必须是显式 `"enabled": false`, 不能靠省略: kimi 对这三个文件是按 key 的对象展开合并, 所以在 `.kimi-code/mcp.json` 里不写 channel, `<git root>/.mcp.json` 里那条**照样生效**.  只有当根文件确实声明了 channel 时才需要这条; 只配了 kimi 的仓库没有东西要盖.
+
+另外两点.  优先用 `bearerTokenEnvVar` 而不是明文 `headers.Authorization` —— kimi 会校验引用的变量, 变量没设时直接丢弃该 server, 而且它自己的规范就是别把 secret 放进 `mcp.json`.  还要注意**一条写坏会废掉整个文件**: kimi 是把每个 `mcp.json` 当作一个整体做 schema 校验的, 失败就整份报 `CONFIG_INVALID`, 那个文件里所有 server 一起失效.
 
 在 kimi TUI 里说:
 
 > 注册到 xats, name: kimi-1, team: default
 
-agent 会自动检测 `$KIMI_XATS_BASE_URL`, 选 `agent_type="kimi-code"`, 把 env 值作为 `base_url` 传过去, 并直接从 `$KIMI_XATS_SESSION_ID` 读 `session_id` — 不需要猜测.  poke 时 daemon 从 `~/.kimi-code/server.token` 读 bearer token (`kimi server` 跨重启持久化); 只有非默认 token 部署才需要传 `auth_token_ref` (env 变量名).  注册时不做健康检查: 如果 poke 时服务器没在跑, poke 以 `kimi_connect_failed` 失败, 由 mailbox 重试机制接管.
+agent 会自动检测 `$KIMI_XATS_BASE_URL`, 选 `agent_type="kimi-code"`, 把 env 值作为 `base_url` 传过去, 并直接从 `$KIMI_XATS_SESSION_ID` 读 `session_id` — 不需要猜测.  poke 时 daemon 从 `~/.kimi-code/server.token` 读 bearer token (`kimi web` 跨重启持久化, `kimi web rotate-token` 可以让旧 token 立即失效); 只有非默认 token 部署才需要传 `auth_token_ref` (env 变量名).  注册时不做健康检查: 如果 poke 时服务器没在跑, poke 以 `kimi_connect_failed` 失败, 由 mailbox 重试机制接管.
 
 如果你直接用 `kimi` 启动 (没用 wrapper), 两个 env 变量都缺失, agent 会回退到 `agent_type="custom"` 加 `agent_type_name="kimi-code"`, poke 通过 tmux pane 注入投递 (见下一节).
 
-已知限制 (kimi 侧的问题, 不是 xats 的): poke 通过 server 驱动的 turn 唤醒 session, 但 kimi TUI 不会实时刷新自己被 server 驱动的 session — 被唤醒的 turn (收信, 回复等) 要重新加载 session 后才会出现在 TUI 记录里.  活照样干了, 只是少了实时显示.  想实时围观 poke 驱动的 turn 的话, 用 `kimi web` 打开同一个 session.
+已知限制 (kimi 侧的问题, 不是 xats 的), 在 kimi 0.28.0 上依然存在: poke 通过 server 驱动的 turn 唤醒 session, 但 kimi TUI 不会实时刷新自己被 server 驱动的 session — 被唤醒的 turn (收信, 回复等) 要重新加载 session 后才会出现在 TUI 记录里.  活照样干了, 只是少了实时显示.  想实时围观 poke 驱动的 turn 的话, 用 `kimi web` 打开同一个 session.
+
+不要通过问 kimi agent 本人来确认这一点: 它跑在 session **内部**, 通过 session 状态看自己的对话, 而不是通过渲染出来的终端.  你问它 TUI 有没有刷新, 它会如实报告 turn 跑过了, 并回答 "刷新了, 实时可见" —— 而这是它结构上无法观察的断言.  只有人去看真实终端才能判定.
 
 #### 其它编码 agent (cursor, ...)
 

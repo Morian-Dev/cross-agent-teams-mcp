@@ -33,7 +33,7 @@ The dispatcher MUST NOT retry on non-2xx responses; the caller's auto-poke retry
 The dispatcher SHALL resolve the bearer token at dispatch time using this order:
 
 1. If `auth_token_ref` is present, it is interpreted as the name of an environment variable to read. If the referenced environment variable is missing or empty/whitespace-only, the dispatcher SHALL fail before any network I/O with `{ error: 'missing_auth_token', detail: { ref: <auth_token_ref> } }`. The dispatcher MUST NOT treat `auth_token_ref` as an inline secret value.
-2. If `auth_token_ref` is absent, the dispatcher SHALL read the kimi server's persisted token file at `~/.kimi-code/server.token` (the file `kimi server` maintains across restarts). If the file is missing, unreadable, or empty/whitespace-only, the dispatcher SHALL fail before any network I/O with `{ error: 'missing_auth_token', detail: { token_file: <path> } }`.
+2. If `auth_token_ref` is absent, the dispatcher SHALL read the kimi server's persisted token file at `~/.kimi-code/server.token` (the file the kimi server maintains across restarts; `kimi web rotate-token` invalidates it). If the file is missing, unreadable, or empty/whitespace-only, the dispatcher SHALL fail before any network I/O with `{ error: 'missing_auth_token', detail: { token_file: <path> } }`.
 
 #### Scenario: missing_auth_token when referenced env var is unset
 
@@ -98,8 +98,8 @@ The dispatcher SHALL return one of these error envelopes and NOT fall back to tm
 
 The documented `xats-kimi` zsh function SHALL, in order:
 
-1. Resolve the base URL as `${KIMI_XATS_BASE_URL:-http://127.0.0.1:58627}` (the `kimi server` default port).
-2. Ensure a kimi server is reachable at that base URL: if nothing is listening, start one via `kimi server run --keep-alive` (`--keep-alive` is REQUIRED — without it the daemon exits after 60s with no connected web clients). If the start fails, print an error and abort without launching kimi.
+1. Resolve the base URL as `${KIMI_XATS_BASE_URL:-http://127.0.0.1:58627}` (the `kimi web` default bind port).
+2. Ensure a kimi server is reachable at that base URL: if nothing is listening, start one via `kimi web --no-open` (`kimi server run` is deprecated as of kimi 0.28.0; the old 60s idle-exit no longer exists, so no `--keep-alive` flag is needed or available). If the start fails, print an error and abort without launching kimi.
 3. Pre-create the target session via the kimi server REST API: `POST <base_url>/api/v1/sessions` with `{ "title": <label>, "metadata": { "cwd": <current directory> } }` and the bearer token read from `~/.kimi-code/server.token`; abort with an error if session creation fails. Pre-creation is REQUIRED because it yields the exact `session_id` — deriving it from `~/.kimi-code/session_index.jsonl` is unsound when several kimi sessions share a workDir (the last matching entry can be a different session, and pokes then wake that wrong session while reporting `delivered`).
 4. Set the session's model and permission mode via `POST <base_url>/api/v1/sessions/<session_id>/profile` with `{ "agent_config": { "model": <default_model from ~/.kimi-code/config.toml>, "permission_mode": "yolo" } }`. Both are REQUIRED: server-created sessions carry no model, so server-driven turns fail instantly with `model.not_configured`; and server-driven turns use the session's permission mode (default `manual`), NOT the `--yolo` flag passed to the CLI — without `permission_mode: "yolo"` every tool call in a poke-woken turn blocks on an approval nobody will answer.
 5. Fire one trivial init prompt (`POST <base_url>/api/v1/sessions/<session_id>/prompts`) and wait until the session's `agents/main` directory exists on disk. This is REQUIRED because the kimi CLI refuses to attach (`Agent "main" was not found`) a server-created session whose agent state has not been materialized by a first turn.
@@ -122,7 +122,7 @@ The function is documented as a copy-pasteable zsh snippet; it is not shipped as
 
 - **GIVEN** nothing is listening on `127.0.0.1:58627`
 - **WHEN** the user runs `xats-kimi`
-- **THEN** `kimi server run --keep-alive` is executed first
+- **THEN** `kimi web --no-open` is executed first
 - **AND** session pre-creation and the kimi launch happen only after the server port is reachable
 
 #### Scenario: xats-kimi aborts when session pre-creation fails
@@ -142,16 +142,16 @@ The function is documented as a copy-pasteable zsh snippet; it is not shipped as
 The documented `start-xats` zsh function SHALL, in addition to its existing daemon/codex behavior, ensure a kimi server is running when the `kimi` binary is available:
 
 - If the kimi server port (default `58627`, or the port parsed from `$KIMI_XATS_BASE_URL` when set) is already listening, report "already running" and do nothing.
-- Otherwise run `kimi server run --keep-alive` and wait for the port to become reachable, logging success/failure through the existing `_xats-log-event` mechanism.
+- Otherwise run `kimi web --no-open` in the background and wait for the port to become reachable, logging success/failure through the existing `_xats-log-event` mechanism.
 - If no `kimi` binary is found on PATH, skip silently (same pattern as the codex-app skip).
 
-The documented `stop-xats` zsh function SHALL stop the kimi server via `kimi server kill` (falling back to killing the listener on the kimi server port if the subcommand fails), after stopping the xats daemon.
+The documented `stop-xats` zsh function SHALL stop the kimi server via `kimi web kill` (falling back to killing the listener on the kimi server port if the subcommand fails, e.g. for a server started by an older kimi that `kimi web ps` cannot see), after stopping the xats daemon.
 
 #### Scenario: start-xats starts kimi server when port is free
 
 - **GIVEN** the `kimi` binary is on PATH and nothing listens on `127.0.0.1:58627`
 - **WHEN** the user runs `start-xats`
-- **THEN** `kimi server run --keep-alive` is executed
+- **THEN** `kimi web --no-open` is executed
 - **AND** `start-xats` reports the kimi server as ready once the port is reachable
 
 #### Scenario: start-xats skips kimi server when already running
@@ -164,7 +164,7 @@ The documented `stop-xats` zsh function SHALL stop the kimi server via `kimi ser
 
 - **GIVEN** a kimi server is listening on `127.0.0.1:58627`
 - **WHEN** the user runs `stop-xats`
-- **THEN** `kimi server kill` is executed
+- **THEN** `kimi web kill` is executed
 - **AND** after the function returns, nothing listens on `127.0.0.1:58627`
 
 ### Requirement: kimi-code self-identification uses launcher-exported session id
