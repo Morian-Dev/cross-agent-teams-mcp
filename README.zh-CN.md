@@ -362,7 +362,13 @@ launcher 做的事:
 - 发一条初始化 prompt, 让 CLI 能挂载 server 创建的 session (否则 kimi 报 `Agent "main" was not found`).
 - `exec kimi --session <id> --yolo "$@"` 用挂了预创建 session 的 kimi TUI 替换当前 shell.
 
-**session 会永久累积.**  启动器每次调用都会新建一个 session —— 这是刻意的, 因为只有拿到精确的 `session_id`, poke 才能落到你正在看的那个 session 上.  但 kimi 的 REST API **没有删除 session 的路由**: 整个接口面只有三个 `DELETE`, 没有一个是 sessions 的; `DELETE /api/v1/workspaces/{id}` 也只是注销 workspace ("does not remove on-disk content"), 它下面的 session 照样列着.  所以每跑一次 `xats-kimi` 都会永久留下一个 session, 唯一的清理途径是 kimi TUI 或 `kimi web` 界面.  如果你启动得频繁, `~/.kimi-code/sessions/` 会一直涨, 记得定期清.
+**session 会被复用, 因为它们永远删不掉.**  kimi 的 REST API **没有删除 session 的路由**: 整个接口面只有三个 `DELETE`, 没有一个是 sessions 的; `DELETE /api/v1/workspaces/{id}` 也只是注销 workspace ("does not remove on-disk content"), 它下面的 session 照样列着.  所以"每次调用新建一个"的启动器等于每跑一次就永久泄漏一个.
+
+因此 `xats-kimi` 改成了 find-or-create: 优先复用当前目录对应池子里**最新的空闲** session (标题以 `xats-kimi` 开头且 `metadata.cwd` 等于 `$PWD`), 只有全部被占用时才新建.  池子大小收敛于你在该目录下的**并发峰值**, 而不是累计启动次数.
+
+占用状态只能由启动器自己维护, 因为 kimi 答不了这个问题: `kimi web ps` 和服务端的 `connections` 只统计 web 客户端, TUI 挂载对两者都不可见.  所以认领 session 用的是 `~/.config/xats/kimi-locks` 下 `mkdir` 原子创建的锁目录, 里面存 TUI 的 pid —— `exec` 会用 kimi 替换掉 shell, 所以 `$$` 就是 kimi 进程本身.  pid 已死的锁会在下次启动时被回收, 也就是说 TUI 正常退出或崩溃都会自动释放 session, 不需要清理钩子.  `XATS_KIMI_DRYRUN=1 xats-kimi` 会打印池子里每个 session 的 `OCCUPIED` / `FREE` 状态然后退出, 不认领也不启动.
+
+一个注意点: 用裸 `kimi --session <id>` 挂载池子里的 session **不会加锁**, 之后 `xats-kimi` 可能把同一个 session 再交给第二个 TUI.  池子里的 session 只通过 `xats-kimi` 打开.  kimi 没有 session 级的占用 API, 所以这一点没法强制.
 
 `start-xats` 也会拉起 kimi server: 当 PATH 上有 `kimi` 二进制且端口空闲时, 运行 `kimi web --no-open` 并记录结果 (通过 `_xats-log-event`); 二进制缺失时静默跳过.  `stop-xats` 通过 `kimi web kill` 停掉它, 子命令失败时回退到直接 kill 58627 端口上的监听进程 (比如老版本 kimi 起的 server, `kimi web ps` 看不到).  `start-local-xats` / `stop-local-xats` 以同样方式管理 kimi server.
 
