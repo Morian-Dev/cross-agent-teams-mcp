@@ -31,7 +31,7 @@ The agent will confirm a device label, whether Codex App also needs xats, and
 the `~/.zshrc` changes with you, auto-generate the daemon token on first
 `start-xats`, and wire up the `free-xats-codex` / `xats-codex` /
 optional `xats-codex-app` /
-`free-xats-opencode` / `xats-opencode` launchers plus `start-xats` /
+`free-xats-opencode` / `xats-opencode` / `xats-kimi` launchers plus `start-xats` /
 `stop-xats`.  Prefer doing it by hand?  Continue below.
 
 ### Claude Code
@@ -151,8 +151,9 @@ Codex talks to the daemon over Streamable HTTP.  Wake-ups go through Codex's own
 
 ##### Minimum config (mailbox only, no push wake)
 
-For an isolated CLI runtime use `~/.codex-cli/config.toml`.  The desktop App
-keeps its own copy in the default `~/.codex/config.toml`:
+The primary CLI runtime uses the standard `~/.codex/config.toml`.  The
+xats-managed desktop App keeps an isolated copy in
+`~/.codex-app/config.toml`:
 
 ```toml
 experimental_use_rmcp_client = true
@@ -172,14 +173,13 @@ In this minimum mode, `send_message` to this Codex still drops a row in its mail
 
 To let other agents **wake** this Codex thread (not just mail it), you need `codex-appserver` delivery.  The setup has one non-obvious gotcha worth calling out:
 
-> **In `codex --remote` mode, MCP servers are loaded by the app-server, NOT by the TUI.**  On current codex (verified on 0.144.x) the app-server resolves config **per thread from that thread's cwd**, merging a trusted project's `.codex/config.toml` layer on top of its own `CODEX_HOME`.  The CLI server should use `~/.codex-cli`; the App server should keep the default `~/.codex`.  Pass `-C "$PWD"` so the thread cwd points at the project.  Setting `CODEX_HOME` on the TUI alone still does nothing for MCP under `--remote`.
+> **In `codex --remote` mode, MCP servers are loaded by the app-server, NOT by the TUI.**  On current codex (verified on 0.144.x) the app-server resolves config **per thread from that thread's cwd**, merging a trusted project's `.codex/config.toml` layer on top of its own `CODEX_HOME`.  The primary CLI server uses the standard `~/.codex`; the xats-managed App server uses the isolated `~/.codex-app`.  Pass `-C "$PWD"` so the thread cwd points at the project.  Setting `CODEX_HOME` on the TUI alone still does nothing for MCP under `--remote`.
 
 Start order:
 
 ```bash
-# 1) Resident CLI server with isolated state.
-mkdir -p ~/.codex-cli
-CODEX_HOME=~/.codex-cli codex app-server --listen ws://127.0.0.1:8799
+# 1) Resident CLI server with the standard ~/.codex state.
+env -u CODEX_HOME codex app-server --listen ws://127.0.0.1:8799
 
 # 2) Codex TUI in a separate terminal, connected only to the CLI server.
 codex --remote ws://127.0.0.1:8799
@@ -268,6 +268,116 @@ Inside the opencode TUI say:
 The agent detects `$OPENCODE_XATS_BASE_URL`, picks `agent_type="opencode"` automatically, passes the env value as `base_url`, and omits `session_id` (the daemon auto-resolves it as the most recently updated session on that base_url).  `auth_token_ref` is only required when the opencode server was started with `OPENCODE_SERVER_PASSWORD` set; in that case also pass `auth_token_ref: "OPENCODE_SERVER_PASSWORD"`.
 
 If you launch opencode via plain `opencode` (without the wrapper), the env var is absent, the agent falls back to `agent_type="custom"` with `agent_type_name="opencode"`, and pokes are delivered via tmux pane injection (see next section).
+
+#### kimi-code
+
+Kimi Code ships `kimi server` — a local REST+WebSocket daemon (default port 58627, loopback-only, bearer auth) exposing `POST /api/v1/sessions/{session_id}/prompts`, which enqueues a prompt into an existing session.  The daemon uses it as a dedicated wake-up transport (`kimi-server` delivery kind) — no tmux pane injection required.  The transport is activated by registering with `agent_type="kimi-code"`, a `base_url` pointing at the kimi server, and an explicit `session_id` (unlike opencode, the daemon does NOT auto-resolve it).
+
+Add an `xats-kimi` zsh function to `~/.zshrc` (yolo-only):
+
+```zsh
+xats-kimi() {
+    local base_url port token session_id title
+    base_url="${KIMI_XATS_BASE_URL:-http://127.0.0.1:58627}"
+    port="${base_url##*:}"
+    port="${port%%/*}"
+    [[ -z "$port" || "$port" == "$base_url" ]] && port=58627
+    if ! nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
+        echo "[xats] kimi server not listening on port $port, starting it" >&2
+        mkdir -p "$HOME/.config/xats"
+        kimi server run --keep-alive \
+            >>"$HOME/.config/xats/kimi-server.log" 2>&1
+        local i
+        for i in {1..20}; do
+            nc -z 127.0.0.1 "$port" >/dev/null 2>&1 && break
+            sleep 0.5
+        done
+        if ! nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
+            echo "[xats] failed to start kimi server on $base_url; see $HOME/.config/xats/kimi-server.log" >&2
+            return 1
+        fi
+    fi
+
+    # Pre-create the session via the kimi server REST API so the session id is
+    # EXACT (guessing from ~/.kimi-code/session_index.jsonl picks the wrong
+    # session when several kimi sessions share a workDir).
+    token="$(cat "$HOME/.kimi-code/server.token" 2>/dev/null)"
+    if [[ -z "$token" ]]; then
+        echo "[xats] kimi server token missing at ~/.kimi-code/server.token" >&2
+        return 1
+    fi
+    title="xats-kimi $(date '+%H:%M:%S')"
+    session_id="$(curl -sf -m 10 -X POST \
+        -H "Authorization: Bearer $token" \
+        -H 'Content-Type: application/json' \
+        -d "{\"title\":\"$title\",\"metadata\":{\"cwd\":\"$PWD\"}}" \
+        "$base_url/api/v1/sessions" \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' 2>/dev/null)"
+    if [[ -z "$session_id" ]]; then
+        echo "[xats] failed to pre-create kimi session on $base_url" >&2
+        return 1
+    fi
+    # Server-created sessions carry no model; server-driven turns (init prompt,
+    # xats pokes) fail instantly with model.not_configured until one is set.
+    local model
+    model="$(sed -n 's/^default_model *= *"\(.*\)".*/\1/p' \
+        "$HOME/.kimi-code/config.toml" 2>/dev/null | head -n1)"
+    if [[ -n "$model" ]]; then
+        curl -sf -m 10 -X POST \
+            -H "Authorization: Bearer $token" \
+            -H 'Content-Type: application/json' \
+            -d "{\"agent_config\":{\"model\":\"$model\",\"permission_mode\":\"yolo\"}}" \
+            "$base_url/api/v1/sessions/$session_id/profile" >/dev/null \
+            || echo "[xats] warning: failed to set session model on $base_url" >&2
+    fi
+    # The CLI refuses to attach a server-created session until its agents/
+    # state exists; one trivial init prompt materializes it.
+    curl -sf -m 30 -X POST \
+        -H "Authorization: Bearer $token" \
+        -H 'Content-Type: application/json' \
+        -d '{"content":[{"type":"text","text":"(xats-kimi launcher init message, reply ok)"}]}' \
+        "$base_url/api/v1/sessions/$session_id/prompts" >/dev/null
+    local j sess_dir
+    for j in {1..30}; do
+        for sess_dir in "$HOME"/.kimi-code/sessions/*/"$session_id"(N); do
+            [[ -d "$sess_dir/agents/main" ]] && break 2
+        done
+        sleep 1
+    done
+
+    KIMI_XATS_BASE_URL="$base_url" \
+    KIMI_XATS_SESSION_ID="$session_id" \
+        exec kimi --session "$session_id" --yolo "$@"
+}
+```
+
+Then replace plain `kimi` with `xats-kimi`:
+
+```bash
+xats-kimi                                      # pre-created session, args pass through
+xats-kimi --model kimi-code/kimi-for-coding    # args pass through
+```
+
+What the launcher does:
+
+- Resolves the base URL as `${KIMI_XATS_BASE_URL:-http://127.0.0.1:58627}` (the `kimi server` default port).
+- If nothing is listening on that port, starts `kimi server run --keep-alive` first (`--keep-alive` is required — without it the server exits after 60s with no connected clients) and waits for the port.
+- Pre-creates the session via `POST /api/v1/sessions` and exports `KIMI_XATS_SESSION_ID` with the exact id.  This matters: deriving the id from `~/.kimi-code/session_index.jsonl` (last `workDir` match) picks the WRONG session when several kimi sessions share a directory — pokes then wake that other session while reporting `delivered`.
+- Sets the session model and `permission_mode: "yolo"` via `POST /api/v1/sessions/<id>/profile` (model from `default_model` in `~/.kimi-code/config.toml`).  Both are required: server-created sessions carry no model (every server-driven turn fails instantly with `model.not_configured`), and server-driven turns use the session's permission mode — not the CLI's `--yolo` flag — so without it every tool call in a poke-woken turn blocks on an unanswered approval.
+- Fires one init prompt so the CLI can attach the server-created session (kimi refuses `Agent "main" was not found` otherwise).
+- `exec kimi --session <id> --yolo "$@"` replaces the shell with the kimi TUI attached to the pre-created session.
+
+`start-xats` also brings the kimi server up: when a `kimi` binary is on PATH and the port is free, it runs `kimi server run --keep-alive` and logs the result (via `_xats-log-event`); when the binary is absent it skips silently.  `stop-xats` stops it via `kimi server kill`, falling back to killing the listener on port 58627 when the subcommand fails.  `start-local-xats` / `stop-local-xats` manage the kimi server the same way.
+
+Inside the kimi TUI say:
+
+> 注册到 xats, name: kimi-1, team: default
+
+The agent detects `$KIMI_XATS_BASE_URL`, picks `agent_type="kimi-code"` automatically, passes the env value as `base_url`, and passes `session_id` straight from `$KIMI_XATS_SESSION_ID` — no guessing.  At poke time the daemon reads the bearer token from `~/.kimi-code/server.token` (persisted by `kimi server` across restarts); pass `auth_token_ref` (an env var name) only for non-default token setups.  There is no registration-time health check: if the server is down at poke time the poke fails with `kimi_connect_failed` and the mailbox retry governs.
+
+If you launch kimi via plain `kimi` (without the wrapper), both env vars are absent, the agent falls back to `agent_type="custom"` with `agent_type_name="kimi-code"`, and pokes are delivered via tmux pane injection (see next section).
+
+Known limitation (kimi-side, not xats): a poke wakes the session via a server-driven turn, but the kimi TUI does NOT live-refresh while its open session is being driven by the server — the woken turn (inbox check, reply, etc.) only appears in the TUI transcript after the session is reloaded.  The work still happens; only the live display is missing.  Use `kimi web` on the same session if you want to watch poke-driven turns in real time.
 
 #### Other coding agents (cursor, ...)
 
@@ -385,7 +495,7 @@ Each remote teammate's Claude Code needs **two** changes from the default loopba
 }
 ```
 
-For an isolated Codex CLI, edit `~/.codex-cli/config.toml`:
+For the primary Codex CLI, edit `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.cross-agent-teams-mcp]
@@ -439,13 +549,12 @@ The `--token` + Codex `--remote` combination surfaces three caveats that don't s
 ## Codex App 和 Codex CLI 隔离运行
 
 如果既要通过 SSH 长期使用 Codex CLI, 又希望 Codex App 能被 xats poke
-唤醒, 两者不能共享同一个 app-server 和 `CODEX_HOME`.  已验证可用的隔离
-方式如下:
+唤醒, 两者不能共享同一个 app-server 和 `CODEX_HOME`.  当前隔离方式如下:
 
 - xats daemon 使用 `9100`.
-- Codex CLI 使用 `8799` 和 `~/.codex-cli`, 通过 `xats-codex` 或
+- Codex CLI 使用 `8799` 和默认的 `~/.codex`, 通过 `xats-codex` 或
   `free-xats-codex` 启动.
-- Codex App 使用 `8800` 和默认的 `~/.codex`, 通过 `xats-codex-app`
+- Codex App 使用 `8800` 和隔离的 `~/.codex-app`, 通过 `xats-codex-app`
   启动.
 - daemon 同时接收两个 WebSocket endpoint, 注册时根据
   `CODEX_THREAD_ID` 找到唯一匹配的 endpoint.  因此 App 和 CLI 即使打开

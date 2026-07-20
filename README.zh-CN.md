@@ -30,7 +30,7 @@ agent 可读的操作手册: [README.agent.md](README.agent.md).  把下面这�
 agent 会与你确认设备标签, `~/.zshrc` 改动, 以及是否也要在 Codex App 中启用
 xats.  首次 `start-xats` 时自动生成 daemon token, 并配好
 `free-xats-codex` / `xats-codex` / 可选的 `xats-codex-app` /
-`free-xats-opencode` / `xats-opencode` 启动函数以及 `start-xats` /
+`free-xats-opencode` / `xats-opencode` / `xats-kimi` 启动函数以及 `start-xats` /
 `stop-xats`.  想手工操作的话, 继续往下看.
 
 ### Claude Code
@@ -150,8 +150,8 @@ Codex 通过 Streamable HTTP 跟 daemon 通信.  唤醒走 Codex 自己的 app-s
 
 ##### 最小配置 (只能收邮箱, 没有 push 唤醒)
 
-独立 CLI runtime 使用 `~/.codex-cli/config.toml`.  桌面 App 则继续使用默认
-`~/.codex/config.toml` 中的独立配置:
+主要的 CLI runtime 使用标准的 `~/.codex/config.toml`.  由 xats 管理的
+桌面 App 则使用隔离的 `~/.codex-app/config.toml`:
 
 ```toml
 experimental_use_rmcp_client = true
@@ -171,14 +171,13 @@ daemon 带了 `--token <t>` 时: 在启动 codex 的 shell 里 `export XATS_TOKE
 
 要让别的 agent 能**主动唤醒**这个 codex thread (而不只是发邮件), 需要 `codex-appserver` delivery.  这里有个不直观的坑要写清楚:
 
-> **`codex --remote` 模式下, MCP server 是 app-server 加载的, 不是 TUI 加载的**.  当前版本的 codex (0.144.x 实测) 中, app-server 会**按每个 thread 的 cwd** 解析配置, 把受信任 (trusted) 项目的 `.codex/config.toml` layer 合并到自身 `CODEX_HOME` 之上.  CLI server 应使用 `~/.codex-cli`, App server 保持默认 `~/.codex`.  记得传 `-C "$PWD"` 让 thread cwd 指向项目.  仅在 TUI 这边设 `CODEX_HOME` 在 `--remote` 模式下对 MCP 依然不起作用.
+> **`codex --remote` 模式下, MCP server 是 app-server 加载的, 不是 TUI 加载的**.  当前版本的 codex (0.144.x 实测) 中, app-server 会**按每个 thread 的 cwd** 解析配置, 把受信任 (trusted) 项目的 `.codex/config.toml` layer 合并到自身 `CODEX_HOME` 之上.  主要的 CLI server 使用标准的 `~/.codex`, 由 xats 管理的 App server 使用隔离的 `~/.codex-app`.  记得传 `-C "$PWD"` 让 thread cwd 指向项目.  仅在 TUI 这边设 `CODEX_HOME` 在 `--remote` 模式下对 MCP 依然不起作用.
 
 启动顺序:
 
 ```bash
-# 1) 启动使用独立状态目录的常驻 CLI server
-mkdir -p ~/.codex-cli
-CODEX_HOME=~/.codex-cli codex app-server --listen ws://127.0.0.1:8799
+# 1) 启动使用标准 ~/.codex 状态目录的常驻 CLI server
+env -u CODEX_HOME codex app-server --listen ws://127.0.0.1:8799
 
 # 2) 在另一个终端启动 codex TUI, 只连接 CLI server
 codex --remote ws://127.0.0.1:8799
@@ -266,6 +265,114 @@ launcher 做的事:
 agent 会自动检测 `$OPENCODE_XATS_BASE_URL`, 选 `agent_type="opencode"`, 把 env 值作为 `base_url` 传过去, 并省略 `session_id` (daemon 自动解析为 base_url 上 `time_updated` 最大的那个 session).  只有当 opencode 服务器以 `OPENCODE_SERVER_PASSWORD` 启动时才需要 `auth_token_ref`, 这种情况下也传 `auth_token_ref: "OPENCODE_SERVER_PASSWORD"`.
 
 如果你直接用 `opencode` 启动 (没用 wrapper), env 变量缺失, agent 会回退到 `agent_type="custom"` 加 `agent_type_name="opencode"`, poke 通过 tmux pane 注入投递 (见下一节).
+
+#### kimi-code
+
+Kimi Code 自带 `kimi server` — 本地 REST+WebSocket 守护进程 (默认端口 58627, 仅 loopback, bearer 鉴权), 暴露 `POST /api/v1/sessions/{session_id}/prompts`, 可以把 prompt 塞进一个已存在 session 的队列.  daemon 用它作为专用唤醒通道 (`kimi-server` delivery kind) — 不需要 tmux pane 注入.  通过 `agent_type="kimi-code"` 加 `base_url` (指向 kimi server) 加显式 `session_id` 注册即可激活 (与 opencode 不同, daemon 不会自动解析 session_id).
+
+把下面的 `xats-kimi` zsh 函数加到 `~/.zshrc` (仅 yolo 模式):
+
+```zsh
+xats-kimi() {
+    local base_url port token session_id title
+    base_url="${KIMI_XATS_BASE_URL:-http://127.0.0.1:58627}"
+    port="${base_url##*:}"
+    port="${port%%/*}"
+    [[ -z "$port" || "$port" == "$base_url" ]] && port=58627
+    if ! nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
+        echo "[xats] kimi server not listening on port $port, starting it" >&2
+        mkdir -p "$HOME/.config/xats"
+        kimi server run --keep-alive \
+            >>"$HOME/.config/xats/kimi-server.log" 2>&1
+        local i
+        for i in {1..20}; do
+            nc -z 127.0.0.1 "$port" >/dev/null 2>&1 && break
+            sleep 0.5
+        done
+        if ! nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
+            echo "[xats] failed to start kimi server on $base_url; see $HOME/.config/xats/kimi-server.log" >&2
+            return 1
+        fi
+    fi
+
+    # 通过 kimi server REST API 预创建 session, 拿到精确的 session id
+    # (从 ~/.kimi-code/session_index.jsonl 猜测在同目录多 kimi 会话时会拿错).
+    token="$(cat "$HOME/.kimi-code/server.token" 2>/dev/null)"
+    if [[ -z "$token" ]]; then
+        echo "[xats] kimi server token missing at ~/.kimi-code/server.token" >&2
+        return 1
+    fi
+    title="xats-kimi $(date '+%H:%M:%S')"
+    session_id="$(curl -sf -m 10 -X POST \
+        -H "Authorization: Bearer $token" \
+        -H 'Content-Type: application/json' \
+        -d "{\"title\":\"$title\",\"metadata\":{\"cwd\":\"$PWD\"}}" \
+        "$base_url/api/v1/sessions" \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' 2>/dev/null)"
+    if [[ -z "$session_id" ]]; then
+        echo "[xats] failed to pre-create kimi session on $base_url" >&2
+        return 1
+    fi
+    # server 创建的 session 不带 model; server 驱动的 turn (初始化 prompt, xats poke)
+    # 会立刻以 model.not_configured 失败, 必须先设置.
+    local model
+    model="$(sed -n 's/^default_model *= *"\(.*\)".*/\1/p' \
+        "$HOME/.kimi-code/config.toml" 2>/dev/null | head -n1)"
+    if [[ -n "$model" ]]; then
+        curl -sf -m 10 -X POST \
+            -H "Authorization: Bearer $token" \
+            -H 'Content-Type: application/json' \
+            -d "{\"agent_config\":{\"model\":\"$model\",\"permission_mode\":\"yolo\"}}" \
+            "$base_url/api/v1/sessions/$session_id/profile" >/dev/null \
+            || echo "[xats] warning: failed to set session model on $base_url" >&2
+    fi
+    # CLI 在 session 的 agents/ 状态存在之前拒绝挂载; 发一条初始化 prompt 使其落地.
+    curl -sf -m 30 -X POST \
+        -H "Authorization: Bearer $token" \
+        -H 'Content-Type: application/json' \
+        -d '{"content":[{"type":"text","text":"(xats-kimi 启动器自动初始化消息, 回复 ok 即可)"}]}' \
+        "$base_url/api/v1/sessions/$session_id/prompts" >/dev/null
+    local j sess_dir
+    for j in {1..30}; do
+        for sess_dir in "$HOME"/.kimi-code/sessions/*/"$session_id"(N); do
+            [[ -d "$sess_dir/agents/main" ]] && break 2
+        done
+        sleep 1
+    done
+
+    KIMI_XATS_BASE_URL="$base_url" \
+    KIMI_XATS_SESSION_ID="$session_id" \
+        exec kimi --session "$session_id" --yolo "$@"
+}
+```
+
+然后用 `xats-kimi` 替代原本的 `kimi`:
+
+```bash
+xats-kimi                                      # 预创建 session, 透传用户参数
+xats-kimi --model kimi-code/kimi-for-coding    # 透传用户参数
+```
+
+launcher 做的事:
+
+- 把 base URL 解析为 `${KIMI_XATS_BASE_URL:-http://127.0.0.1:58627}` (`kimi server` 的默认端口).
+- 端口上没有监听时, 先启动 `kimi server run --keep-alive` (`--keep-alive` 是必须的 — 没有它, 没有客户端连接时服务器 60 秒后就退出) 并等待端口就绪.
+- 通过 `POST /api/v1/sessions` 预创建 session 并导出 `KIMI_XATS_SESSION_ID` (精确 id).  这一点很关键: 从 `~/.kimi-code/session_index.jsonl` 取 `workDir` 匹配的最后一行, 在同目录多个 kimi 会话时会拿错 — poke 会唤醒别的 session 却报告 `delivered`.
+- 通过 `POST /api/v1/sessions/<id>/profile` 给 session 设置 model (从 `~/.kimi-code/config.toml` 的 `default_model` 读) 和 `permission_mode: "yolo"`.  两者都是必须的: server 创建的 session 不带 model (所有 server 驱动的 turn 立刻以 `model.not_configured` 失败), 且 server 驱动的 turn 用的是 session 的 permission mode 而不是 CLI 的 `--yolo` 参数 — 不设置的话, poke 唤醒的 turn 里每次工具调用都会卡在无人应答的审批上.
+- 发一条初始化 prompt, 让 CLI 能挂载 server 创建的 session (否则 kimi 报 `Agent "main" was not found`).
+- `exec kimi --session <id> --yolo "$@"` 用挂了预创建 session 的 kimi TUI 替换当前 shell.
+
+`start-xats` 也会拉起 kimi server: 当 PATH 上有 `kimi` 二进制且端口空闲时, 运行 `kimi server run --keep-alive` 并记录结果 (通过 `_xats-log-event`); 二进制缺失时静默跳过.  `stop-xats` 通过 `kimi server kill` 停掉它, 子命令失败时回退到直接 kill 58627 端口上的监听进程.  `start-local-xats` / `stop-local-xats` 以同样方式管理 kimi server.
+
+在 kimi TUI 里说:
+
+> 注册到 xats, name: kimi-1, team: default
+
+agent 会自动检测 `$KIMI_XATS_BASE_URL`, 选 `agent_type="kimi-code"`, 把 env 值作为 `base_url` 传过去, 并直接从 `$KIMI_XATS_SESSION_ID` 读 `session_id` — 不需要猜测.  poke 时 daemon 从 `~/.kimi-code/server.token` 读 bearer token (`kimi server` 跨重启持久化); 只有非默认 token 部署才需要传 `auth_token_ref` (env 变量名).  注册时不做健康检查: 如果 poke 时服务器没在跑, poke 以 `kimi_connect_failed` 失败, 由 mailbox 重试机制接管.
+
+如果你直接用 `kimi` 启动 (没用 wrapper), 两个 env 变量都缺失, agent 会回退到 `agent_type="custom"` 加 `agent_type_name="kimi-code"`, poke 通过 tmux pane 注入投递 (见下一节).
+
+已知限制 (kimi 侧的问题, 不是 xats 的): poke 通过 server 驱动的 turn 唤醒 session, 但 kimi TUI 不会实时刷新自己被 server 驱动的 session — 被唤醒的 turn (收信, 回复等) 要重新加载 session 后才会出现在 TUI 记录里.  活照样干了, 只是少了实时显示.  想实时围观 poke 驱动的 turn 的话, 用 `kimi web` 打开同一个 session.
 
 #### 其它编码 agent (cursor, ...)
 
@@ -383,7 +490,7 @@ npx -y cross-agent-teams-mcp@latest daemon \
 }
 ```
 
-如果远端用的是独立 Codex CLI, 改 `~/.codex-cli/config.toml`:
+如果远端用的是主要 Codex CLI, 改 `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.cross-agent-teams-mcp]
