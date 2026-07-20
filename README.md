@@ -386,7 +386,9 @@ Because kimi natively reads `<git root>/.mcp.json` — the same file Claude Code
 }
 ```
 
-`npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a kimi-code -y` writes the `cross-agent-teams` entry for you (`--global` targets `~/.kimi-code/mcp.json`), but **not** the disable entry — add that by hand.  It must be an explicit `"enabled": false`, not an omission: kimi merges the three files as a per-key object spread, so leaving the channel out of `.kimi-code/mcp.json` leaves the `<git root>/.mcp.json` declaration in force.  You only need it when such a root file actually declares the channel; a repo set up for kimi alone has nothing to shadow.
+`npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a kimi-code -y` writes both entries for you, disable included (`--global` targets `~/.kimi-code/mcp.json`).  The disable must be an explicit `"enabled": false`, not an omission: kimi merges the three files as a per-key object spread, so leaving the channel out of `.kimi-code/mcp.json` would leave the `<git root>/.mcp.json` declaration in force.  It only matters when such a root file actually declares the channel; a repo set up for kimi alone has nothing to shadow.
+
+The same per-key merge means **`mcpsmgr remove` is not a full uninstall for kimi**: deleting an entry from `.kimi-code/mcp.json` lets the same-named entry in `<git root>/.mcp.json` take effect again.  That is inherent to kimi's layering — to really remove it, drop it from the root file too.
 
 Two more things about this file.  Prefer `bearerTokenEnvVar` over a literal `headers.Authorization` value — kimi validates the referenced variable and drops the server if it is unset, and its own guidance is to keep secrets out of `mcp.json`.  And note that a single malformed entry costs you the whole file: kimi parses each `mcp.json` as a unit and rejects it wholesale with `CONFIG_INVALID`.
 
@@ -430,9 +432,16 @@ curl -s 'http://127.0.0.1:<port>/api/inbox?team=default&name=alice'
 
 # list a team's agents
 curl -s 'http://127.0.0.1:<port>/api/agents?team=default'
+
+# remove one stale registry row (agent_id comes from the listing above)
+curl -s -X DELETE http://127.0.0.1:<port>/api/agents/<agent_id>
 ```
 
 There is deliberately no `register_agent` over REST — creating or rebinding an identity is the very takeover footgun this surface avoids, so an agent must have registered once (over MCP) before it can use the lifeboat.
+
+**Removing a registry row.**  `DELETE /api/agents/<agent_id>` deletes exactly that row and returns `{"deleted":true,"agent_id":...,"team":...,"name":...}`; an id that matches nothing returns `404 {"error":"unknown_agent"}`, so a repeated delete tells you it was already gone.  It is addressed by `agent_id` rather than `(team, name)` on purpose — rows carrying a device label the daemon no longer uses are exactly the ones worth clearing, and a `(team, name)` lookup pinned to the local device cannot reach them.  Liveness is not consulted: `online` degrades to a multi-day `last_seen_at` window for runtimes that register without a pid or a tmux pane (kimi-code), so gating on it would refuse the rows that most need removing.
+
+This is a **registry** operation, not a way to stop an agent.  Nothing is killed: no process, no pane, no session.  A running agent whose row you delete will fail its next xats call as an unregistered session and has to `register_agent` again.  For kimi-code the gap is wider — the kimi session keeps running and keeps accepting prompts (kimi's REST API has no session-delete route at all), so deleting the row only ends the agent's addressability through xats.  Agents remove themselves with the `unregister_self` tool; there is deliberately no MCP tool for removing *another* agent.
 
 > Security note: "loopback-only" includes a browser running on the same machine, so run the daemon with `--token` to keep a local web page from reaching `/api/`.  Without a token, the worst a malicious local page can do is advance an agent's inbox cursor via a cross-site `GET /api/inbox` — it cannot read any response (CORS), send, or impersonate; the only effect is that agent may miss unread messages.  That is a bounded, consciously accepted risk; a token removes it entirely.
 

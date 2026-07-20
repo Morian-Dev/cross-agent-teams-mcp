@@ -699,7 +699,7 @@ What actually exists per agent (do not offer branches that do not work):
 | codex | `mcpsmgr add` into the project `.codex/config.toml`, repo must be Codex-trusted (3.2) | always install into `~/.codex`; also install into `~/.codex-app` only when App xats is enabled (2.2) |
 | opencode | `mcpsmgr add` into `opencode.json` (3.1) | `mcpsmgr add --global` into `~/.config/opencode/opencode.json` (3.1) |
 | claude-code | `mcpsmgr add` into `.mcp.json` (3.3) | tools-only via `claude mcp add --scope user`; push-wake channel stays project-level (3.3) |
-| kimi-code | `mcpsmgr add -a kimi-code` into `<repo>/.kimi-code/mcp.json`; channel-disable entry still manual (3.4) | `mcpsmgr add -a kimi-code --global` into `~/.kimi-code/mcp.json` (3.4) |
+| kimi-code | `mcpsmgr add -a kimi-code` into `<repo>/.kimi-code/mcp.json`, channel-disable entry included (3.4) | `mcpsmgr add -a kimi-code --global` into `~/.kimi-code/mcp.json` (3.4) |
 
 **Mandatory reminder**: whenever you finish a **project-level** install, tell
 the user explicitly that it only covers the current project — each new
@@ -814,8 +814,9 @@ npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a kimi-code -y
 
 Project-level writes `<repo>/.kimi-code/mcp.json`; `--global` writes
 `~/.kimi-code/mcp.json`.  It emits the `cross-agent-teams` http entry with
-`bearerTokenEnvVar` — and **only** that entry.  Disabling the Claude-Code
-channel is a separate manual step; see below.
+`bearerTokenEnvVar`, **and** the `"enabled": false` entry that shadows the
+Claude-Code channel.  No hand-editing is needed; the section below explains
+what it writes and why, so you can verify or repair it.
 
 kimi resolves MCP servers from three files, later overriding earlier:
 
@@ -830,12 +831,12 @@ The merge is a plain per-key object spread (`{...user, ...projectRoot,
 ...project}`), so a later file replaces a same-named server **entry as a
 whole** — it does not merge fields into it.
 
-**The manual step.** Because of (2), when the repo is also set up for Claude
-Code its `.mcp.json` declares `cross-agent-teams-channel`, a Claude-Code-only
-stdio server.  kimi will keep trying to start it and keep erroring, and
-because the merge is per-key, the mcpsmgr-written `.kimi-code/mcp.json` does
-**not** shadow it — omitting an entry there leaves the root declaration in
-force.  You must add an explicit disable by hand:
+**Why the disable entry exists.** Because of (2), when the repo is also set
+up for Claude Code its `.mcp.json` declares `cross-agent-teams-channel`, a
+Claude-Code-only stdio server.  kimi will keep trying to start it and keep
+erroring.  Because the merge is per-key, simply *omitting* the channel from
+`.kimi-code/mcp.json` does not help — the root declaration stays in force.
+It has to be shadowed by an explicit disable, which is what mcpsmgr writes:
 
 ```json
 {
@@ -850,12 +851,9 @@ force.  You must add an explicit disable by hand:
 }
 ```
 
-mcpsmgr cannot do this for you today: its per-agent override type carries
-only `command/args/env` and `url/headers/bearerTokenEnvVar`, with no notion
-of `enabled` (a kimi-specific field).  Adding that is queued as separate
-work — until it lands, treat the disable entry as manual.  It is only needed
-when a `<git root>/.mcp.json` declaring the channel actually exists; a repo
-set up for kimi alone has nothing to shadow.
+The disable only matters when a `<git root>/.mcp.json` declaring the channel
+actually exists; a repo set up for kimi alone has nothing to shadow.  mcpsmgr
+emits it unconditionally, which is harmless in that case.
 
 Three more rules for that file:
 

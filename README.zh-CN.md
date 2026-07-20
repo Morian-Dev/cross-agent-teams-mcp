@@ -381,7 +381,9 @@ launcher 做的事:
 }
 ```
 
-`npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a kimi-code -y` 会帮你写 `cross-agent-teams` 那条 (`--global` 写到 `~/.kimi-code/mcp.json`), 但**不会**写禁用那条 —— 需要手动补.  而且必须是显式 `"enabled": false`, 不能靠省略: kimi 对这三个文件是按 key 的对象展开合并, 所以在 `.kimi-code/mcp.json` 里不写 channel, `<git root>/.mcp.json` 里那条**照样生效**.  只有当根文件确实声明了 channel 时才需要这条; 只配了 kimi 的仓库没有东西要盖.
+`npx -y mcpsmgr@latest add jtianling/cross-agent-teams-mcp -a kimi-code -y` 会帮你把两条都写好, 包括禁用那条 (`--global` 写到 `~/.kimi-code/mcp.json`).  禁用必须是显式 `"enabled": false`, 不能靠省略: kimi 对这三个文件是按 key 的对象展开合并, 所以在 `.kimi-code/mcp.json` 里不写 channel, `<git root>/.mcp.json` 里那条**照样生效**.  只有当根文件确实声明了 channel 时这条才有意义; 只配了 kimi 的仓库没有东西要盖.
+
+同样因为是按 key 合并, **`mcpsmgr remove` 对 kimi 不等于完整卸载**: 从 `.kimi-code/mcp.json` 删掉一条之后, `<git root>/.mcp.json` 里的同名条目会重新生效.  这是 kimi 分层设计的固有属性 —— 真要卸载, 根文件里那条也得删.
 
 另外两点.  优先用 `bearerTokenEnvVar` 而不是明文 `headers.Authorization` —— kimi 会校验引用的变量, 变量没设时直接丢弃该 server, 而且它自己的规范就是别把 secret 放进 `mcp.json`.  还要注意**一条写坏会废掉整个文件**: kimi 是把每个 `mcp.json` 当作一个整体做 schema 校验的, 失败就整份报 `CONFIG_INVALID`, 那个文件里所有 server 一起失效.
 
@@ -425,9 +427,16 @@ curl -s 'http://127.0.0.1:<port>/api/inbox?team=default&name=alice'
 
 # 列出某个 team 的 agent
 curl -s 'http://127.0.0.1:<port>/api/agents?team=default'
+
+# 删掉一行过期的注册记录 (agent_id 从上面的列表里取)
+curl -s -X DELETE http://127.0.0.1:<port>/api/agents/<agent_id>
 ```
 
 REST 上刻意没有 `register_agent` — 创建或重新绑定身份正是这个接口要规避的 takeover 陷阱, 所以 agent 必须先 (通过 MCP) 注册过一次, 才能用这个救生艇.
+
+**删除注册行.**  `DELETE /api/agents/<agent_id>` 只删这一行, 成功返回 `{"deleted":true,"agent_id":...,"team":...,"name":...}`; id 匹配不到任何行时返回 `404 {"error":"unknown_agent"}`, 所以重复删除会明确告诉你"本来就没了".  它按 `agent_id` 而不是 `(team, name)` 寻址是刻意的 —— 带着 daemon 已经不再使用的 device 标签的那些行, 正是最值得清理的, 而绑定到本机 device 的 `(team, name)` 查找根本够不着它们.  也刻意不看存活状态: 对于注册时既没有 pid 也没有 tmux pane 的 runtime (kimi-code), `online` 会退化成一个以天计的 `last_seen_at` 窗口, 拿它当门槛只会把最该删的行挡在外面.
+
+这是**注册表**操作, 不是停止 agent 的手段.  它不杀任何东西: 不杀进程, 不杀 pane, 不杀 session.  一个正在运行的 agent 被删掉行之后, 它的下一次 xats 调用会以未注册 session 被拒, 需要重新 `register_agent`.  kimi-code 的落差更大 —— kimi session 会继续运行、继续接收 prompt (kimi 的 REST API 压根没有删除 session 的路由), 所以删行只是终结了它在 xats 里的可寻址性.  agent 删自己用 `unregister_self` 工具; 删**别的** agent 刻意没有提供 MCP 工具.
 
 > 安全提示: "loopback-only" 也包含同机的浏览器, 所以给 daemon 带上 `--token` 才能挡住本机网页访问 `/api/`.  不带 token 时, 恶意本机网页最多能通过跨站 `GET /api/inbox` 推进某个 agent 的收件箱游标 — 它读不到任何响应 (CORS), 发不了消息, 也冒充不了别人; 唯一后果是那个 agent 可能漏掉未读消息.  这是一个有界的、经过权衡后接受的风险; 带 token 就能彻底消除.
 
