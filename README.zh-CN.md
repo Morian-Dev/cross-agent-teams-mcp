@@ -362,6 +362,8 @@ launcher 做的事:
 - 发一条初始化 prompt, 让 CLI 能挂载 server 创建的 session (否则 kimi 报 `Agent "main" was not found`).
 - `exec kimi --session <id> --yolo "$@"` 用挂了预创建 session 的 kimi TUI 替换当前 shell.
 
+**session 会永久累积.**  启动器每次调用都会新建一个 session —— 这是刻意的, 因为只有拿到精确的 `session_id`, poke 才能落到你正在看的那个 session 上.  但 kimi 的 REST API **没有删除 session 的路由**: 整个接口面只有三个 `DELETE`, 没有一个是 sessions 的; `DELETE /api/v1/workspaces/{id}` 也只是注销 workspace ("does not remove on-disk content"), 它下面的 session 照样列着.  所以每跑一次 `xats-kimi` 都会永久留下一个 session, 唯一的清理途径是 kimi TUI 或 `kimi web` 界面.  如果你启动得频繁, `~/.kimi-code/sessions/` 会一直涨, 记得定期清.
+
 `start-xats` 也会拉起 kimi server: 当 PATH 上有 `kimi` 二进制且端口空闲时, 运行 `kimi web --no-open` 并记录结果 (通过 `_xats-log-event`); 二进制缺失时静默跳过.  `stop-xats` 通过 `kimi web kill` 停掉它, 子命令失败时回退到直接 kill 58627 端口上的监听进程 (比如老版本 kimi 起的 server, `kimi web ps` 看不到).  `start-local-xats` / `stop-local-xats` 以同样方式管理 kimi server.
 
 **MCP 配置.**  上面的启动器和 poke 通道只解决了**唤醒**这一半, agent 还得能拿到 xats 工具本身.  kimi 按三个文件解析 MCP server, 后面的覆盖前面的: `$KIMI_CODE_HOME/mcp.json` (回落 `~/.kimi-code/mcp.json`)、`<git root>/.mcp.json`、以及 `<cwd>/.kimi-code/mcp.json` —— 注意最后一个锚在**当前工作目录**而不是 git root, 所以从子目录启动 kimi 是读不到仓库根那份的.
