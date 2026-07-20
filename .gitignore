@@ -107,6 +107,7 @@ coverage/
 .agents/
 .codex/
 .gemini/
+.kimi-code/
 .mcp.json
 skillsmgr-deploy.json
 
