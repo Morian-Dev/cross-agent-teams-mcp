@@ -3,6 +3,7 @@ node_modules/
 vendor/
 .pnp/
 .pnp.js
+.pnpm-store/
 
 # Build outputs
 dist/
