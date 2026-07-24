@@ -113,7 +113,7 @@ const SEND_MESSAGE_DESC = [
   'REPLY RULE: when replying to a message returned by get_inbox, treat its `from_device` as authoritative — if it differs from your own device, you MUST send to `from_name + ":" + from_device` (bare `from_name` would resolve on YOUR device and miss the actual sender). Same-device replies can use the bare name. The safe fallback for unknown device is send_message_by_id({to_agent_id: from_agent_id, ...}).',
   'For multi-recipient use broadcast (same-team) or broadcast_to_role (same-team, by role).',
   '除非用户明确指定 to_team, 不要跨 team 沟通 (explicitly set to_team only when user asks).',
-  'Reports poked, poke_skip_reasons (no_pane, guard_failed, tmux_unavailable, self); on guard_failed daemon retries at 30s/180s/600s (retry_scheduled, retry_delays_s); stops early on poked.',
+  'Reports poked, poke_skip_reasons (no_pane, guard_failed, tmux_unavailable, self, kimi_session_busy, kimi_pending_interaction); on guard_failed and kimi_session_busy daemon retries at 30s/180s/600s (retry_scheduled, retry_delays_s); stops early on poked.  kimi_session_busy / kimi_pending_interaction mean the kimi session was mid-turn or waiting on a human approval so the wake-up was NOT injected — the mailbox row is written regardless and the recipient sees it on its next get_inbox; kimi_pending_interaction is never retried.',
   'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender>, 请调 get_inbox 查看), NOT the body — read bodies via get_inbox.',
   'Delivery is NOT filtered by online/idle; direct and fan-out deliveries write mailbox rows for offline targets. The list_agents `online` flag reflects process liveness.',
   'DO NOT pre-verify the recipient via list_agents before calling send_message — this rule applies to BOTH same-team and cross-team sends (list_agents is caller-team scoped and CANNOT see cross-team agents, so a cross-team pre-check always falsely reports "missing"; for same-team sends the pre-check is pure waste).',
@@ -124,14 +124,14 @@ const SEND_MESSAGE_BY_ID_DESC = [
   'Private 1→1 message to another agent by agent_id (UUID).  Use this when you already hold the target\'s agent_id; prefer send_message (by name) otherwise.',
   'Same-team only: the recipient must belong to the caller\'s team.  For cross-team sends use send_message with to_team.',
   'By default auto-poke=true with quiet-guard (auto_poke:false opts out), and need_reply=true.  Set need_reply:false for FYI/no-response-needed messages.',
-  'Reports poked, poke_skip_reasons (no_pane, guard_failed, tmux_unavailable, self); on guard_failed daemon retries at 30s/180s/600s (retry_scheduled, retry_delays_s); stops early on poked.',
+  'Reports poked, poke_skip_reasons (no_pane, guard_failed, tmux_unavailable, self, kimi_session_busy, kimi_pending_interaction); on guard_failed and kimi_session_busy daemon retries at 30s/180s/600s (retry_scheduled, retry_delays_s); stops early on poked.  kimi_session_busy / kimi_pending_interaction mean the kimi session was mid-turn or waiting on a human approval so the wake-up was NOT injected — the mailbox row is written regardless and the recipient sees it on its next get_inbox; kimi_pending_interaction is never retried.',
   'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender>, 请调 get_inbox 查看), NOT the body — read bodies via get_inbox.',
   'Delivery is NOT filtered by online/idle — offline targets still receive the mailbox row.'
 ].join(' ')
 
 const BROADCAST_DESC = [
   'Same-team broadcast to every other agent in the caller team across all devices; delivers to every team member except the sender.',
-  'Auto-poke default true (quiet-guard + 30s/180s/600s retry; reports poked, poke_skip_reasons, retry_scheduled, retry_delays_s).  auto_poke:false opts out.',
+  'Auto-poke default true (quiet-guard on tmux targets, busy-gate on kimi targets; both retry at 30s/180s/600s — reports poked, poke_skip_reasons, retry_scheduled, retry_delays_s).  auto_poke:false opts out.  See send_message for what each poke_skip_reasons value means.',
   'For role filter use broadcast_to_role.  For cross-team 1→1 use send_message({to_team}).',
   'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender>, 请调 get_inbox 查看) — never the body.  Read via get_inbox.',
   'Delivery is NOT filtered by online/idle; offline targets still receive mailbox rows. The list_agents `online` flag reflects process liveness.'
@@ -140,7 +140,7 @@ const BROADCAST_DESC = [
 const BROADCAST_TO_ROLE_DESC = [
   'Same-team broadcast filtered by role across all devices; delivers to every matching team member.  Strictly same-team — no cross-team variant.',
   'For cross-team private 1→1 use send_message({to_team}).',
-  'Auto-poke default true with quiet-guard + 30s/180s/600s retry (auto_poke:false opts out); injects only a SHORT wake-up hint, not the message body.  Recipients read via get_inbox.',
+  'Auto-poke default true with quiet-guard on tmux targets / busy-gate on kimi targets, both retrying at 30s/180s/600s (auto_poke:false opts out); injects only a SHORT wake-up hint, not the message body.  Recipients read via get_inbox.',
   'Returns unknown_recipient when no same-team agent matches to_role.'
 ].join(' ')
 
@@ -256,6 +256,12 @@ export function createAutoPokeImpl(
       // The app-server accepted the turn input. Confirmation uncertainty must
       // not trigger tmux fallback or retry duplicate delivery.
       return { ok: true }
+    }
+    // kimi deferrals are "not injected yet", not delivery failures: they route
+    // to the kimi retry gradient, and pending_interaction to nothing at all.
+    if (err === 'kimi_session_busy') return { ok: false, reason: 'kimi_session_busy' }
+    if (err === 'kimi_pending_interaction') {
+      return { ok: false, reason: 'kimi_pending_interaction' }
     }
     if (err === 'tmux_unavailable') return { ok: false, reason: 'tmux_unavailable' }
     if (err === 'tmux_pane_not_set') return { ok: false, reason: 'no_pane' }

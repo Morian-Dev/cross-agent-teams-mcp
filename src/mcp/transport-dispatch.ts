@@ -11,7 +11,7 @@ import {
   type OpencodeServerDispatchResult,
 } from './opencode-server-dispatch.js'
 import {
-  dispatchKimiServerPoke,
+  dispatchKimiServerPokeGated,
   type KimiServerDispatchResult,
 } from './kimi-server-dispatch.js'
 
@@ -225,7 +225,7 @@ async function dispatchKimi(
   input: DispatchInput
 ): Promise<DispatchResult> {
   if (target.delivery.kind === 'kimi-server') {
-    const result = await (deps.kimiServerDispatch ?? dispatchKimiServerPoke)({
+    const result = await (deps.kimiServerDispatch ?? dispatchKimiServerPokeGated)({
       delivery: target.delivery,
       content: input.content,
     })

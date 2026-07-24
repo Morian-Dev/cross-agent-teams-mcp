@@ -407,6 +407,19 @@ agent 会自动检测 `$KIMI_XATS_BASE_URL`, 选 `agent_type="kimi-code"`, 把 e
 
 不要通过问 kimi agent 本人来确认这一点: 它跑在 session **内部**, 通过 session 状态看自己的对话, 而不是通过渲染出来的终端.  你问它 TUI 有没有刷新, 它会如实报告 turn 跑过了, 并回答 "刷新了, 实时可见" —— 而这是它结构上无法观察的断言.  只有人去看真实终端才能判定.
 
+**poke 前会做一次 session 前置检查.**  往一个已经在跑 turn 的 session 里注入, 等于让两个引擎同时写同一个 session, 所以每次 `POST /prompts` 之前 daemon 会先探测目标, 必要时拒绝注入.  两个输入, 按这个顺序判定:
+
+1. `GET /api/v1/sessions/<id>` —— `pending_interaction != 'none'` 返回 `kimi_pending_interaction`; `main_turn_active` 为真返回 `kimi_session_busy`, `reason: main_turn_active`.
+2. `~/.kimi-code/sessions/*/<id>/agents/main/wire.jsonl` 的 mtime —— 最近 10 秒内被写过, 返回 `kimi_session_busy`, `reason: tui_recent_write`.
+
+这个门判定的是 `main_turn_active`, **不是** `busy`.  后台任务活着的时候 `busy` 也是真, 而后台任务可以跑很久却完全不跟注入的 prompt 冲突 —— 用 `busy` 会把本来安全的 poke 也挡掉.
+
+`kimi_session_busy` (无论来自这个门, 还是来自 `POST /prompts` 自己回的 `SESSION_BUSY` 拒绝) 会按 tmux 路径同一套梯度重试 —— **30s / 180s / 600s**, 每次都重新跑一遍完整的前置检查.  `kimi_pending_interaction` **不重试**: 没人应答的审批会让 turn 一直挂着, 重试只是白白烧掉梯度.  梯度耗尽后 daemon 什么都不做: 不强行注入, 不回落 tmux.  消息发出时 mailbox 行就已经落库了, agent 下次 `get_inbox` 照样看得到 —— 唤醒是对它的优化, 不是投递手段本身.
+
+**两个盲区, 明说.**  REST 探测看不见 TUI: `busy` 和 `main_turn_active` 只反映 kimi **server** 进程里的引擎, 而你在 TUI 里跑的 turn 走的是 TUI 自己的进程内引擎 —— 跟上面"不实时刷新"是同一个双引擎根因.  wire 日志 mtime 就是为这种情况打的启发式补丁, 文件缺失或读不到时 fail open (照常注入).  另外这个门是 check-then-inject, 永远不是原子的: 探测和 POST 之间仍可能起一个 turn.  两个探测输入都刻意 fail open, 所以探测答不上来时退化成改动前的无门行为, 而不是投递中断.  这是缓解, 不是保证; 真正的修法是 kimi 上游把 TUI 收敛到 server 引擎上.
+
+**跑很久的注入 turn 只记日志, 绝不中止.**  注入成功后 daemon 会记下返回的 prompt id, 超过阈值 (默认 10 分钟, 用 `XATS_KIMI_PROMPT_OBSERVE_MS` 改) 后检查这个 prompt 是否还在跑, 还在就打一条日志.  它不会去停这个 turn, 也不提供停的开关.  用时长判断"卡住"是错的判据: 这个项目里被 poke 唤醒的 turn 干真活跑过五分钟很常见, 而触发这次改动的失控案例特征是**毫无进展** —— 每 ~10 秒重复一模一样的 TodoList 轮次.  按时长中止会稳定地杀掉健康的那种, 只是顺带撞上生病的那种.
+
 #### 其它编码 agent (cursor, ...)
 
 非 Claude Code, 非 Codex, 也非通过 launcher 启动的 opencode — cursor, 编辑器扩展, 自己的 harness — 直接通过 Streamable HTTP 连 daemon, 注册时用 `agent_type="custom"` (agent 自己会判断).  这些 agent 没有专用的唤醒通道; 跨 agent poke 通过把文本注入到 agent 所在的 tmux pane 实现, 所以把 agent 跑在 tmux 窗口里, 注册时 daemon 会自动解析 `pid → tty → pane`.

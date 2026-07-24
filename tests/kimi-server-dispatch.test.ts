@@ -1,11 +1,13 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   dispatchKimiServerPoke,
+  dispatchKimiServerPokeGated,
   type KimiServerDispatchResult,
 } from '../src/mcp/kimi-server-dispatch.js'
+import { createKimiSessionPrecheck } from '../src/mcp/kimi-session-state.js'
 import { dispatchPoke } from '../src/mcp/transport-dispatch.js'
 
 const SESSION_ID = 'session_abc'
@@ -309,6 +311,244 @@ describe('dispatchKimiServerPoke', () => {
   })
 })
 
+// ---- precondition gate -----------------------------------------------------
+
+type GateCall = { method: string; url: string }
+
+function makeSessionsRoot(args: { ageMs?: number; sessionId?: string } = {}): string {
+  const root = mkdtempSync(join(tmpdir(), 'atm-kimi-sessions-'))
+  tmpDirs.push(root)
+  if (args.ageMs === undefined) return root
+  const dir = join(root, 'wd_deadbeef', args.sessionId ?? SESSION_ID, 'agents', 'main')
+  mkdirSync(dir, { recursive: true })
+  const file = join(dir, 'wire.jsonl')
+  writeFileSync(file, '{}\n')
+  const when = (Date.now() - args.ageMs) / 1000
+  utimesSync(file, when, when)
+  return root
+}
+
+function makeGateFetch(args: {
+  session?: { status?: number; body?: string }
+  sessionReject?: boolean
+  prompt?: { status?: number; body?: string }
+}): { fetch: typeof fetch; calls: GateCall[] } {
+  const calls: GateCall[] = []
+  const fetchMock = (async (url: string, init?: RequestInit) => {
+    const method = init?.method ?? 'GET'
+    if (method === 'GET') {
+      if (args.sessionReject) throw new Error('ECONNREFUSED')
+      calls.push({ method, url })
+      const body = args.session?.body ?? ''
+      return new Response(body.length > 0 ? body : null, {
+        status: args.session?.status ?? 200,
+      })
+    }
+    calls.push({ method, url })
+    const body = args.prompt?.body ?? ''
+    return new Response(body.length > 0 ? body : null, {
+      status: args.prompt?.status ?? 200,
+    })
+  }) as unknown as typeof fetch
+  return { fetch: fetchMock, calls }
+}
+
+function sessionEnvelope(data: unknown): string {
+  return JSON.stringify({ code: 0, msg: 'ok', data })
+}
+
+async function runGated(args: {
+  session?: { status?: number; body?: string }
+  sessionReject?: boolean
+  prompt?: { status?: number; body?: string }
+  sessionsRoot: string
+}): Promise<{ result: KimiServerDispatchResult; calls: GateCall[] }> {
+  const { fetch: fetchMock, calls } = makeGateFetch(args)
+  const result = await dispatchKimiServerPoke(
+    { delivery: DELIVERY, content: 'hello' },
+    {
+      fetch: fetchMock,
+      env: {},
+      tokenFilePath: makeTokenFile('file-token'),
+      precheck: createKimiSessionPrecheck({ sessionsRoot: args.sessionsRoot }),
+    }
+  )
+  return { result, calls }
+}
+
+function postCalls(calls: GateCall[]): GateCall[] {
+  return calls.filter(c => c.method === 'POST')
+}
+
+describe('dispatchKimiServerPoke precondition gate', () => {
+  it('defers with reason main_turn_active and issues NO POST', async () => {
+    const { result, calls } = await runGated({
+      session: { body: sessionEnvelope({ main_turn_active: true, pending_interaction: 'none' }) },
+      sessionsRoot: makeSessionsRoot(),
+    })
+    expect(result).toEqual({
+      error: 'kimi_session_busy',
+      detail: { reason: 'main_turn_active' },
+      transport_used: 'kimi-server',
+    })
+    expect(postCalls(calls)).toHaveLength(0)
+  })
+
+  it('injects when busy is true but the main turn is idle', async () => {
+    const { result, calls } = await runGated({
+      session: {
+        body: sessionEnvelope({
+          busy: true,
+          main_turn_active: false,
+          pending_interaction: 'none',
+        }),
+      },
+      sessionsRoot: makeSessionsRoot(),
+    })
+    expect(result).toEqual({
+      ok: true,
+      transport_used: 'kimi-server',
+      session_id: SESSION_ID,
+    })
+    expect(postCalls(calls)).toHaveLength(1)
+  })
+
+  it('returns kimi_pending_interaction and issues NO POST', async () => {
+    const { result, calls } = await runGated({
+      session: {
+        body: sessionEnvelope({ main_turn_active: true, pending_interaction: 'approval' }),
+      },
+      sessionsRoot: makeSessionsRoot(),
+    })
+    expect(result).toEqual({
+      error: 'kimi_pending_interaction',
+      detail: { pending_interaction: 'approval' },
+      transport_used: 'kimi-server',
+    })
+    expect(postCalls(calls)).toHaveLength(0)
+  })
+
+  it('defers with reason tui_recent_write on a recent wire-log write', async () => {
+    const { result, calls } = await runGated({
+      session: {
+        body: sessionEnvelope({ main_turn_active: false, pending_interaction: 'none' }),
+      },
+      sessionsRoot: makeSessionsRoot({ ageMs: 2_000 }),
+    })
+    expect(result).toEqual({
+      error: 'kimi_session_busy',
+      detail: { reason: 'tui_recent_write' },
+      transport_used: 'kimi-server',
+    })
+    expect(postCalls(calls)).toHaveLength(0)
+  })
+
+  it('injects when the wire log is stale', async () => {
+    const { result, calls } = await runGated({
+      session: {
+        body: sessionEnvelope({ main_turn_active: false, pending_interaction: 'none' }),
+      },
+      sessionsRoot: makeSessionsRoot({ ageMs: 10 * 60_000 }),
+    })
+    expect(result).toMatchObject({ ok: true, transport_used: 'kimi-server' })
+    expect(postCalls(calls)).toHaveLength(1)
+  })
+
+  it('fails open and injects when the probe GET rejects and no wire log exists', async () => {
+    const { result, calls } = await runGated({
+      sessionReject: true,
+      sessionsRoot: makeSessionsRoot(),
+    })
+    expect(result).toMatchObject({ ok: true, transport_used: 'kimi-server' })
+    expect(postCalls(calls)).toHaveLength(1)
+  })
+
+  it('fails open and injects when the probe GET returns a non-2xx', async () => {
+    const { result, calls } = await runGated({
+      session: { status: 500, body: 'boom' },
+      sessionsRoot: makeSessionsRoot(),
+    })
+    expect(result).toMatchObject({ ok: true, transport_used: 'kimi-server' })
+    expect(postCalls(calls)).toHaveLength(1)
+  })
+
+  it('fails open and injects when the probe GET returns an error envelope', async () => {
+    const { result, calls } = await runGated({
+      session: {
+        body: JSON.stringify({ code: 40401, msg: 'session does not exist', data: null }),
+      },
+      sessionsRoot: makeSessionsRoot(),
+    })
+    expect(result).toMatchObject({ ok: true, transport_used: 'kimi-server' })
+    expect(postCalls(calls)).toHaveLength(1)
+  })
+
+  it('probes the session URL before posting the prompt', async () => {
+    const { calls } = await runGated({
+      session: {
+        body: sessionEnvelope({ main_turn_active: false, pending_interaction: 'none' }),
+      },
+      sessionsRoot: makeSessionsRoot(),
+    })
+    expect(calls.map(c => `${c.method} ${c.url}`)).toEqual([
+      `GET ${BASE_URL}/api/v1/sessions/${SESSION_ID}`,
+      `POST ${BASE_URL}/api/v1/sessions/${SESSION_ID}/prompts`,
+    ])
+  })
+
+  it('dispatchKimiServerPokeGated wires the precheck in by default', async () => {
+    const { fetch: fetchMock, calls } = makeGateFetch({
+      session: { body: sessionEnvelope({ main_turn_active: true, pending_interaction: 'none' }) },
+    })
+    const result = await dispatchKimiServerPokeGated(
+      { delivery: DELIVERY, content: 'hello' },
+      { fetch: fetchMock, env: {}, tokenFilePath: makeTokenFile('file-token') }
+    )
+    expect(result).toEqual({
+      error: 'kimi_session_busy',
+      detail: { reason: 'main_turn_active' },
+      transport_used: 'kimi-server',
+    })
+    expect(postCalls(calls)).toHaveLength(0)
+  })
+})
+
+describe('dispatchKimiServerPoke SESSION_BUSY rejection', () => {
+  it('maps a SESSION_BUSY error envelope to kimi_session_busy, not kimi_inject_failed', async () => {
+    const { fetch: fetchMock } = makeFetch({
+      status: 200,
+      body: JSON.stringify({ code: 42901, msg: 'SESSION_BUSY: a turn is running', data: null }),
+    })
+    const tokenFilePath = makeTokenFile('file-token')
+    const result = await dispatchKimiServerPoke(
+      { delivery: DELIVERY, content: 'hello' },
+      { fetch: fetchMock, env: {}, tokenFilePath }
+    )
+    expect(result).toEqual({
+      error: 'kimi_session_busy',
+      detail: { reason: 'session_busy_response' },
+      transport_used: 'kimi-server',
+    })
+  })
+
+  it('maps a SESSION_BUSY rejection at a non-2xx status to kimi_session_busy', async () => {
+    const { fetch: fetchMock } = makeFetch({
+      status: 409,
+      body: JSON.stringify({ error: 'SESSION_BUSY' }),
+    })
+    const tokenFilePath = makeTokenFile('file-token')
+    const result = await dispatchKimiServerPoke(
+      { delivery: DELIVERY, content: 'hello' },
+      { fetch: fetchMock, env: {}, tokenFilePath }
+    )
+    expect(result).toEqual({
+      error: 'kimi_session_busy',
+      detail: { reason: 'session_busy_response' },
+      transport_used: 'kimi-server',
+    })
+  })
+})
+
 describe('dispatchPoke kimi-server routing', () => {
   it('routes kimi-server delivery to the kimi dispatcher', async () => {
     const tmuxCalls: unknown[] = []
@@ -418,5 +658,61 @@ describe('dispatchPoke kimi-server routing', () => {
     )
     expect(res).toMatchObject({ ok: true, transport_used: 'kimi-server' })
     expect(kimiCalls).toHaveLength(1)
+  })
+})
+
+describe('gate deferral logging', () => {
+  const deferralCases = [
+    {
+      name: 'main_turn_active',
+      precheck: async () => ({ decision: 'defer' as const, reason: 'main_turn_active' as const }),
+      expected: { outcome: 'kimi_session_busy', reason: 'main_turn_active' }
+    },
+    {
+      name: 'tui_recent_write',
+      precheck: async () => ({ decision: 'defer' as const, reason: 'tui_recent_write' as const }),
+      expected: { outcome: 'kimi_session_busy', reason: 'tui_recent_write' }
+    },
+    {
+      name: 'pending_interaction',
+      precheck: async () => ({ decision: 'pending_interaction' as const, pending_interaction: 'approval' }),
+      expected: { outcome: 'kimi_pending_interaction', pending_interaction: 'approval' }
+    }
+  ]
+
+  for (const c of deferralCases) {
+    it(`records the ${c.name} sub-reason so it is diagnosable without widening the public result`, async () => {
+      const records: Record<string, unknown>[] = []
+      const res = await dispatchKimiServerPoke(
+        { delivery: DELIVERY, content: 'hi' },
+        {
+          env: { CROSS_AGENT_TEAMS_MCP_TOKEN: 'tok' },
+          fetch: (async () => { throw new Error('must not be called') }) as unknown as typeof fetch,
+          precheck: c.precheck,
+          logGate: (r) => { records.push(r) }
+        }
+      )
+      expect('error' in res).toBe(true)
+      expect(records).toHaveLength(1)
+      expect(records[0]).toMatchObject({
+        event: 'kimi_poke_deferred',
+        session_id: DELIVERY.session_id,
+        ...c.expected
+      })
+    })
+  }
+
+  it('logs nothing when the poke is injected', async () => {
+    const records: Record<string, unknown>[] = []
+    await dispatchKimiServerPoke(
+      { delivery: DELIVERY, content: 'hi' },
+      {
+        env: { CROSS_AGENT_TEAMS_MCP_TOKEN: 'tok' },
+        fetch: (async () => new Response('{"code":0}', { status: 200 })) as unknown as typeof fetch,
+        precheck: async () => ({ decision: 'proceed' as const }),
+        logGate: (r) => { records.push(r) }
+      }
+    )
+    expect(records).toEqual([])
   })
 })

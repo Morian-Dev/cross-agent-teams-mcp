@@ -1,6 +1,8 @@
 import type { DeliveryKimiServer } from '../lib/delivery-spec.js'
 import { describeError } from './codex-appserver-rpc.js'
 import { kimiAuthHeaders, DEFAULT_KIMI_TOKEN_FILE } from './kimi-auth.js'
+import { createKimiSessionPrecheck, type KimiPrecheckFn } from './kimi-session-state.js'
+import { observeKimiPrompt, type KimiPromptObserveFn } from './kimi-prompt-observe.js'
 
 type FetchLike = typeof globalThis.fetch
 
@@ -8,6 +10,20 @@ export interface KimiServerDispatchDeps {
   env?: NodeJS.ProcessEnv
   fetch?: FetchLike
   tokenFilePath?: string
+  /** Omitted → no precondition gate (pre-gate behaviour). Production callers
+   *  go through dispatchKimiServerPokeGated, which supplies the real one. */
+  precheck?: KimiPrecheckFn
+  /** Omitted → no long-turn observation. Log-only; never aborts. */
+  observePrompt?: KimiPromptObserveFn
+  /** Records why a poke was deferred. The sub-reasons behind
+   *  `kimi_session_busy` (main_turn_active / tui_recent_write /
+   *  session_busy_response) are diagnostic, not decision-bearing: a sender
+   *  reacts identically to all three. They belong in the daemon log rather
+   *  than in every send_message response, which is why they are logged here
+   *  instead of being propagated into `poke_skip_reasons`. The
+   *  decision-bearing split — retry-able vs needs-a-human — is already
+   *  carried by the distinct `kimi_pending_interaction` skip reason. */
+  logGate?: (record: Record<string, unknown>) => void
 }
 
 export type KimiServerDispatchResult =
@@ -21,6 +37,8 @@ export type KimiServerDispatchResult =
         | 'missing_auth_token'
         | 'kimi_connect_failed'
         | 'kimi_inject_failed'
+        | 'kimi_session_busy'
+        | 'kimi_pending_interaction'
       detail?: unknown
       transport_used?: 'kimi-server'
     }
@@ -30,6 +48,30 @@ const MAX_BODY_PREVIEW_BYTES = 4 * 1024
 function truncateBody(body: string): string {
   if (body.length <= MAX_BODY_PREVIEW_BYTES) return body
   return body.slice(0, MAX_BODY_PREVIEW_BYTES)
+}
+
+// POST /prompts may refuse an enqueue outright instead of queueing it. The
+// refusal carries SESSION_BUSY as an error code or message and is a deferral,
+// not a delivery failure.
+function isSessionBusyRejection(bodyText: string): boolean {
+  return bodyText.includes('SESSION_BUSY')
+}
+
+function extractPromptId(bodyText: string): string | undefined {
+  if (bodyText === '') return undefined
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(bodyText)
+  } catch {
+    return undefined
+  }
+  if (typeof parsed !== 'object' || parsed === null) return undefined
+  const root = parsed as Record<string, unknown>
+  const data = typeof root.data === 'object' && root.data !== null
+    ? (root.data as Record<string, unknown>)
+    : root
+  const id = data.prompt_id ?? data.id
+  return typeof id === 'string' && id !== '' ? id : undefined
 }
 
 function hasNonZeroErrorCode(bodyText: string): boolean {
@@ -60,6 +102,43 @@ export async function dispatchKimiServerPoke(
     deps.tokenFilePath ?? DEFAULT_KIMI_TOKEN_FILE
   )
   if ('error' in auth) return auth
+
+  // Check-then-inject, deliberately NOT atomic: a turn can still begin between
+  // the probe and the POST. This is a mitigation, not a guarantee.
+  if (deps.precheck) {
+    const decision = await deps.precheck({
+      base_url: input.delivery.base_url,
+      session_id: input.delivery.session_id,
+      headers: auth.headers,
+      fetch: fetchImpl,
+    })
+    if (decision.decision === 'pending_interaction') {
+      deps.logGate?.({
+        event: 'kimi_poke_deferred',
+        session_id: input.delivery.session_id,
+        outcome: 'kimi_pending_interaction',
+        pending_interaction: decision.pending_interaction,
+      })
+      return {
+        error: 'kimi_pending_interaction',
+        detail: { pending_interaction: decision.pending_interaction },
+        transport_used: 'kimi-server',
+      }
+    }
+    if (decision.decision === 'defer') {
+      deps.logGate?.({
+        event: 'kimi_poke_deferred',
+        session_id: input.delivery.session_id,
+        outcome: 'kimi_session_busy',
+        reason: decision.reason,
+      })
+      return {
+        error: 'kimi_session_busy',
+        detail: { reason: decision.reason },
+        transport_used: 'kimi-server',
+      }
+    }
+  }
 
   const url = `${input.delivery.base_url.replace(/\/+$/, '')}/api/v1/sessions/${encodeURIComponent(input.delivery.session_id)}/prompts`
   const headers: Record<string, string> = {
@@ -92,6 +171,20 @@ export async function dispatchKimiServerPoke(
     bodyText = ''
   }
 
+  if (isSessionBusyRejection(bodyText)) {
+    deps.logGate?.({
+      event: 'kimi_poke_deferred',
+      session_id: input.delivery.session_id,
+      outcome: 'kimi_session_busy',
+      reason: 'session_busy_response',
+    })
+    return {
+      error: 'kimi_session_busy',
+      detail: { reason: 'session_busy_response' },
+      transport_used: 'kimi-server',
+    }
+  }
+
   if (!response.ok) {
     return {
       error: 'kimi_inject_failed',
@@ -118,9 +211,39 @@ export async function dispatchKimiServerPoke(
     }
   }
 
+  const promptId = extractPromptId(bodyText)
+  if (promptId && deps.observePrompt) {
+    deps.observePrompt({
+      base_url: input.delivery.base_url,
+      session_id: input.delivery.session_id,
+      prompt_id: promptId,
+      headers: auth.headers,
+      fetch: fetchImpl,
+    })
+  }
+
   return {
     ok: true,
     transport_used: 'kimi-server',
     session_id: input.delivery.session_id,
   }
+}
+
+/**
+ * Production entry point: the same dispatcher with the precondition gate and
+ * the observe-only long-turn watch wired in.
+ */
+export async function dispatchKimiServerPokeGated(
+  input: {
+    delivery: DeliveryKimiServer
+    content: string
+  },
+  deps: KimiServerDispatchDeps = {}
+): Promise<KimiServerDispatchResult> {
+  return dispatchKimiServerPoke(input, {
+    precheck: createKimiSessionPrecheck(),
+    observePrompt: observeKimiPrompt,
+    logGate: (record) => { console.error(JSON.stringify(record)) },
+    ...deps,
+  })
 }

@@ -9,6 +9,7 @@ import { runCleanup } from './cleanup.js'
 import { SseFanout } from './sse-fanout.js'
 import { ChannelWakeFanout } from './channel-wake-fanout.js'
 import { clearAllRetries } from '../mcp/poke-retry.js'
+import { clearAllKimiRetries } from '../mcp/kimi-poke-retry.js'
 import { resolveLocalDeviceLabel } from './local-device.js'
 import { bindHostCoversIpv4Loopback, classifyPeerAddress, type SessionOriginInfo } from './network-origin.js'
 
@@ -114,6 +115,7 @@ export async function buildServer(opts: ServerOpts): Promise<FastifyInstance> {
     clearInterval(interval)
     clearInterval(orphanGcInterval)
     clearAllRetries()
+    clearAllKimiRetries()
     fanout.stopAll()
     db.close()
   })

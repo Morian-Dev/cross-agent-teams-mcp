@@ -1,9 +1,17 @@
 import { runQuietGuard } from './poke-guard.js'
 import { isTmuxAvailable } from '../daemon/tmux-cli.js'
 import { scheduleRetry as defaultScheduleRetry, type RetryAgentLookup, type RetryContext } from './poke-retry.js'
+import { scheduleKimiRetry as defaultScheduleKimiRetry, type KimiRetryContext } from './kimi-poke-retry.js'
 import type { DeliverySpec } from '../lib/delivery-spec.js'
+import type { DeliverySkipReason } from './delivery-status.js'
 
-export type AutoPokeSkipReason = 'no_pane' | 'guard_failed' | 'tmux_unavailable' | 'self'
+export type AutoPokeSkipReason =
+  | 'no_pane'
+  | 'guard_failed'
+  | 'tmux_unavailable'
+  | 'self'
+  | 'kimi_session_busy'
+  | 'kimi_pending_interaction'
 
 export interface AutoPokeArgs {
   team: string
@@ -32,7 +40,16 @@ export interface RetryScheduleCtx {
   sentAt: string
   lookupAgentFn: (agentId: string) => RetryAgentLookup | undefined
   scheduleRetryFn?: (ctx: RetryContext) => void
-  updateStatusFn?: RetryContext['updateStatusFn']
+  scheduleKimiRetryFn?: (ctx: KimiRetryContext) => void
+  // Widened over RetryContext's own union so the same callback can serve both
+  // the tmux and the kimi scheduler.
+  updateStatusFn?: (args: {
+    agentId: string
+    wake_status: 'delivered' | 'retrying' | 'skipped' | 'failed'
+    skip_reason?: DeliverySkipReason | null
+    retry_attempts?: number
+    delivered_at?: string | null
+  }) => void
 }
 
 export interface FanoutResult {
@@ -95,7 +112,31 @@ export async function fanoutAutoPoke(args: {
   let retryScheduledCount = 0
   if (args.retry && pokeFn) {
     const scheduleFn = args.retry.scheduleRetryFn ?? defaultScheduleRetry
+    const scheduleKimiFn = args.retry.scheduleKimiRetryFn ?? defaultScheduleKimiRetry
     for (const res of results) {
+      // kimi deferrals never have a pane, so they cannot use the tmux
+      // scheduler. kimi_pending_interaction is deliberately absent here: it
+      // waits on a human approval and cannot clear on a timer.
+      if (!res.poked && res.reason === 'kimi_session_busy') {
+        scheduleKimiFn({
+          agentId: res.agent_id,
+          messageId: args.retry.messageId,
+          attemptFn: async () => {
+            const out = await pokeFn({
+              team: args.team,
+              fromAgentId: args.fromAgentId,
+              targetAgentId: res.agent_id,
+              paneId: res.paneId,
+              body: args.body
+            })
+            if (out.ok) return { ok: true }
+            return { ok: false, reason: out.reason ?? 'unknown' }
+          },
+          updateStatusFn: args.retry.updateStatusFn
+        })
+        retryScheduledCount += 1
+        continue
+      }
       if (!res.poked && res.reason === 'guard_failed' && res.paneId) {
         scheduleFn({
           agentId: res.agent_id,
