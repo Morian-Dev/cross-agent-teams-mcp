@@ -234,4 +234,95 @@ describe('reconnect tool schema validation', () => {
     db.close()
     await server.close()
   })
+
+  it('validates the agent_type discriminator on the base_url arm', async () => {
+    const { dir, server, client, transport } = await setup()
+    cleanups.push(dir)
+
+    // agent_type without base_url
+    const orphanKind = await client.callTool({
+      name: 'reconnect',
+      arguments: { agent_type: 'kimi-code' },
+    }) as { isError?: boolean }
+    expect(orphanKind.isError).toBe(true)
+
+    // agent_type="kimi-code" without the REQUIRED session_id
+    const kimiWithoutSession = await client.callTool({
+      name: 'reconnect',
+      arguments: { agent_type: 'kimi-code', base_url: 'http://127.0.0.1:18888' },
+    }) as { isError?: boolean }
+    expect(kimiWithoutSession.isError).toBe(true)
+
+    // unknown discriminator value
+    const badKind = await client.callTool({
+      name: 'reconnect',
+      arguments: { agent_type: 'codex', base_url: 'http://127.0.0.1:18888' },
+    }) as { isError?: boolean }
+    expect(badKind.isError).toBe(true)
+
+    // full kimi shape passes the schema (runtime need_register is fine)
+    const kimiShape = await client.callTool({
+      name: 'reconnect',
+      arguments: {
+        agent_type: 'kimi-code',
+        base_url: 'http://127.0.0.1:18888',
+        session_id: 'session_xyz',
+      },
+    }) as { isError?: boolean }
+    expect(kimiShape.isError).toBeFalsy()
+
+    // kimi ids only need to be non-empty (registration parity): the "ses"
+    // prefix is an opencode contract and must not gate an explicit kimi call
+    const nonSesKimi = await client.callTool({
+      name: 'reconnect',
+      arguments: {
+        agent_type: 'kimi-code',
+        base_url: 'http://127.0.0.1:18888',
+        session_id: 'S',
+      },
+    }) as { isError?: boolean }
+    expect(nonSesKimi.isError).toBeFalsy()
+
+    // without the kimi discriminator the historical prefix rule still holds
+    const nonSesLegacy = await client.callTool({
+      name: 'reconnect',
+      arguments: { base_url: 'http://127.0.0.1:18888', session_id: 'S' },
+    }) as { isError?: boolean }
+    expect(nonSesLegacy.isError).toBe(true)
+
+    // blank session_id (register parity: trimmed non-empty)
+    const blankSession = await client.callTool({
+      name: 'reconnect',
+      arguments: {
+        agent_type: 'kimi-code',
+        base_url: 'http://127.0.0.1:18888',
+        session_id: '   ',
+      },
+    }) as { isError?: boolean }
+    expect(blankSession.isError).toBe(true)
+
+    // kimi base_url must not carry query/fragment/userinfo — endpoint URLs
+    // are built by appending /api/v1/... to it
+    for (const badBase of [
+      'http://127.0.0.1:18888/?a=1',
+      'http://127.0.0.1:18888/#frag',
+      'http://user:pw@127.0.0.1:18888',
+      'http://127.0.0.1:18888/?',
+      'http://127.0.0.1:18888/?#',
+    ]) {
+      const resp = await client.callTool({
+        name: 'reconnect',
+        arguments: {
+          agent_type: 'kimi-code',
+          base_url: badBase,
+          session_id: 'session_xyz',
+        },
+      }) as { isError?: boolean }
+      expect(resp.isError, `base_url=${badBase} should be rejected`).toBe(true)
+    }
+
+    await transport.close()
+    await client.close()
+    await server.close()
+  })
 })

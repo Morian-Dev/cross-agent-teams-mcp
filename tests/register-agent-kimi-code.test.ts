@@ -167,6 +167,45 @@ describe('register_agent({agent_type:"kimi-code"})', () => {
     await teardown(ctx)
   })
 
+  it('rejects agent_type=kimi-code base_url carrying query, fragment, or userinfo', async () => {
+    for (const badBase of [
+      'http://127.0.0.1:58627/?a=1',
+      'http://127.0.0.1:58627/#frag',
+      'http://user:pw@127.0.0.1:58627',
+      'http://127.0.0.1:58627/?',
+      'http://127.0.0.1:58627/?#',
+    ]) {
+      const ctx = await callRegister({
+        agent_type: 'kimi-code',
+        name: 'kimi-1',
+        base_url: badBase,
+        session_id: 'session_abc',
+      })
+      expect(ctx.resp.isError, `base_url=${badBase} should be rejected`).toBe(true)
+      expect(ctx.resp.content[0].text).toMatch(/base_url/i)
+      await teardown(ctx)
+    }
+  })
+
+  it('rejects a kimi-server delivery object whose base_url carries a query (custom agent_type bypass)', async () => {
+    const ctx = await callRegister({
+      agent_type: 'custom',
+      agent_type_name: 'cursor',
+      name: 'kimi-1',
+      delivery: {
+        kind: 'kimi-server',
+        session_id: 'session_abc',
+        base_url: 'http://127.0.0.1:58627/?a=1',
+      },
+    })
+    const body = JSON.parse(ctx.resp.content[0].text) as Record<string, unknown>
+    expect(body.error).toBe('invalid_delivery')
+    expect(body.reason).toBe('invalid_base_url')
+    const count = ctx.db.prepare(`SELECT COUNT(*) AS c FROM agents`).get() as { c: number }
+    expect(count.c).toBe(0)
+    await teardown(ctx)
+  })
+
   it('rejects base_url supplied with agent_type=custom', async () => {
     const ctx = await callRegister({
       agent_type: 'custom',

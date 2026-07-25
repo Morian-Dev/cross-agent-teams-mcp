@@ -18,9 +18,9 @@ The 409 rejection body MUST NOT be a bare `{ "error": <string> }` object. Strict
 例外是**稳定 runtime 身份共用连接**, 适用于以下两种情况:
 
 - **Codex 同 thread**: 新旧注册都声明 `agent_type='codex'`, 都携带通过校验的 `delivery.kind='codex-appserver'`, 且 `delivery.thread_id` 相同.
-- **kimi 同 session**: 新旧注册都声明 `agent_type='kimi-code'`, 都携带通过校验的 `delivery.kind='kimi-server'`, 且 `delivery.session_id` 相同.  这覆盖 kimi 双引擎架构下同一逻辑 agent 的两条 MCP 连接 (TUI 进程内引擎与 server 引擎): server 侧 turn 的同名 re-register MUST NOT 关闭 TUI 侧连接.
+- **kimi 同 session**: 新旧注册都声明 `agent_type='kimi-code'`, 都携带通过校验的 `delivery.kind='kimi-server'`, 且 canonical 化后的 `delivery.base_url` 与 `delivery.session_id` 都相同.  canonical 化规则由注册持久化、共享 key 与 reconnect 查询共用: scheme/host 小写、默认端口移除 (均由 URL 解析器完成)、hash 剥离、尾部斜杠去除, 不可解析的输入退化为仅去尾斜杠.  kimi 的 endpoint URL 由 base_url 直接拼接 `/api/v1/...` 构成, 因此所有 kimi base_url 入口 — register schema、显式 kimi reconnect schema、以及 delivery 对象的写入校验 (validateDeliveryForWrite, 覆盖 `agent_type='custom'` 携带 kimi-server delivery 的旁路) — MUST 共用同一 validator 拒绝携带 query、fragment 或 userinfo 的 base_url; 判定 MUST 检查原始字符串中的 `?` / `#` 分隔符, 因为 WHATWG URL 对裸尾部 `?`/`#` 报告空 search/hash 却在序列化中保留分隔符.  canonical 化在 service 持久化边界执行, 不只在 MCP tool 层.  kimi 的 session id 只在单个 server 内唯一, 因此共享 key MUST 由 `(base_url, session_id)` 二元组构成 — 相同 `session_id` 出现在等价 URL 拼写上共享, 出现在真正不同的 `base_url` 上仍执行 TAKEOVER.  这覆盖 kimi 双引擎架构下同一逻辑 agent 的两条 MCP 连接 (TUI 进程内引擎与 server 引擎): server 侧 turn 的同名 re-register MUST NOT 关闭 TUI 侧连接.
 
-满足任一情况时, daemon MUST 将这些 MCP session 视为同一 runtime 身份的并发连接.  内存账本 MUST 保留所有连接, MUST NOT 关闭任何已有 transport, MUST NOT 输出 takeover 日志, 且所有连接 MUST 继续以同一个 `agent_id` 调用业务工具.  任一连接关闭时, daemon MUST 只释放该连接, 其余同 key 连接保持有效.  不同的稳定 key (thread_id / session_id), 缺少对应的已校验 delivery, 或任何其他 agent 类型仍执行正常 TAKEOVER.
+满足任一情况时, daemon MUST 将这些 MCP session 视为同一 runtime 身份的并发连接.  内存账本 MUST 保留所有连接, MUST NOT 关闭任何已有 transport, MUST NOT 输出 takeover 日志, 且所有连接 MUST 继续以同一个 `agent_id` 调用业务工具.  任一连接关闭时, daemon MUST 只释放该连接, 其余同 key 连接保持有效.  不同的稳定 key (thread_id / base_url+session_id), 缺少对应的已校验 delivery, 或任何其他 agent 类型仍执行正常 TAKEOVER.
 
 因此, collision 保护仍仅适用于同一 session 内的 Authorization mismatch.  跨 session 重用同一身份时, daemon 根据上述规则执行 TAKEOVER 或稳定 runtime 身份共存, 不得返回 collision.
 
@@ -88,3 +88,16 @@ Arriving on a different TCP socket (e.g. after keep-alive expiry) MUST NOT by it
 - **WHEN** `sess-NEW` 以相同身份和不同的 `session_id='S2'` 注册
 - **THEN** daemon 关闭 `sess-TUI` 并输出 takeover 日志
 - **AND** 内存连接账本只保留 `sess-NEW`
+
+#### Scenario: 相同 session_id 不同 base_url 仍执行 takeover
+
+- **GIVEN** `sess-A` 以 `delivery={ kind:'kimi-server', session_id:'S', base_url:'http://127.0.0.1:58627' }` 绑定到 `(default, kimi-1)`
+- **WHEN** `sess-B` 以相同身份、相同 `session_id='S'` 但 `base_url='http://127.0.0.1:59999'` 注册
+- **THEN** daemon 关闭 `sess-A` 并输出 takeover 日志 (跨 server 的同名 session id 不是同一 runtime)
+- **AND** agents row 的 delivery 指向 `sess-B` 的 base_url
+
+#### Scenario: 等价 base_url 拼写视为同一 runtime
+
+- **GIVEN** `sess-A` 以 `base_url='http://127.0.0.1'` + `session_id='S'` 绑定到 `(default, kimi-1)`
+- **WHEN** `sess-B` 以相同身份、相同 `session_id='S'` 和 `base_url='HTTP://127.0.0.1:80/'` (大写 scheme + 默认端口 + 尾斜杠) 注册
+- **THEN** 两条连接共享同一 runtime 身份, daemon 不关闭 `sess-A`, 不输出 takeover 日志

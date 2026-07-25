@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -714,5 +714,143 @@ describe('gate deferral logging', () => {
       }
     )
     expect(records).toEqual([])
+  })
+})
+
+describe('near-window proceed observability (kimi_poke_proceeded)', () => {
+  async function runObserved(args: {
+    ageMs?: number
+    env?: NodeJS.ProcessEnv
+  }): Promise<{
+    result: KimiServerDispatchResult
+    records: Record<string, unknown>[]
+  }> {
+    const sessionsRoot = makeSessionsRoot(
+      args.ageMs === undefined ? {} : { ageMs: args.ageMs }
+    )
+    const { fetch: fetchMock } = makeGateFetch({
+      session: {
+        body: sessionEnvelope({
+          main_turn_active: false,
+          pending_interaction: 'none',
+        }),
+      },
+    })
+    const records: Record<string, unknown>[] = []
+    const result = await dispatchKimiServerPoke(
+      { delivery: DELIVERY, content: 'hello' },
+      {
+        fetch: fetchMock,
+        env: args.env ?? {},
+        tokenFilePath: makeTokenFile('file-token'),
+        precheck: createKimiSessionPrecheck({
+          sessionsRoot,
+          env: args.env ?? {},
+        }),
+        logGate: (r) => { records.push(r) },
+      }
+    )
+    return { result, records }
+  }
+
+  it('proceeds at wire age 14s and emits one kimi_poke_proceeded with wire_age_ms', async () => {
+    const { result, records } = await runObserved({ ageMs: 14_000 })
+    expect(result).toMatchObject({ ok: true, transport_used: 'kimi-server' })
+    expect(records).toHaveLength(1)
+    expect(records[0]).toMatchObject({
+      event: 'kimi_poke_proceeded',
+      session_id: SESSION_ID,
+    })
+    const age = records[0].wire_age_ms as number
+    expect(age).toBeGreaterThanOrEqual(13_000)
+    expect(age).toBeLessThan(20_000)
+  })
+
+  it('emits no record when the session has no wire log', async () => {
+    const { result, records } = await runObserved({})
+    expect(result).toMatchObject({ ok: true, transport_used: 'kimi-server' })
+    expect(records).toEqual([])
+  })
+
+  it('emits no record when the wire age is at or above the ceiling', async () => {
+    const { result, records } = await runObserved({ ageMs: 30 * 60_000 })
+    expect(result).toMatchObject({ ok: true, transport_used: 'kimi-server' })
+    expect(records).toEqual([])
+  })
+
+  it('honors the KIMI_WIRE_AGE_OBSERVE_MS override without changing the decision', async () => {
+    const { result, records } = await runObserved({
+      ageMs: 60_000,
+      env: { KIMI_WIRE_AGE_OBSERVE_MS: '30000' },
+    })
+    // 60s is over the lowered 30s ceiling: still proceeds, logs nothing.
+    expect(result).toMatchObject({ ok: true, transport_used: 'kimi-server' })
+    expect(records).toEqual([])
+  })
+
+  it('a 60s wire age (over the gate window, under the ceiling) still proceeds and is recorded', async () => {
+    const { result, records } = await runObserved({ ageMs: 60_000 })
+    expect(result).toMatchObject({ ok: true, transport_used: 'kimi-server' })
+    expect(records).toHaveLength(1)
+    expect(records[0]).toMatchObject({ event: 'kimi_poke_proceeded' })
+  })
+})
+
+describe('gate log sink failure isolation', () => {
+  async function runWithThrowingSink(args: {
+    ageMs?: number
+    session: { body: string }
+  }): Promise<{ result: KimiServerDispatchResult; calls: GateCall[] }> {
+    const sessionsRoot = makeSessionsRoot(
+      args.ageMs === undefined ? {} : { ageMs: args.ageMs }
+    )
+    const { fetch: fetchMock, calls } = makeGateFetch({ session: args.session })
+    const result = await dispatchKimiServerPoke(
+      { delivery: DELIVERY, content: 'hello' },
+      {
+        fetch: fetchMock,
+        env: {},
+        tokenFilePath: makeTokenFile('file-token'),
+        precheck: createKimiSessionPrecheck({ sessionsRoot, env: {} }),
+        logGate: () => { throw new Error('sink failed') },
+      }
+    )
+    return { result, calls }
+  }
+
+  it('a throwing sink neither blocks the POST nor changes a proceed result', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { result, calls } = await runWithThrowingSink({
+      ageMs: 14_000,
+      session: {
+        body: sessionEnvelope({
+          main_turn_active: false,
+          pending_interaction: 'none',
+        }),
+      },
+    })
+    expect(result).toMatchObject({ ok: true, transport_used: 'kimi-server' })
+    expect(postCalls(calls)).toHaveLength(1)
+    expect(
+      errSpy.mock.calls.some(args =>
+        String(args[0]).includes('kimi gate log sink failed')
+      )
+    ).toBe(true)
+    errSpy.mockRestore()
+  })
+
+  it('a throwing sink does not disturb a deferral result either', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { result, calls } = await runWithThrowingSink({
+      session: {
+        body: sessionEnvelope({
+          main_turn_active: true,
+          pending_interaction: 'none',
+        }),
+      },
+    })
+    expect(result).toMatchObject({ error: 'kimi_session_busy' })
+    expect(postCalls(calls)).toHaveLength(0)
+    errSpy.mockRestore()
   })
 })

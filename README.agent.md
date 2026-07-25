@@ -121,7 +121,12 @@ poke delivery.
   `$KIMI_XATS_SESSION_ID`; guessing via `~/.kimi-code/session_index.jsonl`
   binds the wrong session when several kimi sessions share a workDir); the
   poke-time bearer token is read from `~/.kimi-code/server.token` unless
-  `auth_token_ref` overrides it.  MCP config is a separate concern from the
+  `auth_token_ref` overrides it.  One kimi session runs two MCP connections
+  (TUI in-process engine + server engine); a same-name re-register with the
+  same `session_id` shares the binding instead of taking over, so a
+  server-side turn's register does not kill the TUI connection — the first
+  `unknown_agent` → register per fresh server-engine MCP session is still
+  expected.  MCP config is a separate concern from the
   poke transport: kimi reads `~/.kimi-code/mcp.json`, `<git root>/.mcp.json`,
   and `<cwd>/.kimi-code/mcp.json` (later wins; the last is anchored at cwd,
   not the git root).  See 3.4 — it must NOT simply inherit Claude Code's
@@ -904,10 +909,22 @@ Identity recovery: when a session lost its context (context clear) and no
 longer remembers its own (team, name), call `reconnect` instead of
 registering a new identity — claude-code: `reconnect({ui_pid: $PPID})`;
 codex: `reconnect({thread_id: $CODEX_THREAD_ID})` (the daemon verifies the
-thread via `thread/resume` on the app-server before reusing the identity).
-Pass exactly one of the two keys.  If the session still remembers its
-(team, name), call `register_agent` with them directly — same agent_id is
-reused, no duplicate row.
+thread via `thread/resume` on the app-server before reusing the identity);
+kimi-code: `reconnect({agent_type: "kimi-code", base_url:
+$KIMI_XATS_BASE_URL, session_id: $KIMI_XATS_SESSION_ID})` — `agent_type`
+is the explicit runtime discriminator (without it an empty registry routes
+the call to the opencode probe instead of answering `need_register`),
+`session_id` is REQUIRED (kimi sessions are never auto-resolved by
+recency), the daemon revalidates the session against the kimi server (the
+response must identify that exact session and not be archived) before
+rebinding, and the recovered connection shares with live engine
+connections of the same session instead of taking over.  In the
+common kimi case the whole recovery is restarting the TUI, whose launcher
+re-exports both env vars.  Pass exactly one identity key.  If the session
+still remembers its (team, name), call `register_agent` with them directly
+— same agent_id is reused, no duplicate row.  The `unknown_agent` →
+re-register (or reconnect) rule stays valid for every runtime, including
+kimi's server-engine turns on a fresh MCP session.
 
 ## 5. Verification checklist
 
@@ -946,7 +963,7 @@ reused, no duplicate row.
 | codex session lands in the wrong directory | Launcher lost `-C "$PWD"` |
 | `register_agent` response carries `hint` | Not inside tmux, or pre-register failed/expired (120s TTL).  Still functional, just no pane auto-bind; call `bind_runtime_identity` to bind manually if needed |
 | opencode gets no push wake | Not launched via the launcher (missing `OPENCODE_XATS_BASE_URL`), or `base_url` not passed at registration |
-| All tools return `unknown_session` / `unknown_agent` after a daemon restart | Reconnect the MCP server, then `reconnect` (claude-code: `ui_pid=$PPID`; codex: `thread_id=$CODEX_THREAD_ID`) or, if the session still remembers its (team, name), `register_agent` with them |
+| All tools return `unknown_session` / `unknown_agent` after a daemon restart | Reconnect the MCP server, then `reconnect` (claude-code: `ui_pid=$PPID`; codex: `thread_id=$CODEX_THREAD_ID`; kimi-code: `agent_type="kimi-code"` + `base_url=$KIMI_XATS_BASE_URL` + REQUIRED `session_id=$KIMI_XATS_SESSION_ID`) or, if the session still remembers its (team, name), `register_agent` with them |
 | Everything points at 9100 but connections fail or hit a foreign process | Port 9100 was taken at daemon startup, so it fell back to 9101/9102 (it tries the next two ports).  Check the `listening on` line in `~/.config/xats/daemon.log`, free port 9100 (`lsof -i tcp:9100`), then restart.  Note `stop-xats` sweeps 9100/8799 plus 8800 only when App xats is enabled — kill a fallback-port daemon by pid |
 
 ## 7. mcpsmgr version requirement

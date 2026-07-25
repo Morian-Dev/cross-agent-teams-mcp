@@ -387,6 +387,25 @@ describe('validateDeliveryForWrite (Task 1.4)', () => {
     expect(result).toEqual({ ok: { kind: 'none' } });
   });
 
+  it('rejects kimi-server base_url carrying query, fragment, userinfo, or a bare "?"', () => {
+    for (const base_url of [
+      'http://127.0.0.1:58627/?a=1',
+      'http://127.0.0.1:58627/#frag',
+      'http://user:pw@127.0.0.1:58627',
+      'http://127.0.0.1:58627/?',
+      'http://127.0.0.1:58627/?#',
+    ]) {
+      expect(
+        validateDeliveryForWrite({
+          kind: 'kimi-server',
+          session_id: 'session_abc',
+          base_url,
+        }),
+        `base_url=${base_url} should be rejected`
+      ).toEqual({ error: 'invalid_delivery', reason: 'invalid_base_url' });
+    }
+  });
+
   it('accepts {kind: claude-channel, channel_session_id: ...}', () => {
     const result = validateDeliveryForWrite({
       kind: 'claude-channel',

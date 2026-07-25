@@ -24,10 +24,13 @@ import { RegisterCodexSelfService } from './register-codex-self.js'
 import { RegisterOpencodeSelfService } from './register-opencode-self.js'
 import {
   resolveCodexReconnect,
+  resolveKimiReconnect,
   resolveOpencodeReconnect,
   resolveReconnect,
+  validateKimiSession,
   type ReconnectResolution,
 } from './reconnect.js'
+import { canonicalKimiBaseUrl, kimiBaseUrlIssue } from '../lib/kimi-url.js'
 import { UnregisterSelfService } from './unregister-self.js'
 import { listAgentsForTeam } from './list-agents.js'
 import { detectTmuxPane } from '../daemon/tmux-pane-detect.js'
@@ -152,7 +155,10 @@ const RECONNECT_DESC = [
   'Pass exactly one identity key: Claude Code passes `ui_pid=$PPID`; ' +
     'Codex CLI and Mac Codex App pass ' +
     '`thread_id=$CODEX_THREAD_ID`; opencode passes ' +
-    '`base_url=$OPENCODE_XATS_BASE_URL` (and optionally `session_id`).',
+    '`base_url=$OPENCODE_XATS_BASE_URL` (and optionally `session_id`); ' +
+    'kimi-code passes `agent_type="kimi-code"`, ' +
+    '`base_url=$KIMI_XATS_BASE_URL`, plus a REQUIRED ' +
+    '`session_id=$KIMI_XATS_SESSION_ID`.',
   'Claude Code lookup uses local `runtime_ui_pid` and reuses the existing ' +
     'channel and pane binding paths.',
   'For Codex CLI and Mac Codex App, `CODEX_THREAD_ID` is the stable ' +
@@ -185,6 +191,23 @@ const RECONNECT_DESC = [
     'candidates mix ref and no-ref rows — in either case `detail.refs` lists ' +
     'only the known non-empty refs (possibly a single element in the mixed ' +
     'case); supply `auth_token_ref` explicitly to resolve.',
+  'kimi-code lookup uses the local `kimi-server` delivery ' +
+    '(base_url, session_id) pair. Pass `agent_type="kimi-code"` — it is the ' +
+    'runtime discriminator for the base_url arm; without it a kimi reconnect ' +
+    'is routed by local row residency and, when no rows match, falls to the ' +
+    'opencode probe with opencode-flavored errors instead of ' +
+    '`need_register`. `session_id` is REQUIRED for the kimi ' +
+    'path — the daemon never auto-resolves a kimi session by ' +
+    'recency, because several kimi sessions routinely share a workDir and ' +
+    'binding the wrong one misdelivers pokes while reporting success. The ' +
+    'daemon revalidates via GET <base_url>/api/v1/sessions/<session_id> with ' +
+    'the poke dispatcher\'s bearer resolution (stored auth_token_ref, else ' +
+    'the kimi token file) before reusing the identity; a missing/archived ' +
+    'session or failed probe returns `session_not_found` and no row is ' +
+    'mutated. On success the connection shares with live engine connections ' +
+    'of the same session instead of taking over. In the common case the ' +
+    'whole recovery is restarting the TUI: the launcher re-exports ' +
+    'KIMI_XATS_BASE_URL / KIMI_XATS_SESSION_ID.',
   'On a single match: returns { ok, agent_id, name, team, last_seen_at } ' +
     'plus the runtime-specific delivery fields.',
   'On zero matches: returns { need_register, reason } — reconnect does NOT ' +
@@ -463,7 +486,7 @@ export function registerBusinessTools(
     ws_url: z.string().optional(),
     auth_token_ref: z.string().min(1).optional(),
     base_url: z.string().min(1).refine(v => v.trim().length > 0, { message: 'base_url must not be empty' }).optional(),
-    session_id: z.string().min(1).refine(v => v.trim().length > 0, { message: 'session_id must not be empty' }).optional(),
+    session_id: z.string().trim().min(1, { message: 'session_id must not be empty' }).optional(),
     claude_ui_pid: z.number().int().positive().optional().describe(
       "Internal field for the cross-agent-teams-mcp channel proxy.  Stores the proxy's parent Claude Code UI pid (`process.ppid`) so that Claude Code hosts registering in the same lineage can auto-bind their claude-channel delivery.  Only valid when role='__channel_proxy__'; rejected otherwise."
     ),
@@ -571,13 +594,20 @@ export function registerBusinessTools(
             + 'Read it from $KIMI_XATS_BASE_URL (set by the xats-kimi launcher).',
         })
       } else {
-        let parsedUrl: URL | null = null
-        try { parsedUrl = new URL(value.base_url) } catch { /* invalid */ }
-        if (!parsedUrl || (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:')) {
+        const issue = kimiBaseUrlIssue(value.base_url)
+        if (issue === 'unparseable' || issue === 'not_http') {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['base_url'],
             message: 'base_url must be a parseable http:// or https:// URL when agent_type="kimi-code".',
+          })
+        } else if (issue !== undefined) {
+          // Kimi endpoints are built by appending /api/v1/... to base_url;
+          // a query/hash/userinfo component would corrupt every request URL.
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['base_url'],
+            message: 'base_url must not carry a query, fragment, or userinfo when agent_type="kimi-code".',
           })
         }
       }
@@ -683,6 +713,10 @@ export function registerBusinessTools(
       args.base_url !== undefined &&
       args.session_id !== undefined
     ) {
+      // Canonical at the write boundary: the share key and the reconnect
+      // lookup both compare canonical URLs, so equivalent spellings of the
+      // same endpoint must persist identically.
+      const kimiBaseUrl = canonicalKimiBaseUrl(args.base_url)
       const kimiRes = registerSvc.register({
         connection_id: connectionId,
         agent_type: 'kimi-code',
@@ -695,7 +729,7 @@ export function registerBusinessTools(
         delivery: {
           kind: 'kimi-server',
           session_id: args.session_id,
-          base_url: args.base_url,
+          base_url: kimiBaseUrl,
           ...(args.auth_token_ref === undefined
             ? {}
             : { auth_token_ref: args.auth_token_ref }),
@@ -710,7 +744,7 @@ export function registerBusinessTools(
         return {
           ...kimiRes,
           session_id: args.session_id,
-          base_url: args.base_url,
+          base_url: kimiBaseUrl,
         }
       }
       return kimiRes
@@ -975,12 +1009,15 @@ export function registerBusinessTools(
     }, {
       message: 'base_url must be a parseable http:// or https:// URL',
     }).optional().describe(
-      'opencode server base URL (`$OPENCODE_XATS_BASE_URL`).'
+      'opencode or kimi server base URL (`$OPENCODE_XATS_BASE_URL` / `$KIMI_XATS_BASE_URL`).'
     ),
-    session_id: z.string().min(1).refine(v => v.startsWith('ses'), {
-      message: 'session_id must start with "ses"',
+    session_id: z.string().trim().min(1, {
+      message: 'session_id must not be blank',
     }).optional().describe(
-      'opencode session id. If omitted, the daemon resolves the most recently updated session from <base_url>/session before reverse-look-up.'
+      'opencode or kimi session id. For opencode it may be omitted: the daemon resolves the most recently updated session from <base_url>/session before reverse-look-up (opencode ids must start with "ses"). For kimi-code it is REQUIRED (`$KIMI_XATS_SESSION_ID`) and only needs to be non-blank — registration never enforced a prefix, so reconnect must not either; kimi sessions are never auto-resolved.'
+    ),
+    agent_type: z.enum(['opencode', 'kimi-code']).optional().describe(
+      'Runtime discriminator for the base_url arm. REQUIRED as "kimi-code" for kimi recovery: without it a kimi reconnect on a registry with no matching rows is routed to the opencode probe and returns opencode-flavored errors instead of need_register. Optional for opencode.'
     ),
   }).strict()
 
@@ -1014,6 +1051,44 @@ export function registerBusinessTools(
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'auth_token_ref requires thread_id or base_url',
+      })
+    }
+    if (value.agent_type !== undefined && value.base_url === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'agent_type requires base_url',
+      })
+    }
+    if (value.agent_type === 'kimi-code' && value.session_id === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'session_id is required when agent_type="kimi-code"',
+      })
+    }
+    if (value.agent_type === 'kimi-code' && value.base_url !== undefined) {
+      const issue = kimiBaseUrlIssue(value.base_url)
+      if (issue === 'query_or_fragment' || issue === 'userinfo') {
+        // Same boundary rule as registration: kimi endpoint URLs are built
+        // by appending /api/v1/... to base_url. Unparseable/non-http URLs
+        // are already rejected by the base_url field schema.
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'base_url must not carry a query, fragment, or userinfo when agent_type="kimi-code"',
+        })
+      }
+    }
+    // The "ses" prefix is an opencode contract; kimi registration only
+    // requires a non-empty id, so an explicit kimi reconnect must accept
+    // whatever was registrable. Legacy calls without agent_type keep the
+    // historical opencode-arm validation.
+    if (
+      value.session_id !== undefined
+      && value.agent_type !== 'kimi-code'
+      && !value.session_id.startsWith('ses')
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'session_id must start with "ses"',
       })
     }
   })
@@ -1209,6 +1284,87 @@ export function registerBusinessTools(
     }
   }
 
+  function readStoredKimiAuth(agent_id: string): string | undefined {
+    const existing = agents.findById(agent_id)
+    if (
+      existing
+      && existing.delivery.kind === 'kimi-server'
+      && existing.delivery.auth_token_ref
+    ) {
+      return existing.delivery.auth_token_ref
+    }
+    return undefined
+  }
+
+  // The base_url arm is shared between opencode and kimi. A kimi recovery
+  // requires an explicit session_id (never resolved by recency), and applies
+  // when local kimi-server rows claim the pair — or the base_url hosts only
+  // kimi rows, so a stale session_id still gets the kimi need_register answer.
+  function kimiReconnectApplies(
+    base_url: string,
+    session_id: string,
+    localDevice: string
+  ): boolean {
+    // kimi rows persist canonical base_urls; the opencode lookup keeps the
+    // caller's spelling (opencode rows are not canonicalized).
+    const kimiUrl = canonicalKimiBaseUrl(base_url)
+    if (agents.findByKimiSession(kimiUrl, session_id, localDevice).length > 0) {
+      return true
+    }
+    return agents.findByKimiBaseUrl(kimiUrl, localDevice).length > 0
+      && agents.findByOpencodeBaseUrl(base_url, localDevice).length === 0
+  }
+
+  async function executeKimiReconnect(args: {
+    base_url: string
+    session_id: string
+    auth_token_ref?: string
+  }): Promise<unknown> {
+    const localDevice = context?.localDevice ?? 'local'
+    // Same canonicalizer as registration: equivalent URL spellings must find
+    // the row that registration persisted.
+    const base_url = canonicalKimiBaseUrl(args.base_url)
+    const resolution = resolveKimiReconnect(
+      agents, base_url, args.session_id, localDevice
+    )
+    if (resolution.kind !== 'single') return unresolvedReconnect(resolution)
+    const match = resolution.match
+
+    const authTokenRef = args.auth_token_ref ?? readStoredKimiAuth(match.agent_id)
+    const probe = await validateKimiSession({
+      base_url,
+      session_id: args.session_id,
+      auth_token_ref: authTokenRef,
+    })
+    if ('error' in probe) return probe
+
+    // Registers with agent_type=kimi-code and the validated kimi-server
+    // delivery, so the connection rebinds under the kimi runtime key
+    // (base_url + session_id) and SHARES with live engine connections of
+    // that session.
+    const res = await executeRegister({
+      agent_type: 'kimi-code',
+      name: match.name,
+      team: match.team,
+      device: match.device,
+      role: match.role,
+      base_url,
+      session_id: args.session_id,
+      auth_token_ref: authTokenRef,
+    })
+    if (typeof res !== 'object' || res === null || !('agent_id' in res)) return res
+    const envelope = res as { agent_id: string; team: string }
+    return {
+      ok: true,
+      agent_id: envelope.agent_id,
+      name: match.name,
+      team: envelope.team,
+      session_id: args.session_id,
+      base_url,
+      last_seen_at: match.last_seen_at,
+    }
+  }
+
   async function executeReconnect(args: {
     ui_pid?: number
     thread_id?: string
@@ -1216,6 +1372,7 @@ export function registerBusinessTools(
     auth_token_ref?: string
     base_url?: string
     session_id?: string
+    agent_type?: 'opencode' | 'kimi-code'
   }): Promise<unknown> {
     if (args.ui_pid !== undefined) {
       return executeClaudeReconnect(args.ui_pid)
@@ -1224,6 +1381,38 @@ export function registerBusinessTools(
       return executeCodexReconnect({
         thread_id: args.thread_id,
         ws_url: args.ws_url,
+        auth_token_ref: args.auth_token_ref,
+      })
+    }
+    // Explicit runtime discriminator wins: it keeps a kimi reconnect on an
+    // empty/mixed registry deterministic (need_register, never an opencode
+    // probe). The row-residency heuristic below survives only as a safety
+    // net for base_url callers that predate agent_type.
+    if (args.agent_type === 'kimi-code') {
+      return executeKimiReconnect({
+        base_url: args.base_url!,
+        session_id: args.session_id!,
+        auth_token_ref: args.auth_token_ref,
+      })
+    }
+    if (args.agent_type === 'opencode') {
+      return executeOpencodeReconnect({
+        base_url: args.base_url!,
+        session_id: args.session_id,
+        auth_token_ref: args.auth_token_ref,
+      })
+    }
+    if (
+      args.session_id !== undefined &&
+      kimiReconnectApplies(
+        args.base_url!,
+        args.session_id,
+        context?.localDevice ?? 'local'
+      )
+    ) {
+      return executeKimiReconnect({
+        base_url: args.base_url!,
+        session_id: args.session_id,
         auth_token_ref: args.auth_token_ref,
       })
     }
@@ -1248,6 +1437,7 @@ export function registerBusinessTools(
       auth_token_ref?: string
       base_url?: string
       session_id?: string
+      agent_type?: 'opencode' | 'kimi-code'
     }) => {
       return run(async () => executeReconnect(reconnectArgsSchema.parse(args)))
     }

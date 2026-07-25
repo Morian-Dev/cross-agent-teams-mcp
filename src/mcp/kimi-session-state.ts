@@ -7,6 +7,19 @@ type FetchLike = typeof globalThis.fetch
 /** A TUI-side turn appends to wire.jsonl continuously while it executes. */
 export const TUI_RECENT_WRITE_WINDOW_MS = 10_000
 
+/**
+ * Observation ceiling for near-window proceed records (kimi_poke_proceeded):
+ * a proceed whose wire age is below it carries the age for logging as a
+ * potential near-miss of the busy gate. Observation only — it never converts
+ * a proceed into a deferral.
+ */
+export const DEFAULT_WIRE_AGE_OBSERVE_MS = 120_000
+
+function wireAgeObserveCeilingMs(env: NodeJS.ProcessEnv): number {
+  const n = Number(env.KIMI_WIRE_AGE_OBSERVE_MS)
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_WIRE_AGE_OBSERVE_MS
+}
+
 export const DEFAULT_KIMI_SESSIONS_ROOT = join(homedir(), '.kimi-code', 'sessions')
 
 /** Absent fields mean "the probe could not answer" and MUST fail open. */
@@ -16,7 +29,7 @@ export interface KimiSessionSignal {
 }
 
 export type KimiPrecheckDecision =
-  | { decision: 'proceed' }
+  | { decision: 'proceed'; wire_age_ms?: number }
   | { decision: 'defer'; reason: 'main_turn_active' | 'tui_recent_write' }
   | { decision: 'pending_interaction'; pending_interaction: string }
 
@@ -33,7 +46,16 @@ export function kimiSessionUrl(base_url: string, session_id: string): string {
   return `${base_url.replace(/\/+$/, '')}/api/v1/sessions/${encodeURIComponent(session_id)}`
 }
 
-function parseEnvelopeData(bodyText: string): Record<string, unknown> | undefined {
+export { canonicalKimiBaseUrl } from '../lib/kimi-url.js'
+
+/**
+ * Unwrap a kimi REST envelope. Returns undefined for unparseable bodies and
+ * non-zero `code` error envelopes; callers decide whether that fails open
+ * (busy gate) or closed (reconnect revalidation).
+ */
+export function parseEnvelopeData(
+  bodyText: string
+): Record<string, unknown> | undefined {
   if (bodyText === '') return undefined
   let parsed: unknown
   try {
@@ -48,6 +70,34 @@ function parseEnvelopeData(bodyText: string): Record<string, unknown> | undefine
   const data = root.data
   if (typeof data === 'object' && data !== null) return data as Record<string, unknown>
   return root
+}
+
+/**
+ * Strict envelope variant for fail-closed callers (reconnect revalidation):
+ * the body must be a real kimi success envelope — object root, `code` exactly
+ * 0, and an object (non-array) `data`. No root fallback: a bare 2xx JSON
+ * object is not proof that the server recognized the session.
+ */
+export function parseStrictEnvelopeData(
+  bodyText: string
+): Record<string, unknown> | undefined {
+  if (bodyText === '') return undefined
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(bodyText)
+  } catch {
+    return undefined
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return undefined
+  }
+  const root = parsed as Record<string, unknown>
+  if (root.code !== 0) return undefined
+  const data = root.data
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    return undefined
+  }
+  return data as Record<string, unknown>
 }
 
 /**
@@ -107,6 +157,27 @@ function findWireLog(sessionsRoot: string, sessionId: string): string | undefine
 }
 
 /**
+ * Age of the session's wire log in milliseconds, or undefined when the log is
+ * missing or unreadable ("no signal").
+ */
+export function wireLogAgeMs(args: {
+  session_id: string
+  sessionsRoot?: string
+  now?: number
+}): number | undefined {
+  const root = args.sessionsRoot ?? DEFAULT_KIMI_SESSIONS_ROOT
+  const path = findWireLog(root, args.session_id)
+  if (!path) return undefined
+  let mtimeMs: number
+  try {
+    mtimeMs = statSync(path).mtimeMs
+  } catch {
+    return undefined
+  }
+  return (args.now ?? Date.now()) - mtimeMs
+}
+
+/**
  * Heuristic for "a turn is running in the TUI", which the REST probe cannot
  * observe. Only the path is coupled, not the file format. A missing or
  * unreadable log is "no signal" (false), never a deferral.
@@ -117,18 +188,10 @@ export function isWireLogRecent(args: {
   now?: number
   windowMs?: number
 }): boolean {
-  const root = args.sessionsRoot ?? DEFAULT_KIMI_SESSIONS_ROOT
-  const path = findWireLog(root, args.session_id)
-  if (!path) return false
-  let mtimeMs: number
-  try {
-    mtimeMs = statSync(path).mtimeMs
-  } catch {
-    return false
-  }
-  const now = args.now ?? Date.now()
+  const age = wireLogAgeMs(args)
+  if (age === undefined) return false
   const windowMs = args.windowMs ?? TUI_RECENT_WRITE_WINDOW_MS
-  return now - mtimeMs < windowMs
+  return age < windowMs
 }
 
 /**
@@ -141,6 +204,7 @@ export function createKimiSessionPrecheck(opts: {
   sessionsRoot?: string
   now?: () => number
   windowMs?: number
+  env?: NodeJS.ProcessEnv
 } = {}): KimiPrecheckFn {
   return async (args) => {
     const signal = await probeKimiSessionState(args)
@@ -153,13 +217,20 @@ export function createKimiSessionPrecheck(opts: {
     if (signal.main_turn_active === true) {
       return { decision: 'defer', reason: 'main_turn_active' }
     }
-    const recent = isWireLogRecent({
+    const age = wireLogAgeMs({
       session_id: args.session_id,
       sessionsRoot: opts.sessionsRoot,
       now: opts.now?.(),
-      windowMs: opts.windowMs,
     })
-    if (recent) return { decision: 'defer', reason: 'tui_recent_write' }
-    return { decision: 'proceed' }
+    const windowMs = opts.windowMs ?? TUI_RECENT_WRITE_WINDOW_MS
+    if (age !== undefined && age < windowMs) {
+      return { decision: 'defer', reason: 'tui_recent_write' }
+    }
+    // A below-ceiling age rides along for observability only
+    // (kimi_poke_proceeded); the proceed decision is already made here.
+    const ceilingMs = wireAgeObserveCeilingMs(opts.env ?? process.env)
+    return age !== undefined && age < ceilingMs
+      ? { decision: 'proceed', wire_age_ms: age }
+      : { decision: 'proceed' }
   }
 }

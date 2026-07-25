@@ -401,6 +401,8 @@ launcher 做的事:
 
 agent 会自动检测 `$KIMI_XATS_BASE_URL`, 选 `agent_type="kimi-code"`, 把 env 值作为 `base_url` 传过去, 并直接从 `$KIMI_XATS_SESSION_ID` 读 `session_id` — 不需要猜测.  poke 时 daemon 从 `~/.kimi-code/server.token` 读 bearer token (`kimi web` 跨重启持久化, `kimi web rotate-token` 可以让旧 token 立即失效); 只有非默认 token 部署才需要传 `auth_token_ref` (env 变量名).  注册时不做健康检查: 如果 poke 时服务器没在跑, poke 以 `kimi_connect_failed` 失败, 由 mailbox 重试机制接管.
 
+**同一个 kimi session 的两条 MCP 连接共存, 不互相顶掉.**  kimi 的双引擎架构让一个逻辑 agent 拥有两条 MCP 连接: TUI 的进程内引擎, 和跑 poke 唤醒 turn 的 server 引擎.  server 侧 turn 醒来时未绑定, 会用同一个名字 re-register; 由于两次注册都声明 `agent_type="kimi-code"` 且 `(base_url, session_id)` 二元组相同 (base URL 按 canonical 形式比较 —— 大小写、默认端口、尾斜杠都不影响), daemon 把它们当作同一 runtime 身份的并发连接 —— re-register 不会关闭 TUI 那条连接.  server 引擎每条新 MCP session 上第一次 `unknown_agent` → register 依然是预期且正确的; 只有*不同的* session (另一个 `session_id`, 或同名 id 出现在真正不同的 server 上) 抢占同名身份时才执行真正的 takeover 并关闭旧连接.  context clear 后丢了身份: 用 `reconnect({ agent_type: "kimi-code", base_url, session_id })` 找回 —— `agent_type` 让分派变得确定 (空注册表直接回 `need_register`, 而不是去探测 opencode server), `session_id` 必传 (kimi session 永不按最近使用自动解析), daemon 会先向 kimi server 复验该 session (返回必须指认这个 session 本身且未归档) 再重绑, 恢复的连接与同 session 的在线引擎连接共享绑定.  最常见的恢复方式就是重启 TUI: `xats-kimi` 会重新导出 `KIMI_XATS_BASE_URL` / `KIMI_XATS_SESSION_ID`.
+
 如果你直接用 `kimi` 启动 (没用 wrapper), 两个 env 变量都缺失, agent 会回退到 `agent_type="custom"` 加 `agent_type_name="kimi-code"`, poke 通过 tmux pane 注入投递 (见下一节).
 
 已知限制 (kimi 侧的问题, 不是 xats 的), 在 kimi 0.28.0 上依然存在: poke 通过 server 驱动的 turn 唤醒 session, 但 kimi TUI 不会实时刷新自己被 server 驱动的 session — 被唤醒的 turn (收信, 回复等) 要重新加载 session 后才会出现在 TUI 记录里.  活照样干了, 只是少了实时显示.  想实时围观 poke 驱动的 turn 的话, 用 `kimi web` 打开同一个 session.
@@ -417,6 +419,8 @@ agent 会自动检测 `$KIMI_XATS_BASE_URL`, 选 `agent_type="kimi-code"`, 把 e
 `kimi_session_busy` (无论来自这个门, 还是来自 `POST /prompts` 自己回的 `SESSION_BUSY` 拒绝) 会按 tmux 路径同一套梯度重试 —— **30s / 180s / 600s**, 每次都重新跑一遍完整的前置检查.  `kimi_pending_interaction` **不重试**: 没人应答的审批会让 turn 一直挂着, 重试只是白白烧掉梯度.  梯度耗尽后 daemon 什么都不做: 不强行注入, 不回落 tmux.  消息发出时 mailbox 行就已经落库了, agent 下次 `get_inbox` 照样看得到 —— 唤醒是对它的优化, 不是投递手段本身.
 
 **两个盲区, 明说.**  REST 探测看不见 TUI: `busy` 和 `main_turn_active` 只反映 kimi **server** 进程里的引擎, 而你在 TUI 里跑的 turn 走的是 TUI 自己的进程内引擎 —— 跟上面"不实时刷新"是同一个双引擎根因.  wire 日志 mtime 就是为这种情况打的启发式补丁, 文件缺失或读不到时 fail open (照常注入).  另外这个门是 check-then-inject, 永远不是原子的: 探测和 POST 之间仍可能起一个 turn.  两个探测输入都刻意 fail open, 所以探测答不上来时退化成改动前的无门行为, 而不是投递中断.  这是缓解, 不是保证; 真正的修法是 kimi 上游把 TUI 收敛到 server 引擎上.
+
+**门的判定会在 daemon log 里留痕.**  每次推迟都会输出一条结构化记录 `{"event":"kimi_poke_deferred","session_id":…,…}`, 带上子原因 (`main_turn_active` / `tui_recent_write` / `session_busy_response`, 或具体的 pending interaction).  放行时如果 wire 日志的 age 低于观察上限 (默认 120s, 用 `KIMI_WIRE_AGE_OBSERVE_MS` 改), 会额外输出 `{"event":"kimi_poke_proceeded","session_id":…,"wire_age_ms":…}` —— 这是"注入可能恰好撞上 TUI turn 思考间隙"那类 near-miss 的可观测影子.  这个上限只用于观察, 永远不改变注入/推迟的判定; 空闲 session (没有 wire 日志, 或 age 达到上限) 什么都不记.  两类记录合起来, 为将来调 10s 窗口提供双侧证据.
 
 **跑很久的注入 turn 只记日志, 绝不中止.**  注入成功后 daemon 会记下返回的 prompt id, 超过阈值 (默认 10 分钟, 用 `XATS_KIMI_PROMPT_OBSERVE_MS` 改) 后检查这个 prompt 是否还在跑, 还在就打一条日志.  它不会去停这个 turn, 也不提供停的开关.  用时长判断"卡住"是错的判据: 这个项目里被 poke 唤醒的 turn 干真活跑过五分钟很常见, 而触发这次改动的失控案例特征是**毫无进展** —— 每 ~10 秒重复一模一样的 TodoList 轮次.  按时长中止会稳定地杀掉健康的那种, 只是顺带撞上生病的那种.
 

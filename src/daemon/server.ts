@@ -130,7 +130,13 @@ export interface StartServerResult {
 }
 
 export async function startServer(opts: StartOpts): Promise<StartServerResult> {
-  const app = await buildServer(opts)
+  // The daemon process entry supplies no mcpLog, so default the sink to the
+  // same stream as the startup banner (stdout, which the launchers append to
+  // the daemon log file). Leaving it unset silently discards every session
+  // created/closed/takeover/reap line the transport already emits. Embedded
+  // buildServer callers (library use, unit tests) stay silent by default.
+  const mcpLog = opts.mcpLog ?? ((line: string) => { console.log(line) })
+  const app = await buildServer({ ...opts, mcpLog })
   const host = opts.host ?? '127.0.0.1'
 
   // Hook for the loopback companion's graceful close. Registered BEFORE

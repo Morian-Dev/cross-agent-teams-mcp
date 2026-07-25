@@ -57,6 +57,21 @@ function isSessionBusyRejection(bodyText: string): boolean {
   return bodyText.includes('SESSION_BUSY')
 }
 
+// Gate records are observation-only: a throwing sink must never block or
+// abort the delivery path it is describing.
+function emitGateRecord(
+  logGate: KimiServerDispatchDeps['logGate'],
+  record: Record<string, unknown>
+): void {
+  try {
+    logGate?.(record)
+  } catch (error) {
+    console.error(
+      `kimi gate log sink failed: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+}
+
 function extractPromptId(bodyText: string): string | undefined {
   if (bodyText === '') return undefined
   let parsed: unknown
@@ -113,7 +128,7 @@ export async function dispatchKimiServerPoke(
       fetch: fetchImpl,
     })
     if (decision.decision === 'pending_interaction') {
-      deps.logGate?.({
+      emitGateRecord(deps.logGate, {
         event: 'kimi_poke_deferred',
         session_id: input.delivery.session_id,
         outcome: 'kimi_pending_interaction',
@@ -126,7 +141,7 @@ export async function dispatchKimiServerPoke(
       }
     }
     if (decision.decision === 'defer') {
-      deps.logGate?.({
+      emitGateRecord(deps.logGate, {
         event: 'kimi_poke_deferred',
         session_id: input.delivery.session_id,
         outcome: 'kimi_session_busy',
@@ -137,6 +152,16 @@ export async function dispatchKimiServerPoke(
         detail: { reason: decision.reason },
         transport_used: 'kimi-server',
       }
+    }
+    // The precheck attaches wire_age_ms only when the age is below the
+    // observation ceiling, so presence alone means "log the near-window
+    // proceed". The record never affects the injection below.
+    if (decision.wire_age_ms !== undefined) {
+      emitGateRecord(deps.logGate, {
+        event: 'kimi_poke_proceeded',
+        session_id: input.delivery.session_id,
+        wire_age_ms: decision.wire_age_ms,
+      })
     }
   }
 
@@ -172,7 +197,7 @@ export async function dispatchKimiServerPoke(
   }
 
   if (isSessionBusyRejection(bodyText)) {
-    deps.logGate?.({
+    emitGateRecord(deps.logGate, {
       event: 'kimi_poke_deferred',
       session_id: input.delivery.session_id,
       outcome: 'kimi_session_busy',

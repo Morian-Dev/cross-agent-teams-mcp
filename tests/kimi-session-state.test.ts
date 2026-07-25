@@ -6,6 +6,8 @@ import {
   probeKimiSessionState,
   isWireLogRecent,
   createKimiSessionPrecheck,
+  canonicalKimiBaseUrl,
+  parseStrictEnvelopeData,
   TUI_RECENT_WRITE_WINDOW_MS,
 } from '../src/mcp/kimi-session-state.js'
 
@@ -250,5 +252,49 @@ describe('createKimiSessionPrecheck', () => {
       sessionsRoot: makeSessionsRoot({ create: false }),
     })
     expect(await run()).toEqual({ decision: 'proceed' })
+  })
+})
+
+describe('canonicalKimiBaseUrl', () => {
+  it('lowercases scheme/host and drops the default port and trailing slashes', () => {
+    expect(canonicalKimiBaseUrl('HTTP://LOCALHOST:80/')).toBe('http://localhost')
+    expect(canonicalKimiBaseUrl('http://localhost')).toBe('http://localhost')
+    expect(canonicalKimiBaseUrl('HTTPS://Example.COM:443/')).toBe('https://example.com')
+  })
+
+  it('keeps non-default ports and preserves query strings, stripping hashes', () => {
+    expect(canonicalKimiBaseUrl('HTTP://127.0.0.1:58627/')).toBe('http://127.0.0.1:58627')
+    expect(canonicalKimiBaseUrl('http://h:1234/x/?a=1#frag')).toBe('http://h:1234/x/?a=1')
+    // Slash-trimming must never eat query content (queries are schema-rejected
+    // on the public paths, but the canonicalizer stays safe for direct calls).
+    expect(canonicalKimiBaseUrl('http://h/x?a=1/')).toBe('http://h/x?a=1/')
+  })
+
+  it('strips a dangling "?" (empty search kept in href by WHATWG URL)', () => {
+    expect(canonicalKimiBaseUrl('http://127.0.0.1:58627/?')).toBe('http://127.0.0.1:58627')
+    expect(canonicalKimiBaseUrl('http://127.0.0.1:58627/?#')).toBe('http://127.0.0.1:58627')
+  })
+
+  it('falls back to trailing-slash trimming on unparseable input', () => {
+    expect(canonicalKimiBaseUrl('not a url//')).toBe('not a url')
+  })
+})
+
+describe('parseStrictEnvelopeData', () => {
+  it('accepts only a code-0 envelope with object data', () => {
+    expect(
+      parseStrictEnvelopeData(JSON.stringify({ code: 0, msg: 'ok', data: { id: 'session_x' } }))
+    ).toEqual({ id: 'session_x' })
+  })
+
+  it('rejects root fallbacks and malformed envelopes', () => {
+    expect(parseStrictEnvelopeData(JSON.stringify({ id: 'session_x' }))).toBeUndefined()
+    expect(parseStrictEnvelopeData(JSON.stringify({ code: 0, data: null }))).toBeUndefined()
+    expect(parseStrictEnvelopeData(JSON.stringify({ code: 0, data: [] }))).toBeUndefined()
+    expect(parseStrictEnvelopeData(JSON.stringify({ code: 1, data: { id: 'session_x' } }))).toBeUndefined()
+    expect(parseStrictEnvelopeData(JSON.stringify({ data: { id: 'session_x' } }))).toBeUndefined()
+    expect(parseStrictEnvelopeData('')).toBeUndefined()
+    expect(parseStrictEnvelopeData('[]')).toBeUndefined()
+    expect(parseStrictEnvelopeData('not json')).toBeUndefined()
   })
 })

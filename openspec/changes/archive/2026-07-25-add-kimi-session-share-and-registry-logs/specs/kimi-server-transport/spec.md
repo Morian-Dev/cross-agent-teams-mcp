@@ -8,6 +8,14 @@ Rationale, stated so the record is not later "optimized away": a missed deferral
 
 The ceiling is an observation filter only. It MUST NOT influence the inject/defer decision, and proceeds with no wire log or an age at or above the ceiling MUST log nothing (idle sessions stay quiet).
 
+The gate-logging sink itself is observation-only in the same sense: a sink that throws MUST NOT block or abort the injection (nor any other dispatch outcome) — the dispatcher SHALL contain the failure (e.g. log it to stderr) and proceed.
+
+#### Scenario: A throwing log sink does not block delivery
+
+- **GIVEN** a gate-logging sink that throws on every record
+- **WHEN** the gate proceeds with a near-window wire age and the poke is injected
+- **THEN** the POST to the kimi server still happens and the dispatch result is unchanged
+
 #### Scenario: A near-window proceed is recorded
 
 - **GIVEN** the gate proceeds and the session's wire log was last written 14 seconds ago

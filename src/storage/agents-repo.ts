@@ -7,6 +7,7 @@ import {
   type DeliveryRow,
 } from '../lib/delivery-spec.js'
 import type { AgentType } from '../lib/agent-type.js'
+import { canonicalKimiBaseUrl } from '../lib/kimi-url.js'
 import { isAlive } from '../daemon/pid.js'
 
 export interface RegisterInput {
@@ -56,6 +57,8 @@ export interface RuntimeUiPidMatch {
 export type CodexThreadMatch = RuntimeUiPidMatch
 
 export type OpencodeSessionMatch = RuntimeUiPidMatch
+
+export type KimiSessionMatch = RuntimeUiPidMatch
 
 export const REACHABLE_MS = 4 * 24 * 60 * 60 * 1000
 
@@ -200,6 +203,76 @@ export class AgentsRepo {
          END = rtrim(?, '/')
        ORDER BY last_seen_at DESC`
     ).all(localDevice, base_url) as OpencodeSessionMatch[]
+  }
+
+  /**
+   * Precise kimi reverse lookup. base_url compared via the shared kimi
+   * canonicalizer in JS (not SQL rtrim) so rows persisted before URL
+   * canonicalization — case/default-port/slash variants — still match;
+   * scoped to localDevice (remote servers unreachable here).
+   */
+  findByKimiSession(
+    base_url: string,
+    session_id: string,
+    localDevice: string
+  ): KimiSessionMatch[] {
+    const target = canonicalKimiBaseUrl(base_url)
+    const rows = this.db.prepare(
+      `SELECT agent_id, device, team, name, role, last_seen_at,
+         CASE
+           WHEN json_valid(delivery_payload)
+           THEN json_extract(delivery_payload, '$.base_url')
+         END AS payload_base_url
+       FROM agents
+       WHERE device = ?
+         AND role != '__channel_proxy__'
+         AND delivery_kind = 'kimi-server'
+         AND CASE
+           WHEN json_valid(delivery_payload)
+           THEN json_extract(delivery_payload, '$.session_id')
+         END = ?
+       ORDER BY last_seen_at DESC`
+    ).all(localDevice, session_id) as Array<
+      KimiSessionMatch & { payload_base_url: string | null }
+    >
+    return rows
+      .filter(row =>
+        typeof row.payload_base_url === 'string'
+        && canonicalKimiBaseUrl(row.payload_base_url) === target
+      )
+      .map(({ payload_base_url: _url, ...match }) => match)
+  }
+
+  /**
+   * Broad base_url-only kimi lookup. Used to decide whether a reconnect
+   * base_url targets a kimi server; never used to auto-pick a session.
+   * Same canonical JS comparison as findByKimiSession.
+   */
+  findByKimiBaseUrl(
+    base_url: string,
+    localDevice: string
+  ): KimiSessionMatch[] {
+    const target = canonicalKimiBaseUrl(base_url)
+    const rows = this.db.prepare(
+      `SELECT agent_id, device, team, name, role, last_seen_at,
+         CASE
+           WHEN json_valid(delivery_payload)
+           THEN json_extract(delivery_payload, '$.base_url')
+         END AS payload_base_url
+       FROM agents
+       WHERE device = ?
+         AND role != '__channel_proxy__'
+         AND delivery_kind = 'kimi-server'
+       ORDER BY last_seen_at DESC`
+    ).all(localDevice) as Array<
+      KimiSessionMatch & { payload_base_url: string | null }
+    >
+    return rows
+      .filter(row =>
+        typeof row.payload_base_url === 'string'
+        && canonicalKimiBaseUrl(row.payload_base_url) === target
+      )
+      .map(({ payload_base_url: _url, ...match }) => match)
   }
 
   register(input: RegisterInput): {

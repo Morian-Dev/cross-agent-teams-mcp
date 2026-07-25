@@ -1,3 +1,5 @@
+import { kimiBaseUrlIssue } from './kimi-url.js';
+
 export type DeliveryNone = {
   kind: 'none';
 };
@@ -277,6 +279,12 @@ export function validateDeliveryForWrite(input: unknown): ValidateDeliveryResult
 
     const baseUrl = readTrimmedString(record, 'base_url');
     if (baseUrl === undefined || baseUrl.length === 0) {
+      return { error: 'invalid_delivery', reason: 'invalid_base_url' };
+    }
+    // The persistence boundary enforces the same URL invariant as the tool
+    // schemas: a delivery-object register (e.g. agent_type=custom) must not
+    // be able to store a kimi base_url no endpoint can be built from.
+    if (kimiBaseUrlIssue(baseUrl) !== undefined) {
       return { error: 'invalid_delivery', reason: 'invalid_base_url' };
     }
     try {

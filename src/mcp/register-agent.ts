@@ -6,6 +6,7 @@ import {
 } from '../lib/delivery-spec.js'
 import type { AgentType } from '../lib/agent-type.js'
 import { deriveDefaultTeam } from '../lib/default-team.js'
+import { canonicalKimiBaseUrl } from './kimi-session-state.js'
 import { AgentsRepo } from '../storage/agents-repo.js'
 import type { SessionOriginInfo } from '../daemon/network-origin.js'
 
@@ -47,10 +48,16 @@ function sharedRuntimeKey(
   agentType: AgentType | undefined,
   delivery: DeliverySpec | undefined
 ): string | undefined {
-  if (agentType !== 'codex' || delivery?.kind !== 'codex-appserver') {
-    return undefined
+  if (agentType === 'codex' && delivery?.kind === 'codex-appserver') {
+    return delivery.thread_id
   }
-  return delivery.thread_id
+  if (agentType === 'kimi-code' && delivery?.kind === 'kimi-server') {
+    // kimi session ids are only unique per server: two connections share a
+    // runtime identity only when BOTH the canonical base_url and the
+    // session_id match; same session_id on another endpoint still takes over.
+    return `${canonicalKimiBaseUrl(delivery.base_url)}\u0000${delivery.session_id}`
+  }
+  return undefined
 }
 
 export function validateNameLabel(name: string): { ok: string } | { error: 'invalid_name_label' } {
@@ -134,11 +141,24 @@ export class RegisterAgentService {
   }
 
   register(input: RegisterInput): RegisterResult {
-    const validated =
+    const rawValidated =
       input.delivery === undefined
         ? undefined
         : validateDeliveryForWrite(input.delivery)
-    if (validated && 'error' in validated) return validated
+    if (rawValidated && 'error' in rawValidated) return rawValidated
+    // Canonicalize at the persistence boundary, not only in the MCP tool
+    // layer: the share key and the reconnect lookup compare canonical URLs,
+    // so service-direct callers must persist the same form.
+    const validated = rawValidated === undefined
+      ? undefined
+      : rawValidated.ok.kind === 'kimi-server'
+        ? {
+            ok: {
+              ...rawValidated.ok,
+              base_url: canonicalKimiBaseUrl(rawValidated.ok.base_url),
+            },
+          }
+        : rawValidated
 
     const role = input.role ?? 'default'
     if (input.claude_ui_pid !== undefined && role !== '__channel_proxy__') {
