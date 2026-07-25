@@ -362,11 +362,11 @@ launcher 做的事:
 - 发一条初始化 prompt, 让 CLI 能挂载 server 创建的 session (否则 kimi 报 `Agent "main" was not found`).
 - `exec kimi --session <id> --yolo "$@"` 用挂了预创建 session 的 kimi TUI 替换当前 shell.
 
-**session 会被复用, 因为它们永远删不掉.**  kimi 的 REST API **没有删除 session 的路由**: 整个接口面只有三个 `DELETE`, 没有一个是 sessions 的; `DELETE /api/v1/workspaces/{id}` 也只是注销 workspace ("does not remove on-disk content"), 它下面的 session 照样列着.  所以"每次调用新建一个"的启动器等于每跑一次就永久泄漏一个.
+**session 永远删不掉 — 所以默认每次新建, 复用需要显式开启.**  kimi 的 REST API **没有删除 session 的路由**: 整个接口面只有三个 `DELETE`, 没有一个是 sessions 的; `DELETE /api/v1/workspaces/{id}` 也只是注销 workspace ("does not remove on-disk content"), 它下面的 session 照样列着.  每次启动新建一个 session 确实会永久泄漏 — 但这仍是默认行为, 因为反过来更糟: 上下文坏掉的 session (比如被卡死的工具调用循环污染) 会在每次复用时准时回来, 而新 session 天然干净.
 
-因此 `xats-kimi` 改成了 find-or-create: 优先复用当前目录对应池子里**最新的空闲** session (标题以 `xats-kimi` 开头且 `metadata.cwd` 等于 `$PWD`), 只有全部被占用时才新建.  池子大小收敛于你在该目录下的**并发峰值**, 而不是累计启动次数.
+需要续用旧 session 时设 `XATS_KIMI_REUSE=1`: `xats-kimi` 会走 find-or-create — 优先复用当前目录对应池子里**最新的空闲** session (标题以 `xats-kimi` 开头且 `metadata.cwd` 等于 `$PWD`), 只有全部被占用时才新建.  池子大小收敛于你在该目录下的**并发峰值**, 而不是累计启动次数.  复用到的 session 如果上下文已经坏了, 归档它 (`POST /api/v1/sessions/<id>:archive`) 即可移出池子.
 
-占用状态只能由启动器自己维护, 因为 kimi 答不了这个问题: `kimi web ps` 和服务端的 `connections` 只统计 web 客户端, TUI 挂载对两者都不可见.  所以认领 session 用的是 `~/.config/xats/kimi-locks` 下 `mkdir` 原子创建的锁目录, 里面存 TUI 的 pid —— `exec` 会用 kimi 替换掉 shell, 所以 `$$` 就是 kimi 进程本身.  pid 已死的锁会在下次启动时被回收, 也就是说 TUI 正常退出或崩溃都会自动释放 session, 不需要清理钩子.  `XATS_KIMI_DRYRUN=1 xats-kimi` 会打印池子里每个 session 的 `OCCUPIED` / `FREE` 状态然后退出, 不认领也不启动.
+复用模式下, 占用状态只能由启动器自己维护, 因为 kimi 答不了这个问题: `kimi web ps` 和服务端的 `connections` 只统计 web 客户端, TUI 挂载对两者都不可见.  所以认领 session 用的是 `~/.config/xats/kimi-locks` 下 `mkdir` 原子创建的锁目录, 里面存 TUI 的 pid —— `exec` 会用 kimi 替换掉 shell, 所以 `$$` 就是 kimi 进程本身.  pid 已死的锁会在下次启动时被回收, 也就是说 TUI 正常退出或崩溃都会自动释放 session, 不需要清理钩子.  `XATS_KIMI_DRYRUN=1 xats-kimi` 会打印池子里每个 session 的 `OCCUPIED` / `FREE` 状态然后退出, 不认领也不启动.
 
 一个注意点: 用裸 `kimi --session <id>` 挂载池子里的 session **不会加锁**, 之后 `xats-kimi` 可能把同一个 session 再交给第二个 TUI.  池子里的 session 只通过 `xats-kimi` 打开.  kimi 没有 session 级的占用 API, 所以这一点没法强制.
 
@@ -405,7 +405,7 @@ agent 会自动检测 `$KIMI_XATS_BASE_URL`, 选 `agent_type="kimi-code"`, 把 e
 
 如果你直接用 `kimi` 启动 (没用 wrapper), 两个 env 变量都缺失, agent 会回退到 `agent_type="custom"` 加 `agent_type_name="kimi-code"`, poke 通过 tmux pane 注入投递 (见下一节).
 
-已知限制 (kimi 侧的问题, 不是 xats 的), 在 kimi 0.28.0 上依然存在: poke 通过 server 驱动的 turn 唤醒 session, 但 kimi TUI 不会实时刷新自己被 server 驱动的 session — 被唤醒的 turn (收信, 回复等) 要重新加载 session 后才会出现在 TUI 记录里.  活照样干了, 只是少了实时显示.  想实时围观 poke 驱动的 turn 的话, 用 `kimi web` 打开同一个 session.
+已知限制 (kimi 侧的问题, 不是 xats 的): poke 通过 server 驱动的 turn 唤醒 session, 但**安装版** kimi TUI 不会实时刷新自己被 server 驱动的 session — 被唤醒的 turn (收信, 回复等) 要重新加载 session 后才会出现在 TUI 记录里.  活照样干了, 只是少了实时显示.  **对 xats 用户这已经解决**: `xats-kimi` 默认启动本地 patched TUI (server-sync observer, `~/workspace/kimi-code` main), 外部 turn 实时可见 (状态栏提示 + 输入排队), turn 结束后自动刷新 transcript.  安装版 TUI 的限制会长期存在 (已决定不向上游提 issue); 在那上面需要实时显示的话, 用 `kimi web` 打开同一个 session.
 
 不要通过问 kimi agent 本人来确认这一点: 它跑在 session **内部**, 通过 session 状态看自己的对话, 而不是通过渲染出来的终端.  你问它 TUI 有没有刷新, 它会如实报告 turn 跑过了, 并回答 "刷新了, 实时可见" —— 而这是它结构上无法观察的断言.  只有人去看真实终端才能判定.
 
