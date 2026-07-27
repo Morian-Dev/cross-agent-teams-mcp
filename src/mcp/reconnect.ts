@@ -56,6 +56,34 @@ export function resolveReconnect(
   return { kind: 'ambiguous', candidates: rows.map(toCandidate) }
 }
 
+/**
+ * Reverse-look-up a prior local identity by the launcher-minted
+ * `identity_key`. `UNIQUE(device, identity_key)` admits at most one row, so
+ * the ambiguous branch is unreachable in practice — it is kept so a somehow
+ * duplicated key surfaces instead of being silently resolved to one row.
+ */
+export function resolveIdentityKeyReconnect(
+  repo: AgentsRepo,
+  identity_key: string,
+  localDevice: string
+): ReconnectResolution {
+  const rows = repo.findByIdentityKey(identity_key, localDevice)
+  if (rows.length === 0) {
+    return {
+      kind: 'need_register',
+      reason:
+        'No local agent holds this identity_key. ' +
+        'There is no prior identity to reconnect; call register_agent to ' +
+        'register a new identity and pass the same identity_key so later ' +
+        'restarts can recover it.',
+    }
+  }
+  if (rows.length === 1) {
+    return { kind: 'single', match: toCandidate(rows[0]) }
+  }
+  return { kind: 'ambiguous', candidates: rows.map(toCandidate) }
+}
+
 export function resolveCodexReconnect(
   repo: AgentsRepo,
   thread_id: string,

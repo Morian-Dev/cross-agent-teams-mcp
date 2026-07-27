@@ -1,4 +1,7 @@
-import type { RegisterAgentService } from './register-agent.js'
+import type {
+  IdentityKeyConflict,
+  RegisterAgentService,
+} from './register-agent.js'
 import { describeError } from './codex-appserver-rpc.js'
 import { opencodeAuthHeaders, type OpencodeAuthResult } from './opencode-auth.js'
 
@@ -15,6 +18,7 @@ export interface RegisterOpencodeSelfInput {
   base_url: string
   session_id?: string
   auth_token_ref?: string
+  identity_key?: string
 }
 
 export type RegisterOpencodeSelfResult =
@@ -37,6 +41,7 @@ export type RegisterOpencodeSelfResult =
   | { error: 'no_active_session'; detail: { base_url: string } }
   | { error: 'session_not_found'; detail: { base_url: string; session_id: string } }
   | { error: 'missing_auth_token'; detail: { ref: string } }
+  | IdentityKeyConflict
 
 export type ResolveOpencodeSessionResult =
   | { session_id: string }
@@ -102,6 +107,7 @@ export class RegisterOpencodeSelfService {
       role: input.role,
       team: input.team,
       project_dir: input.project_dir,
+      identity_key: input.identity_key,
       delivery: {
         kind: 'opencode-server',
         session_id: sessionId,

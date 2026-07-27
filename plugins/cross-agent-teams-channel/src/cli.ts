@@ -21,6 +21,12 @@ interface CliArgs {
   // notice; daemon-side validation may still reject the derived label
   // (e.g. device_spoofing_local_label_from_remote).
   deviceAutoDerivedNotice?: string
+  // Opaque per-pane value the launcher minted, read from XATS_IDENTITY_KEY.
+  // Env-only on purpose: `.mcp.json` is shared by directory, so a flag would
+  // hand every Claude Code instance in that directory the same key. The proxy
+  // never puts it on its own row — it only inlines it into the host agent's
+  // startup hint.
+  identityKey?: string
 }
 
 export interface ParseCliArgsDeps {
@@ -65,7 +71,8 @@ export function deriveHostnameDeviceLabel(hostnameValue: string): string | null 
 
 export function buildStartupHint(
   csid: string,
-  device?: string
+  device?: string,
+  identityKey?: string
 ): { content: string; meta: { source: string; kind: string } } {
   // Local default path (no --device): emit the original same-host hint with NO
   // device-related noise. Pure-local users never need to think about device.
@@ -81,8 +88,16 @@ export function buildStartupHint(
   const ask = isCrossHost
     ? `'To join cross-agent-teams (xats) and message other agents, reply with: Register to xats — name: your-agent-name, team: your-team-name (optional; defaults to the current working directory basename), device: ${device} (cross-host setup — keep this value verbatim).'`
     : `'To join cross-agent-teams (xats) and message other agents, reply with: Register to xats — name: your-agent-name, team: your-team-name (optional; defaults to the current working directory basename).'`
+  // The value is baked into the call the agent is shown rather than left as
+  // "read this env var": a first registration that forgets the key binds
+  // nothing, and every later recovery then answers need_register without
+  // either side reporting an error.
+  const identityBranch = identityKey === undefined ? [] : [
+    `This pane carries an identity key: ${identityKey}. BEFORE anything below, call reconnect({identity_key: "${identityKey}", ui_pid: $PPID}) — it recovers the identity this pane had before it was restarted, which no other lookup can do once $PPID has changed. If that returns ok, you are done: state which identity you recovered. If it returns need_register, continue with the flow below, and add identity_key: "${identityKey}" verbatim to that register_agent call and to every later register_agent call — leaving it out silently disables restart recovery for this pane.`
+  ]
   const content = [
     `cross-agent-teams-mcp: your channel_session_id is ${csid}.`,
+    ...identityBranch,
     `Do NOT register automatically. First ask the user (in English) to register this session so it can talk to other agents — use exactly this wording: ${ask}`,
     `Once the user provides a name (and optionally a team), call register_agent({agent_type: "claude-code", name: "<name from user>", team: "<team from user, omit if not provided>"${deviceClause}, ui_pid: $PPID, project_dir: "<current working directory>"})${deviceRegisterFragment}. Do NOT pass channel_session_id here; the daemon auto-binds via ui_pid.`,
     `If this is a reconnect (context clear, resume, or channel re-attach), route by whether you still remember your own (team, name): if you DO remember it (for example after closing Claude Code and resuming the conversation, where your $PPID has changed but the context survived), call register_agent({agent_type: "claude-code", name: "<your remembered name>", team: "<your remembered team>"${deviceClause}, ui_pid: $PPID, project_dir: "<current working directory>"}) and then state in your reply which identity you re-registered as — do NOT call reconnect, because it would reverse-look-up the changed $PPID, find no match, and return need_register. If you do NOT remember your (team, name) (for example after a context clear), call reconnect({ui_pid: $PPID}) to recover your prior (team, name) and rebind to this new csid in one step; on a need_register result, ask the user. bind_channel({channel_session_id: "${csid}"}) only rebinds when your CURRENT MCP session is already bound to your agent; on a fresh or resumed MCP session it returns unknown_agent, so use reconnect (or register_agent with your remembered identity) instead. Neither is the primary first-time registration path.`,
@@ -157,7 +172,9 @@ export function parseCliArgs(
       `--device not supplied; auto-derived "${derived}" from os.hostname() for remote daemon ${daemonUrl}. ` +
       `Pass --device <label> explicitly to silence this notice and pin the device label.`
   }
-  return { daemonUrl, token, device, deviceAutoDerivedNotice }
+  const rawIdentityKey = env.XATS_IDENTITY_KEY?.trim()
+  const identityKey = rawIdentityKey ? rawIdentityKey : undefined
+  return { daemonUrl, token, device, deviceAutoDerivedNotice, identityKey }
 }
 
 export async function main(
@@ -195,7 +212,7 @@ export async function main(
       registrationEverSucceeded = true
       // Announce csid to Claude via host-facing channel notification so Claude
       // can call bind_channel({channel_session_id}) to bind its own agent row.
-      const hint = buildStartupHint(csid, args.device)
+      const hint = buildStartupHint(csid, args.device, args.identityKey)
       relayChannelWake(hostServer, hint)
     }
   })

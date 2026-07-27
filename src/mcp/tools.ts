@@ -24,10 +24,12 @@ import { RegisterCodexSelfService } from './register-codex-self.js'
 import { RegisterOpencodeSelfService } from './register-opencode-self.js'
 import {
   resolveCodexReconnect,
+  resolveIdentityKeyReconnect,
   resolveKimiReconnect,
   resolveOpencodeReconnect,
   resolveReconnect,
   validateKimiSession,
+  type ReconnectCandidate,
   type ReconnectResolution,
 } from './reconnect.js'
 import { canonicalKimiBaseUrl, kimiBaseUrlIssue } from '../lib/kimi-url.js'
@@ -152,7 +154,19 @@ const RECONNECT_DESC = [
     'your own (team, name), such as after a context clear.',
   'Invoke this when the user asks to "reconnect xats", "re-register xats", ' +
     '"重连 xats", or "重新注册 xats".',
-  'Pass exactly one identity key: Claude Code passes `ui_pid=$PPID`; ' +
+  'BRANCH 1 (check this first): if `printenv XATS_IDENTITY_KEY` is ' +
+    'non-empty, call `reconnect({identity_key: <that value>, ui_pid: ' +
+    '$PPID})` — or `reconnect({identity_key: <that value>, thread_id: ' +
+    '$CODEX_THREAD_ID})` from codex — before considering the two branches ' +
+    'below. `identity_key` is the only lookup that survives a pane restart, ' +
+    'and it does NOT belong to the exactly-one group below: it resolves the ' +
+    'identity while the accompanying `ui_pid` / `thread_id` refreshes the ' +
+    'live runtime in the same call. This branch must come first because a ' +
+    'restarted pane both holds a key and no longer remembers its ' +
+    '(team, name), so the later branches would capture the case and fail. ' +
+    'On a `need_register` result, ask the user for (team, name) as usual ' +
+    'and pass the same `identity_key` on that `register_agent` call.',
+  'Otherwise pass exactly one runtime lookup key: Claude Code passes `ui_pid=$PPID`; ' +
     'Codex CLI and Mac Codex App pass ' +
     '`thread_id=$CODEX_THREAD_ID`; opencode passes ' +
     '`base_url=$OPENCODE_XATS_BASE_URL` (and optionally `session_id`); ' +
@@ -487,6 +501,11 @@ export function registerBusinessTools(
     auth_token_ref: z.string().min(1).optional(),
     base_url: z.string().min(1).refine(v => v.trim().length > 0, { message: 'base_url must not be empty' }).optional(),
     session_id: z.string().trim().min(1, { message: 'session_id must not be empty' }).optional(),
+    identity_key: z.string().min(1).refine(v => v.trim().length > 0, {
+      message: 'identity_key must not be empty',
+    }).optional().describe(
+      'Opaque per-pane value from `$XATS_IDENTITY_KEY`, minted by the launcher. Pass it on EVERY registration, including the first one — it is what lets this identity be recovered after the pane is restarted. Applies to every agent_type.'
+    ),
     claude_ui_pid: z.number().int().positive().optional().describe(
       "Internal field for the cross-agent-teams-mcp channel proxy.  Stores the proxy's parent Claude Code UI pid (`process.ppid`) so that Claude Code hosts registering in the same lineage can auto-bind their claude-channel delivery.  Only valid when role='__channel_proxy__'; rejected otherwise."
     ),
@@ -655,6 +674,7 @@ export function registerBusinessTools(
       base_url?: string
       session_id?: string
       claude_ui_pid?: number
+      identity_key?: string
       delivery?: { kind: string; [key: string]: unknown }
     }
   ): Promise<unknown> {
@@ -695,6 +715,7 @@ export function registerBusinessTools(
         base_url: args.base_url,
         session_id: args.session_id,
         auth_token_ref: args.auth_token_ref,
+        identity_key: args.identity_key,
       })
       if ('agent_id' in opencodeRes) {
         if (onRegisterSuccess) {
@@ -726,6 +747,7 @@ export function registerBusinessTools(
         role: args.role,
         team: args.team,
         project_dir: args.project_dir,
+        identity_key: args.identity_key,
         delivery: {
           kind: 'kimi-server',
           session_id: args.session_id,
@@ -797,6 +819,7 @@ export function registerBusinessTools(
             thread_id: args.thread_id,
             ws_url: args.ws_url,
             auth_token_ref: args.auth_token_ref,
+            identity_key: args.identity_key,
           })
         : registerSvc.register({
             connection_id: connectionId,
@@ -812,6 +835,7 @@ export function registerBusinessTools(
             claude_ui_pid: args.claude_ui_pid,
             runtime_ui_pid:
               args.agent_type === 'claude-code' ? args.ui_pid : undefined,
+            identity_key: args.identity_key,
           })
     if ('thread_id' in res && 'agent_id' in res) {
       nativeDeliveryBound = true
@@ -948,6 +972,7 @@ export function registerBusinessTools(
         '4. `printenv CLAUDECODE` non-empty OR `printenv CLAUDE_CODE_ENTRYPOINT` non-empty → `agent_type="claude-code"`; pass `$PPID` as `ui_pid` to enable channel auto-bind.',
         '5. None of the above → `agent_type="custom"` with `agent_type_name="<the harness you are running under, e.g. cursor, opencode, ...>"` (`agent_type_name` is required when `agent_type="custom"`). Detect the harness name from your runtime environment if you can — e.g. `printenv CURSOR_TRACE_ID` non-empty means cursor — but do NOT guess from system-wide signals like "binary X exists on PATH": such probes detect what the user has installed, not what runtime you are inside, and pick the wrong agent type. When unsure, prefer `agent_type_name="unknown"` over a wrong guess.',
         'Calling this tool again with the same `(device, team, name)` identity reuses the existing `agent_id` and refreshes `tmux_pane_id` and `model`; no duplicate row is created.',
+        'IDENTITY KEY (not part of the DETECTION sequence above — it says nothing about which runtime you are, and applies to every `agent_type`): run `printenv XATS_IDENTITY_KEY`; when it is non-empty, pass that value as `identity_key` on EVERY `register_agent` call, including the very first one. The key is the launcher-minted, restart-stable handle that later lets `reconnect({identity_key})` recover this identity after the pane is restarted — a restart changes `ui_pid`, `thread_id`, and the session id, so no other lookup can. Omitting it on the first registration silently disables recovery for this pane: nothing fails, every later recovery just returns `need_register`. When the key is already held by another live pane the call is rejected with `identity_key_conflict` naming that pane\'s team and name, and no row is written.',
         'Use `agent_type="custom"` for unsupported agent harnesses; provide `agent_type_name` for observability.',
         'opencode sessions: pass `agent_type="opencode"` and `base_url` (from `$OPENCODE_XATS_BASE_URL`, set by the `free-xats-opencode` launcher). Omit `session_id` — the daemon auto-resolves it via `<base_url>/session` (most recently updated). `auth_token_ref` is optional; set only when `OPENCODE_SERVER_PASSWORD` is configured on the opencode server. The schema REQUIRES `base_url` (parseable `http://` or `https://` URL) when `agent_type="opencode"`; missing/malformed `base_url` is rejected before any HTTP probe runs.',
         'kimi-code sessions: pass `agent_type="kimi-code"`, `base_url` (from `$KIMI_XATS_BASE_URL`, set by the `xats-kimi` launcher), and `session_id` (REQUIRED — from `$KIMI_XATS_SESSION_ID`, which the launcher exports after pre-creating the session via the kimi server REST API; the daemon does NOT auto-resolve it and does NOT health-check the server at register time. Do NOT fall back to `~/.kimi-code/session_index.jsonl` guessing: with several kimi sessions in one directory its last `workDir` match can be a different session, and pokes then wake that wrong session while reporting delivered). `auth_token_ref` is optional; when omitted the daemon reads the bearer token from `~/.kimi-code/server.token` at poke time. The schema REQUIRES `base_url` (parseable `http://` or `https://` URL) and a non-empty `session_id` when `agent_type="kimi-code"`; missing/malformed values are rejected before any row is written.',
@@ -982,6 +1007,7 @@ export function registerBusinessTools(
       base_url?: string
       session_id?: string
       claude_ui_pid?: number
+      identity_key?: string
       delivery?: { kind: string; [key: string]: unknown }
     }) => {
       return run(async () => executeRegister(registerAgentArgsSchema.parse(args)))
@@ -989,6 +1015,11 @@ export function registerBusinessTools(
   )
 
   const reconnectInputSchema = z.object({
+    identity_key: z.string().min(1).refine(v => v.trim().length > 0, {
+      message: 'identity_key must not be empty',
+    }).optional().describe(
+      'Launcher-minted per-pane key from `$XATS_IDENTITY_KEY`. The only lookup that survives a pane restart. Combine it with `ui_pid` (claude-code) or `thread_id` (codex) in the same call: the key resolves the identity, the other value rebinds the live runtime.'
+    ),
     ui_pid: z.number().int().positive().optional().describe(
       'Claude UI process id (`$PPID` inside Claude Code).'
     ),
@@ -1025,10 +1056,23 @@ export function registerBusinessTools(
     const keyCount = Number(value.ui_pid !== undefined)
       + Number(value.thread_id !== undefined)
       + Number(value.base_url !== undefined)
-    if (keyCount !== 1) {
+    // identity_key answers "which identity", the other three answer "which
+    // live runtime", so it does not join their exclusion group — it only
+    // relaxes the count to at-most-one.
+    if (value.identity_key === undefined ? keyCount !== 1 : keyCount > 1) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'provide exactly one of ui_pid, thread_id, or base_url',
+        message: value.identity_key === undefined
+          ? 'provide exactly one of ui_pid, thread_id, or base_url'
+          : 'identity_key combines with at most one of ui_pid or thread_id',
+      })
+    }
+    // The base_url arms resolve identity from a revalidated live session,
+    // which is a second identity lookup competing with the key.
+    if (value.identity_key !== undefined && value.base_url !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'identity_key cannot be combined with base_url',
       })
     }
     if (value.thread_id === undefined && value.ws_url !== undefined) {
@@ -1119,7 +1163,13 @@ export function registerBusinessTools(
       context?.localDevice ?? 'local'
     )
     if (resolution.kind !== 'single') return unresolvedReconnect(resolution)
-    const match = resolution.match
+    return completeClaudeReconnect(resolution.match, ui_pid)
+  }
+
+  async function completeClaudeReconnect(
+    match: ReconnectCandidate,
+    ui_pid: number
+  ): Promise<unknown> {
     const res = await executeRegister({
       agent_type: 'claude-code',
       name: match.name,
@@ -1157,7 +1207,13 @@ export function registerBusinessTools(
       context?.localDevice ?? 'local'
     )
     if (resolution.kind !== 'single') return unresolvedReconnect(resolution)
-    const match = resolution.match
+    return completeCodexReconnect(resolution.match, args)
+  }
+
+  async function completeCodexReconnect(
+    match: ReconnectCandidate,
+    args: { thread_id: string; ws_url?: string; auth_token_ref?: string }
+  ): Promise<unknown> {
     const res = await executeRegister({
       agent_type: 'codex',
       name: match.name,
@@ -1184,6 +1240,57 @@ export function registerBusinessTools(
       team: envelope.team,
       thread_id: envelope.thread_id,
       ws_url: envelope.ws_url,
+      last_seen_at: match.last_seen_at,
+    }
+  }
+
+  /**
+   * Identity comes from the key; the accompanying `ui_pid` / `thread_id` only
+   * rebinds the live runtime. With neither, the stored agent_type is replayed
+   * so re-registering does not blank it.
+   */
+  async function executeIdentityKeyReconnect(args: {
+    identity_key: string
+    ui_pid?: number
+    thread_id?: string
+    ws_url?: string
+    auth_token_ref?: string
+  }): Promise<unknown> {
+    const resolution = resolveIdentityKeyReconnect(
+      agents,
+      args.identity_key,
+      context?.localDevice ?? 'local'
+    )
+    if (resolution.kind !== 'single') return unresolvedReconnect(resolution)
+    const match = resolution.match
+    if (args.ui_pid !== undefined) {
+      return completeClaudeReconnect(match, args.ui_pid)
+    }
+    if (args.thread_id !== undefined) {
+      return completeCodexReconnect(match, {
+        thread_id: args.thread_id,
+        ws_url: args.ws_url,
+        auth_token_ref: args.auth_token_ref,
+      })
+    }
+    const stored = agents.findById(match.agent_id)
+    const res = await executeRegister({
+      agent_type: stored?.agent_type ?? undefined,
+      agent_type_name: stored?.agent_type_name ?? undefined,
+      name: match.name,
+      team: match.team,
+      device: match.device,
+      role: match.role,
+    })
+    if (typeof res !== 'object' || res === null || !('agent_id' in res)) {
+      return res
+    }
+    const envelope = res as { agent_id: string; team: string }
+    return {
+      ok: true,
+      agent_id: envelope.agent_id,
+      name: match.name,
+      team: envelope.team,
       last_seen_at: match.last_seen_at,
     }
   }
@@ -1366,6 +1473,7 @@ export function registerBusinessTools(
   }
 
   async function executeReconnect(args: {
+    identity_key?: string
     ui_pid?: number
     thread_id?: string
     ws_url?: string
@@ -1374,6 +1482,17 @@ export function registerBusinessTools(
     session_id?: string
     agent_type?: 'opencode' | 'kimi-code'
   }): Promise<unknown> {
+    // The key wins over any accompanying runtime lookup: after a restart the
+    // new pid may already belong to an unrelated row.
+    if (args.identity_key !== undefined) {
+      return executeIdentityKeyReconnect({
+        identity_key: args.identity_key,
+        ui_pid: args.ui_pid,
+        thread_id: args.thread_id,
+        ws_url: args.ws_url,
+        auth_token_ref: args.auth_token_ref,
+      })
+    }
     if (args.ui_pid !== undefined) {
       return executeClaudeReconnect(args.ui_pid)
     }
@@ -1431,6 +1550,7 @@ export function registerBusinessTools(
       inputSchema: reconnectInputSchema,
     },
     async (args: {
+      identity_key?: string
       ui_pid?: number
       thread_id?: string
       ws_url?: string

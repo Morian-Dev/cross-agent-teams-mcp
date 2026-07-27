@@ -33,7 +33,8 @@ const DDL = [
     channel_session_id TEXT,
     delivery_kind TEXT NOT NULL DEFAULT 'none',
     delivery_payload TEXT,
-    remote_addr TEXT
+    remote_addr TEXT,
+    identity_key TEXT
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS agents_identity_idx ON agents(device, team, name)`,
   `CREATE TABLE IF NOT EXISTS messages (
@@ -212,6 +213,31 @@ function migrateAgentsDeviceColumns(
   tx()
 }
 
+// Runs after migrateAgentsDeviceColumns because the unique index spans
+// `device`, which a legacy database only gains in that migration.
+function migrateAgentsIdentityKeyColumn(db: Database.Database): void {
+  const tableExists = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='agents'`)
+    .get() as { name: string } | undefined
+  if (!tableExists) return
+  const cols = db.pragma('table_info(agents)') as Array<{ name: string }>
+  const needColumn = !cols.some(c => c.name === 'identity_key')
+  const indexes = db.pragma('index_list(agents)') as Array<{ name: string }>
+  const needIndex = !indexes.some(i => i.name === 'agents_identity_key_idx')
+  if (!needColumn && !needIndex) return
+  const tx = db.transaction(() => {
+    if (needColumn) {
+      db.exec(`ALTER TABLE agents ADD COLUMN identity_key TEXT`)
+    }
+    if (needIndex) {
+      db.exec(
+        `CREATE UNIQUE INDEX agents_identity_key_idx ON agents(device, identity_key)`
+      )
+    }
+  })
+  tx()
+}
+
 function migrateMessagesNeedReplyColumn(db: Database.Database): void {
   const tableExists = db
     .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='messages'`)
@@ -251,6 +277,7 @@ export function applySchema(
   dropLegacyTaskContractTables(db)
   migrateAgentsDeliveryColumns(db)
   migrateAgentsDeviceColumns(db, opts.localDevice ?? 'local')
+  migrateAgentsIdentityKeyColumn(db)
   migrateMessagesNeedReplyColumn(db)
   migrateAgentsCursorWatermark(db)
 }

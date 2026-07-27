@@ -23,6 +23,7 @@ export interface RegisterInput {
   claude_ui_pid?: number
   runtime_ui_pid?: number
   remote_addr?: string | null
+  identity_key?: string
 }
 
 export interface AgentRow {
@@ -38,6 +39,7 @@ export interface AgentRow {
   runtime_ui_pid: number | null
   delivery: DeliverySpec
   channel_session_id: string | null
+  identity_key: string | null
   last_seen_at: string
 }
 
@@ -60,6 +62,11 @@ export type OpencodeSessionMatch = RuntimeUiPidMatch
 
 export type KimiSessionMatch = RuntimeUiPidMatch
 
+/** Adds the pid the register-time four-branch rule arbitrates on. */
+export interface IdentityKeyMatch extends RuntimeUiPidMatch {
+  runtime_ui_pid: number | null
+}
+
 export const REACHABLE_MS = 4 * 24 * 60 * 60 * 1000
 
 type DbAgentRow = {
@@ -73,6 +80,7 @@ type DbAgentRow = {
   model: string | null
   tmux_pane_id: string | null
   runtime_ui_pid: number | null
+  identity_key: string | null
   last_seen_at: string
 } & DeliveryRow
 
@@ -108,6 +116,7 @@ function toAgentRow(row: DbAgentRow): AgentRow {
     delivery,
     channel_session_id:
       delivery.kind === 'claude-channel' ? delivery.channel_session_id : null,
+    identity_key: row.identity_key,
     last_seen_at: row.last_seen_at,
   }
 }
@@ -136,6 +145,31 @@ export class AgentsRepo {
          AND runtime_ui_pid = ?
        ORDER BY last_seen_at DESC`
     ).all(localDevice, ui_pid) as RuntimeUiPidMatch[]
+  }
+
+  /**
+   * Reverse lookup by the launcher-minted identity key. Unlike the pid /
+   * thread / session lookups this key survives a pane restart; the device
+   * scope and the proxy-row exclusion are the same as theirs.
+   */
+  findByIdentityKey(
+    identity_key: string,
+    localDevice: string
+  ): IdentityKeyMatch[] {
+    return this.db.prepare(
+      `SELECT agent_id, device, team, name, role, runtime_ui_pid, last_seen_at
+       FROM agents
+       WHERE device = ?
+         AND role != '__channel_proxy__'
+         AND identity_key = ?
+       ORDER BY last_seen_at DESC`
+    ).all(localDevice, identity_key) as IdentityKeyMatch[]
+  }
+
+  clearIdentityKey(agent_id: string): void {
+    this.db.prepare(
+      `UPDATE agents SET identity_key = NULL WHERE agent_id = ?`
+    ).run(agent_id)
   }
 
   findByCodexThreadId(
@@ -344,9 +378,9 @@ export class AgentsRepo {
       `INSERT INTO agents (
          agent_id, agent_type, agent_type_name, device, team, role, name, model, registered_at, last_seen_at,
          tmux_pane_id, claude_ui_pid, runtime_ui_pid, delivery_kind, delivery_payload, remote_addr,
-         last_processed_event_id
+         identity_key, last_processed_event_id
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                COALESCE((SELECT MAX(event_id) FROM events), 0))
        ON CONFLICT (device, team, name) DO UPDATE SET
          agent_type = excluded.agent_type,
@@ -358,6 +392,7 @@ export class AgentsRepo {
          claude_ui_pid = COALESCE(excluded.claude_ui_pid, claude_ui_pid),
          runtime_ui_pid = COALESCE(excluded.runtime_ui_pid, runtime_ui_pid),
          remote_addr = excluded.remote_addr,
+         identity_key = COALESCE(excluded.identity_key, identity_key),
          delivery_kind = CASE
            WHEN ? THEN delivery_kind
            ELSE excluded.delivery_kind
@@ -383,6 +418,7 @@ export class AgentsRepo {
       serialized.delivery_kind,
       serialized.delivery_payload,
       input.remote_addr ?? null,
+      input.identity_key ?? null,
       preserveExistingDelivery,
       preserveExistingDelivery,
     )
@@ -478,6 +514,7 @@ export class AgentsRepo {
          runtime_ui_pid,
          delivery_kind,
          delivery_payload,
+         identity_key,
          last_seen_at
        FROM agents
        WHERE team=?`
@@ -529,6 +566,7 @@ export class AgentsRepo {
          runtime_ui_pid,
          delivery_kind,
          delivery_payload,
+         identity_key,
          last_seen_at
        FROM agents
        WHERE agent_id=?`
