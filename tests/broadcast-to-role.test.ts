@@ -40,9 +40,13 @@ function setup(opts?: { paneState?: Record<string, 'idle' | 'active'> }): {
   const pokes: PokeCall[] = []
   const fakePoke: AutoPokeFn = guardingPoke(
     async ({ fromAgentId, targetAgentId, paneId }) => {
+      // Mirrors createAutoPokeImpl: sender row plus the target row, so the
+      // per-recipient target segment is exercised here too.
       const row = db.prepare('SELECT name FROM agents WHERE agent_id=?').get(fromAgentId) as
         { name: string | null } | undefined
-      const prompt = buildAutoPokeHint(row, fromAgentId)
+      const target = db.prepare('SELECT name, team FROM agents WHERE agent_id=?').get(targetAgentId) as
+        { name: string | null; team: string } | undefined
+      const prompt = buildAutoPokeHint(row, fromAgentId, target)
       pokes.push({ target: targetAgentId, pane: paneId, prompt })
       return { ok: true }
     }
@@ -144,6 +148,8 @@ describe('broadcast_to_role', () => {
     expect(pokes).toHaveLength(2)
     for (const p of pokes) {
       expect(p.prompt).toContain('新邮件 from captain')
+      // Each recipient's hint names that recipient, not a shared or sender row.
+      expect(p.prompt).toContain(`→ ${p.target}@default`)
       expect(p.prompt).not.toContain('API_KEY')
     }
     // parallel fan-out: under 400ms with POKE_QUIET_MS=50 per-recipient

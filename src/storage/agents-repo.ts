@@ -348,6 +348,12 @@ export class AgentsRepo {
           new_csid: rebindCsid,
         })
       }
+      if (input.tmux_pane_id) {
+        const written = this.db.prepare(
+          `SELECT agent_id FROM agents WHERE device=? AND team=? AND name=?`
+        ).get(device, team, name) as { agent_id: string }
+        this.clearPaneBinding(device, input.tmux_pane_id, written.agent_id)
+      }
     })
     tx()
     const row = this.db.prepare(
@@ -424,6 +430,19 @@ export class AgentsRepo {
     )
   }
 
+  /**
+   * A tmux pane hosts one agent UI at a time, so the newest binding evicts any
+   * incumbent on the same (device, pane). Only the pane column is cleared —
+   * the incumbent row, its cursor, mailbox and delivery stay intact.
+   */
+  private clearPaneBinding(device: string, pane: string, keepAgentId: string): void {
+    this.db.prepare(
+      `UPDATE agents
+       SET tmux_pane_id=NULL
+       WHERE device=? AND tmux_pane_id=? AND agent_id != ?`
+    ).run(device, pane, keepAgentId)
+  }
+
   private reactiveRebindHosts(args: {
     proxy_device: string
     team: string
@@ -475,22 +494,29 @@ export class AgentsRepo {
       runtime_bound_at?: string
     }
   ): void {
-    this.db.prepare(
-      `UPDATE agents
-       SET tmux_pane_id=?,
-           runtime_ui_pid=?,
-           runtime_tty=?,
-           runtime_verification_mode=?,
-           runtime_bound_at=?
-       WHERE agent_id=?`
-    ).run(
-      args.tmux_pane_id,
-      args.runtime_ui_pid,
-      args.runtime_tty,
-      args.runtime_verification_mode,
-      args.runtime_bound_at ?? new Date().toISOString(),
-      agent_id
-    )
+    const tx = this.db.transaction(() => {
+      this.db.prepare(
+        `UPDATE agents
+         SET tmux_pane_id=?,
+             runtime_ui_pid=?,
+             runtime_tty=?,
+             runtime_verification_mode=?,
+             runtime_bound_at=?
+         WHERE agent_id=?`
+      ).run(
+        args.tmux_pane_id,
+        args.runtime_ui_pid,
+        args.runtime_tty,
+        args.runtime_verification_mode,
+        args.runtime_bound_at ?? new Date().toISOString(),
+        agent_id
+      )
+      const row = this.db.prepare(
+        `SELECT device FROM agents WHERE agent_id=?`
+      ).get(agent_id) as { device: string } | undefined
+      if (row) this.clearPaneBinding(row.device, args.tmux_pane_id, agent_id)
+    })
+    tx()
   }
 
   list(args: {

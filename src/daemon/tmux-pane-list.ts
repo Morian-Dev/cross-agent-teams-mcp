@@ -11,6 +11,7 @@ export interface TmuxPaneRow {
   current_path: string
   current_command: string
   title: string
+  pane_pid: number | null
 }
 
 const TMUX_LIST_TIMEOUT_MS = 3_000
@@ -37,7 +38,9 @@ function parsePaneRows(stdout: string): TmuxPaneRow[] {
         pane_current_path,
         pane_current_command,
         pane_title,
+        pane_pid,
       ] = line.split('\t')
+      const panePid = Number(pane_pid)
       return {
         pane_id,
         session_name,
@@ -48,6 +51,7 @@ function parsePaneRows(stdout: string): TmuxPaneRow[] {
         current_path: pane_current_path ?? '',
         current_command: pane_current_command ?? '',
         title: pane_title ?? '',
+        pane_pid: Number.isInteger(panePid) && panePid > 0 ? panePid : null,
       }
     })
 }
@@ -62,7 +66,7 @@ export async function listTmuxPaneRows(
       'list-panes',
       '-a',
       '-F',
-      '#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_active}\t#{pane_tty}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_title}',
+      '#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_active}\t#{pane_tty}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_title}\t#{pane_pid}',
     ],
     { timeout: TMUX_LIST_TIMEOUT_MS }
   )

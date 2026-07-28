@@ -118,8 +118,8 @@ const SEND_MESSAGE_DESC = [
   'REPLY RULE: when replying to a message returned by get_inbox, treat its `from_device` as authoritative — if it differs from your own device, you MUST send to `from_name + ":" + from_device` (bare `from_name` would resolve on YOUR device and miss the actual sender). Same-device replies can use the bare name. The safe fallback for unknown device is send_message_by_id({to_agent_id: from_agent_id, ...}).',
   'For multi-recipient use broadcast (same-team) or broadcast_to_role (same-team, by role).',
   '除非用户明确指定 to_team, 不要跨 team 沟通 (explicitly set to_team only when user asks).',
-  'Reports poked, poke_skip_reasons (no_pane, guard_failed, tmux_unavailable, self, kimi_session_busy, kimi_pending_interaction); on guard_failed and kimi_session_busy daemon retries at 30s/180s/600s (retry_scheduled, retry_delays_s); stops early on poked.  kimi_session_busy / kimi_pending_interaction mean the kimi session was mid-turn or waiting on a human approval so the wake-up was NOT injected — the mailbox row is written regardless and the recipient sees it on its next get_inbox; kimi_pending_interaction is never retried.',
-  'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender>, 请调 get_inbox 查看), NOT the body — read bodies via get_inbox.',
+  'Reports poked, poke_skip_reasons (no_pane, guard_failed, tmux_unavailable, pane_reassigned, self, kimi_session_busy, kimi_pending_interaction); on guard_failed and kimi_session_busy daemon retries at 30s/180s/600s (retry_scheduled, retry_delays_s); stops early on poked.  kimi_session_busy / kimi_pending_interaction mean the kimi session was mid-turn or waiting on a human approval so the wake-up was NOT injected — the mailbox row is written regardless and the recipient sees it on its next get_inbox; kimi_pending_interaction is never retried.  pane_reassigned means the recorded tmux pane is no longer hosted by the target (another agent took it over, or the target process is gone), so nothing was injected; it is never retried and the mailbox row is still written.',
+  'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender> → <recipient_name>@<recipient_team>, 请调 get_inbox 查看), NOT the body — read bodies via get_inbox.  The → segment names who the wake-up was addressed to, so a pane that receives one but finds an empty get_inbox can tell at a glance it was not the intended recipient.',
   'Delivery is NOT filtered by online/idle; direct and fan-out deliveries write mailbox rows for offline targets. The list_agents `online` flag reflects process liveness.',
   'DO NOT pre-verify the recipient via list_agents before calling send_message — this rule applies to BOTH same-team and cross-team sends (list_agents is caller-team scoped and CANNOT see cross-team agents, so a cross-team pre-check always falsely reports "missing"; for same-team sends the pre-check is pure waste).',
   'On miss send_message returns unknown_recipient cleanly with no side effects, so the correct pattern is "try send, then handle unknown_recipient" — never "list_agents first, then send".'
@@ -129,16 +129,16 @@ const SEND_MESSAGE_BY_ID_DESC = [
   'Private 1→1 message to another agent by agent_id (UUID).  Use this when you already hold the target\'s agent_id; prefer send_message (by name) otherwise.',
   'Same-team only: the recipient must belong to the caller\'s team.  For cross-team sends use send_message with to_team.',
   'By default auto-poke=true with quiet-guard (auto_poke:false opts out), and need_reply=true.  Set need_reply:false for FYI/no-response-needed messages.',
-  'Reports poked, poke_skip_reasons (no_pane, guard_failed, tmux_unavailable, self, kimi_session_busy, kimi_pending_interaction); on guard_failed and kimi_session_busy daemon retries at 30s/180s/600s (retry_scheduled, retry_delays_s); stops early on poked.  kimi_session_busy / kimi_pending_interaction mean the kimi session was mid-turn or waiting on a human approval so the wake-up was NOT injected — the mailbox row is written regardless and the recipient sees it on its next get_inbox; kimi_pending_interaction is never retried.',
-  'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender>, 请调 get_inbox 查看), NOT the body — read bodies via get_inbox.',
+  'Reports poked, poke_skip_reasons (no_pane, guard_failed, tmux_unavailable, pane_reassigned, self, kimi_session_busy, kimi_pending_interaction); on guard_failed and kimi_session_busy daemon retries at 30s/180s/600s (retry_scheduled, retry_delays_s); stops early on poked.  kimi_session_busy / kimi_pending_interaction mean the kimi session was mid-turn or waiting on a human approval so the wake-up was NOT injected — the mailbox row is written regardless and the recipient sees it on its next get_inbox; kimi_pending_interaction is never retried.  pane_reassigned means the recorded tmux pane is no longer hosted by the target (another agent took it over, or the target process is gone), so nothing was injected; it is never retried and the mailbox row is still written.',
+  'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender> → <recipient_name>@<recipient_team>, 请调 get_inbox 查看), NOT the body — read bodies via get_inbox.  The → segment names who the wake-up was addressed to, so a pane that receives one but finds an empty get_inbox can tell at a glance it was not the intended recipient.',
   'Delivery is NOT filtered by online/idle — offline targets still receive the mailbox row.'
 ].join(' ')
 
 const BROADCAST_DESC = [
   'Same-team broadcast to every other agent in the caller team across all devices; delivers to every team member except the sender.',
-  'Auto-poke default true (quiet-guard on tmux targets, busy-gate on kimi targets; both retry at 30s/180s/600s — reports poked, poke_skip_reasons, retry_scheduled, retry_delays_s).  auto_poke:false opts out.  See send_message for what each poke_skip_reasons value means.',
+  'Auto-poke default true (quiet-guard on tmux targets, busy-gate on kimi targets; both retry at 30s/180s/600s — reports poked, poke_skip_reasons, retry_scheduled, retry_delays_s).  auto_poke:false opts out.  See send_message for what each poke_skip_reasons value means, incl. pane_reassigned (the recipient no longer hosts its recorded tmux pane, so no wake-up was injected; never retried, mailbox row still written).',
   'For role filter use broadcast_to_role.  For cross-team 1→1 use send_message({to_team}).',
-  'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender>, 请调 get_inbox 查看) — never the body.  Read via get_inbox.',
+  'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender> → <recipient_name>@<recipient_team>, 请调 get_inbox 查看) — never the body.  Read via get_inbox.',
   'Delivery is NOT filtered by online/idle; offline targets still receive mailbox rows. The list_agents `online` flag reflects process liveness.'
 ].join(' ')
 
@@ -146,6 +146,7 @@ const BROADCAST_TO_ROLE_DESC = [
   'Same-team broadcast filtered by role across all devices; delivers to every matching team member.  Strictly same-team — no cross-team variant.',
   'For cross-team private 1→1 use send_message({to_team}).',
   'Auto-poke default true with quiet-guard on tmux targets / busy-gate on kimi targets, both retrying at 30s/180s/600s (auto_poke:false opts out); injects only a SHORT wake-up hint, not the message body.  Recipients read via get_inbox.',
+  'See send_message for what each poke_skip_reasons value means, incl. pane_reassigned (the recipient no longer hosts its recorded tmux pane, so no wake-up was injected; never retried, mailbox row still written).',
   'Returns unknown_recipient when no same-team agent matches to_role.'
 ].join(' ')
 
@@ -262,29 +263,57 @@ function defaultClaudeSelfModel(
   return 'claude-code'
 }
 
+export const HINT_MAX_CHARS = 200
+
 export function buildAutoPokeHint(
   row: { name?: string | null } | undefined,
-  fromAgentId: string
+  fromAgentId: string,
+  target?: { name?: string | null; team?: string | null } | undefined
 ): string {
   const dn = row?.name
   const sender = typeof dn === 'string' && dn.length > 0
     ? `${dn} (${fromAgentId})`
     : fromAgentId.slice(0, 8)
-  return `新邮件 from ${sender}, 请调 get_inbox 查看`
+  const targetName = target?.name
+  const targetTeam = target?.team
+  const to = typeof targetName === 'string' && targetName.length > 0
+    && typeof targetTeam === 'string' && targetTeam.length > 0
+    ? ` → ${targetName}@${targetTeam}`
+    : ''
+  const render = (who: string, segment: string): string =>
+    `新邮件 from ${who}${segment}, 请调 get_inbox 查看`
+  // Neither name carries a schema length cap, so the hint sheds the target
+  // segment first and then the sender's display name, in that order, rather
+  // than letting either push it past HINT_MAX_CHARS.
+  for (const candidate of [render(sender, to), render(sender, ''), render(fromAgentId.slice(0, 8), '')]) {
+    if (candidate.length <= HINT_MAX_CHARS) return candidate
+  }
+  return render(fromAgentId.slice(0, 8), '')
 }
 
 export function createAutoPokeImpl(
   db: Database.Database,
   _agents: AgentsRepo,
-  channelWakeFanout?: ChannelWakeFanout
+  channelWakeFanout?: ChannelWakeFanout,
+  localDevice?: string
 ): import('./auto-poke-fanout.js').AutoPokeFn {
   return async (args) => {
     const row = db
       .prepare('SELECT name FROM agents WHERE agent_id=?')
       .get(args.fromAgentId) as { name: string | null } | undefined
-    const hint = buildAutoPokeHint(row, args.fromAgentId)
+    const target = db
+      .prepare('SELECT name, team FROM agents WHERE agent_id=?')
+      .get(args.targetAgentId) as { name: string | null; team: string } | undefined
+    const hint = buildAutoPokeHint(row, args.fromAgentId, target)
     const res = await poke(
-      { db, callerAgentId: args.fromAgentId, allowCrossTeam: true, channelWakeFanout },
+      {
+        db,
+        callerAgentId: args.fromAgentId,
+        allowCrossTeam: true,
+        channelWakeFanout,
+        localDevice,
+        paneSnapshot: args.paneSnapshot,
+      },
       { target_agent_id: args.targetAgentId, prompt: hint, skipGuard: args.skipGuard }
     )
     if ('ok' in res && res.ok) return { ok: true }
@@ -300,6 +329,7 @@ export function createAutoPokeImpl(
     if (err === 'kimi_pending_interaction') {
       return { ok: false, reason: 'kimi_pending_interaction' }
     }
+    if (err === 'pane_reassigned') return { ok: false, reason: 'pane_reassigned' }
     if (err === 'tmux_unavailable') return { ok: false, reason: 'tmux_unavailable' }
     if (err === 'tmux_pane_not_set') return { ok: false, reason: 'no_pane' }
     if (err === 'no_transport_available') return { ok: false, reason: 'no_pane' }
@@ -373,7 +403,7 @@ export function registerBusinessTools(
   const registerOpencodeSelfSvc = new RegisterOpencodeSelfService(registerSvc)
   const unregisterSelfSvc = new UnregisterSelfService(db, agents)
 
-  const autoPokeImpl = createAutoPokeImpl(db, agents, channelWakeFanout)
+  const autoPokeImpl = createAutoPokeImpl(db, agents, channelWakeFanout, context?.localDevice)
 
   const sendSvc = new SendMessageService(db, agents, events, { poke: autoPokeImpl })
   const broadcastSvc = new BroadcastService(db, agents, { poke: autoPokeImpl })

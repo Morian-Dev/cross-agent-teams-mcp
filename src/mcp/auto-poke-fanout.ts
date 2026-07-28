@@ -4,6 +4,7 @@ import { scheduleRetry as defaultScheduleRetry, type RetryAgentLookup, type Retr
 import { scheduleKimiRetry as defaultScheduleKimiRetry, type KimiRetryContext } from './kimi-poke-retry.js'
 import type { DeliverySpec } from '../lib/delivery-spec.js'
 import type { DeliverySkipReason } from './delivery-status.js'
+import { memoizePaneSnapshot, type PaneSnapshotLoader } from './pane-host-verify.js'
 
 export type AutoPokeSkipReason =
   | 'no_pane'
@@ -12,6 +13,7 @@ export type AutoPokeSkipReason =
   | 'self'
   | 'kimi_session_busy'
   | 'kimi_pending_interaction'
+  | 'pane_reassigned'
 
 export interface AutoPokeArgs {
   team: string
@@ -20,6 +22,7 @@ export interface AutoPokeArgs {
   paneId: string | null
   body: string
   skipGuard?: boolean
+  paneSnapshot?: PaneSnapshotLoader
 }
 
 export type AutoPokeFn = (args: AutoPokeArgs) => Promise<{ ok: true } | { ok: false; reason?: AutoPokeSkipReason }>
@@ -33,6 +36,7 @@ export interface AutoPokeRecipient {
 export interface FanoutDeps {
   poke?: AutoPokeFn
   tmuxAvailable?: () => Promise<boolean>
+  paneSnapshot?: PaneSnapshotLoader
 }
 
 export interface RetryScheduleCtx {
@@ -74,6 +78,9 @@ export async function fanoutAutoPoke(args: {
 }): Promise<FanoutResult> {
   const pokeFn = args.deps.poke
   const tmuxAvail = args.deps.tmuxAvailable ?? isTmuxAvailable
+  // One lazily-taken pane snapshot for the whole round; recipients that never
+  // reach a tmux dispatch never trigger the underlying tmux query.
+  const paneSnapshot = args.deps.paneSnapshot ?? memoizePaneSnapshot()
 
   const results = await Promise.all(args.recipients.map(async (r) => {
     try {
@@ -95,7 +102,8 @@ export async function fanoutAutoPoke(args: {
         fromAgentId: args.fromAgentId,
         targetAgentId: r.agent_id,
         paneId: r.tmux_pane_id,
-        body: args.body
+        body: args.body,
+        paneSnapshot
       })
       if (out.ok) return { agent_id: r.agent_id, poked: true, reason: undefined, paneId: r.tmux_pane_id }
       return {
@@ -147,7 +155,10 @@ export async function fanoutAutoPoke(args: {
           sentAt: args.retry.sentAt,
           paneId: res.paneId,
           paneGuardFn: runQuietGuard,
-          pokeFn: async (pokeArgs) => { await pokeFn({ ...pokeArgs, skipGuard: true }) },
+          // Retry ticks take a fresh snapshot: this round's is long stale by
+          // then. An explicitly injected loader still wins.
+          pokeFn: async (pokeArgs) =>
+            pokeFn({ ...pokeArgs, skipGuard: true, paneSnapshot: args.deps.paneSnapshot }),
           lookupAgentFn: args.retry.lookupAgentFn,
           updateStatusFn: args.retry.updateStatusFn
         })

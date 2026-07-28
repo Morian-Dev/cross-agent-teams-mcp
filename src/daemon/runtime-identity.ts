@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { DetectAgentKind } from './tmux-pane-detect.js'
+import { normalizeTty, readPidInfo } from './pid-tty.js'
 
 const TMUX_LIST_TIMEOUT_MS = 3_000
 const PS_LIST_TIMEOUT_MS = 3_000
@@ -43,14 +44,6 @@ interface PaneRow {
   tty: string
 }
 
-function normalizeTty(raw: string | undefined): string | undefined {
-  const value = raw?.trim()
-  if (!value) return undefined
-  const normalized = value.replace(/^\/dev\//, '')
-  if (!normalized || normalized === '?') return undefined
-  return normalized
-}
-
 function commandPattern(args: BindRuntimeIdentityInput): RegExp | null {
   if (args.agent === 'custom') {
     const raw = args.process_pattern?.trim()
@@ -84,34 +77,6 @@ async function listPanes(execLike: typeof execFile): Promise<PaneRow[]> {
         tty: normalizeTty(pane_tty) ?? '',
       }
     })
-}
-
-async function readPidInfo(
-  execLike: typeof execFile,
-  pid: number
-): Promise<{ found: boolean; tty?: string; command?: string }> {
-  const exec = promisify(execLike)
-  try {
-    const { stdout } = await exec(
-      'ps',
-      ['-p', String(pid), '-o', 'tty=,command='],
-      { timeout: PS_LIST_TIMEOUT_MS }
-    )
-    const line = stdout
-      .split('\n')
-      .map(value => value.trim())
-      .find(Boolean)
-    if (!line) return { found: false }
-    const match = line.match(/^(\S+)\s+(.*)$/)
-    if (!match) return { found: false }
-    return {
-      found: true,
-      tty: normalizeTty(match[1]),
-      command: match[2]?.trim(),
-    }
-  } catch {
-    return { found: false }
-  }
 }
 
 async function ttyProcesses(

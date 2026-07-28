@@ -105,9 +105,11 @@ describe('send_message cross-team auto-poke + retry', () => {
     expect(pokeCalls[0].target).toBe('B')
     expect(pokeCalls[0].prompt).toContain('新邮件 from lead-alpha')
     expect(pokeCalls[0].prompt).not.toContain('token=xyz')
-    // No team prefix in hint (cross-team sender name is bare, same format as same-team)
+    // No team prefix on the SENDER segment (cross-team sender name is bare,
+    // same format as same-team); the target segment carries the TARGET's team.
     expect(pokeCalls[0].prompt).not.toContain('alpha/')
     expect(pokeCalls[0].prompt).not.toContain('[alpha]')
+    expect(pokeCalls[0].prompt).toContain('→ worker-beta@beta')
   })
 
   it('cross-team send guard_failed schedules retries; retry lookup works without team filter', async () => {
@@ -139,6 +141,8 @@ describe('send_message cross-team auto-poke + retry', () => {
     expect(pokeCalls).toHaveLength(1)
     expect(pokeCalls[0].target).toBe('B')
     expect(pokeCalls[0].prompt).toContain('新邮件 from lead-alpha')
+    // The retry tick re-resolves the cross-team target, not the caller's team.
+    expect(pokeCalls[0].prompt).toContain('→ worker-beta@beta')
 
     vi.useRealTimers()
   })

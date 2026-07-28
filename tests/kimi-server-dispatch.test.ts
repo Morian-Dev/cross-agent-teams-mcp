@@ -573,7 +573,7 @@ describe('dispatchPoke kimi-server routing', () => {
         },
       },
       {
-        agent_type: 'kimi-code',
+        agent_id: 'target', device: 'local', runtime_ui_pid: null, agent_type: 'kimi-code',
         delivery: {
           kind: 'kimi-server',
           session_id: 'session_abc',
@@ -613,7 +613,7 @@ describe('dispatchPoke kimi-server routing', () => {
         }),
       },
       {
-        agent_type: 'kimi-code',
+        agent_id: 'target', device: 'local', runtime_ui_pid: null, agent_type: 'kimi-code',
         delivery: {
           kind: 'kimi-server',
           session_id: 'session_abc',
@@ -646,7 +646,7 @@ describe('dispatchPoke kimi-server routing', () => {
         },
       },
       {
-        agent_type: null,
+        agent_id: 'target', device: 'local', runtime_ui_pid: null, agent_type: null,
         delivery: {
           kind: 'kimi-server',
           session_id: 'session_abc',

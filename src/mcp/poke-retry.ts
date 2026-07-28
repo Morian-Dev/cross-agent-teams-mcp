@@ -24,12 +24,13 @@ export interface RetryContext {
   sentAt: string
   paneId: string
   paneGuardFn: (paneId: string) => Promise<'pass' | 'fail'>
-  pokeFn: (args: RetryPokeArgs) => Promise<void>
+  // `void` keeps pre-existing callers valid and is read as "delivered".
+  pokeFn: (args: RetryPokeArgs) => Promise<{ ok: true } | { ok: false; reason?: string } | void>
   lookupAgentFn: (agentId: string) => RetryAgentLookup | undefined
   updateStatusFn?: (args: {
     agentId: string
     wake_status: 'delivered' | 'retrying' | 'skipped' | 'failed'
-    skip_reason?: 'guard_failed' | 'no_pane' | 'recipient_active' | 'retry_exhausted' | null
+    skip_reason?: 'guard_failed' | 'no_pane' | 'recipient_active' | 'retry_exhausted' | TerminalSkipReason | null
     retry_attempts?: number
     delivered_at?: string | null
   }) => void
@@ -42,6 +43,19 @@ interface RetryEntry {
 }
 
 const retryMap = new Map<string, RetryEntry>()
+
+type TerminalSkipReason = 'no_pane' | 'pane_reassigned' | 'tmux_unavailable'
+
+/**
+ * Failures that no amount of waiting reverses. Anything else — including an
+ * unrecognised reason — keeps the normal backoff and ends at retry_exhausted,
+ * so an unknown failure is never mistaken for a delivery.
+ */
+function terminalSkipReason(reason: string | undefined): TerminalSkipReason | undefined {
+  return reason === 'pane_reassigned' || reason === 'no_pane' || reason === 'tmux_unavailable'
+    ? reason
+    : undefined
+}
 
 function keyOf(ctx: RetryContext): string {
   return `${ctx.messageId}:${ctx.agentId}`
@@ -94,22 +108,42 @@ async function tick(key: string): Promise<void> {
     }
     const guard = await ctx.paneGuardFn(agent.tmux_pane_id)
     if (guard === 'pass') {
-      await ctx.pokeFn({
+      const outcome = await ctx.pokeFn({
         team: ctx.team,
         fromAgentId: ctx.fromAgentId,
         targetAgentId: ctx.agentId,
         paneId: agent.tmux_pane_id,
         body: ctx.body
       })
-      ctx.updateStatusFn?.({
-        agentId: ctx.agentId,
-        wake_status: 'delivered',
-        skip_reason: null,
-        retry_attempts: entry.attempt + 1,
-        delivered_at: new Date().toISOString(),
-      })
-      retryMap.delete(key)
-      return
+      // Only an explicit success — or a legacy `void` caller — means the pane
+      // was written to. Every `ok:false` injected nothing and must never be
+      // recorded as delivered, whatever the reason.
+      const injected = !outcome || outcome.ok
+      if (injected) {
+        ctx.updateStatusFn?.({
+          agentId: ctx.agentId,
+          wake_status: 'delivered',
+          skip_reason: null,
+          retry_attempts: entry.attempt + 1,
+          delivered_at: new Date().toISOString(),
+        })
+        retryMap.delete(key)
+        return
+      }
+      // A host that changed, vanished, or has no tmux does not come back on a
+      // timer, so those stop here like no_pane does. Everything else (including
+      // guard_failed) falls through to the normal backoff below.
+      const terminal = terminalSkipReason(outcome.reason)
+      if (terminal !== undefined) {
+        ctx.updateStatusFn?.({
+          agentId: ctx.agentId,
+          wake_status: 'skipped',
+          skip_reason: terminal,
+          retry_attempts: entry.attempt + 1,
+        })
+        retryMap.delete(key)
+        return
+      }
     }
     entry.attempt += 1
     if (entry.attempt >= RETRY_DELAYS_MS.length) {

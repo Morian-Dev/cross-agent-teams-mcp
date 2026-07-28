@@ -14,10 +14,21 @@ import {
   dispatchKimiServerPokeGated,
   type KimiServerDispatchResult,
 } from './kimi-server-dispatch.js'
+import type { PaneHostVerdict } from './pane-host-verify.js'
 
 export interface DispatchDeps {
   channelWakeFanout?: ChannelWakeFanout
-  tmuxPoke: (args: { pane_id: string; content: string; skipGuard?: boolean }) => Promise<TmuxPokeResult>
+  tmuxPoke: (args: {
+    pane_id: string
+    content: string
+    skipGuard?: boolean
+    confirmOwnership?: () => boolean
+  }) => Promise<TmuxPokeResult>
+  /** Synchronous current-ownership read, re-run by tmuxPoke just before writing. */
+  confirmPaneOwnership?: (args: { row: TargetRow; paneId: string }) => boolean
+  // Single gate for every tmux fallback below; omitted only by legacy callers
+  // that supply no pane snapshot (tests, in-process fixtures).
+  verifyPaneHost?: (args: { row: TargetRow; paneId: string }) => Promise<PaneHostVerdict>
   codexAppserverDispatch?: (args: {
     delivery: Extract<DeliverySpec, { kind: 'codex-appserver' }>
     content: string
@@ -37,9 +48,12 @@ export type TmuxPokeResult =
   | { error: string; detail?: unknown }
 
 export interface TargetRow {
+  agent_id: string
   agent_type: AgentType | null
+  device: string
   delivery: DeliverySpec
   tmux_pane_id: string | null
+  runtime_ui_pid: number | null
 }
 
 export interface DispatchInput {
@@ -106,11 +120,28 @@ function resolveAgentType(target: TargetRow): AgentType | null {
 
 async function dispatchTmux(
   deps: DispatchDeps,
+  target: TargetRow,
   paneId: string,
   content: string,
   skipGuard?: boolean
 ): Promise<DispatchResult> {
-  const tmuxResult = await deps.tmuxPoke({ pane_id: paneId, content, skipGuard })
+  if (deps.verifyPaneHost) {
+    const verdict = await deps.verifyPaneHost({ row: target, paneId })
+    if (!verdict.ok) {
+      // Unknown ownership is never a licence to inject: an unqueryable tmux is
+      // reported as unavailable, which is also what the paste would hit.
+      const error = verdict.reason === 'undecidable' ? 'tmux_unavailable' : verdict.reason
+      return { error, transport_used: 'tmux-poke' }
+    }
+  }
+  const tmuxResult = await deps.tmuxPoke({
+    pane_id: paneId,
+    content,
+    skipGuard,
+    confirmOwnership: deps.confirmPaneOwnership
+      ? () => deps.confirmPaneOwnership!({ row: target, paneId })
+      : undefined,
+  })
   if ('ok' in tmuxResult && tmuxResult.ok) {
     return {
       ok: true,
@@ -151,7 +182,7 @@ async function dispatchClaude(
     }
   }
 
-  if (paneId) return dispatchTmux(deps, paneId, input.content, input.skipGuard)
+  if (paneId) return dispatchTmux(deps, target, paneId, input.content, input.skipGuard)
   return {
     error: 'no_transport_available',
     detail: {
@@ -180,10 +211,10 @@ async function dispatchCodex(
     ) {
       return result
     }
-    if (paneId) return dispatchTmux(deps, paneId, input.content, input.skipGuard)
+    if (paneId) return dispatchTmux(deps, target, paneId, input.content, input.skipGuard)
     return result
   }
-  if (paneId) return dispatchTmux(deps, paneId, input.content, input.skipGuard)
+  if (paneId) return dispatchTmux(deps, target, paneId, input.content, input.skipGuard)
   return {
     error: 'no_transport_available',
     detail: {
@@ -209,7 +240,7 @@ async function dispatchOpencode(
   // (legacy `agent_type='opencode'` callers that did not pass base_url used
   // the tmux runtime-bind path; this branch preserves that behavior).
   const paneId = target.tmux_pane_id
-  if (paneId) return dispatchTmux(deps, paneId, input.content, input.skipGuard)
+  if (paneId) return dispatchTmux(deps, target, paneId, input.content, input.skipGuard)
   return {
     error: 'no_transport_available',
     detail: {
@@ -235,7 +266,7 @@ async function dispatchKimi(
   // (mirrors the legacy opencode branch: only an explicit kimi-server
   // delivery pins the HTTP transport and forbids tmux fallback).
   const paneId = target.tmux_pane_id
-  if (paneId) return dispatchTmux(deps, paneId, input.content, input.skipGuard)
+  if (paneId) return dispatchTmux(deps, target, paneId, input.content, input.skipGuard)
   return {
     error: 'no_transport_available',
     detail: {
@@ -251,7 +282,7 @@ async function dispatchUnknown(
   input: DispatchInput
 ): Promise<DispatchResult> {
   const paneId = target.tmux_pane_id
-  if (paneId) return dispatchTmux(deps, paneId, input.content, input.skipGuard)
+  if (paneId) return dispatchTmux(deps, target, paneId, input.content, input.skipGuard)
   return {
     error: 'no_transport_available',
     detail: {

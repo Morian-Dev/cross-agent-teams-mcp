@@ -188,7 +188,7 @@ export function mountRestApi(
   // Constructed exactly like the send_message tool in src/mcp/tools.ts so a REST
   // send pokes recipients identically (channel-wake / tmux / codex-appserver /
   // opencode-server are all resolved inside poke() from the target's delivery row).
-  const autoPokeImpl = createAutoPokeImpl(db, agents, deps.channelWakeFanout)
+  const autoPokeImpl = createAutoPokeImpl(db, agents, deps.channelWakeFanout, localDevice)
   const sendSvc = new SendMessageService(db, agents, events, { poke: autoPokeImpl })
   const inboxSvc = new GetInboxService(db, agents)
   const ctx: RestCtx = { db, localDevice, agents, sendSvc, inboxSvc }

@@ -18,6 +18,7 @@ vi.mock('../src/daemon/tmux-cli.js', async (importOriginal) => {
 })
 
 import { poke } from '../src/mcp/poke.js'
+import { fakePaneSnapshot } from './helpers/pane-snapshot.js'
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'atm-poke-xteam-'))
 
@@ -57,7 +58,7 @@ describe('poke() cross-team with allowCrossTeam flag', () => {
     seed(db, 'A', 'alpha', 'alice', '%pA')
     seed(db, 'B', 'beta', 'bob', '%pB')
     const res = await poke(
-      { db, callerAgentId: 'A', allowCrossTeam: true },
+      { db, callerAgentId: 'A', allowCrossTeam: true, paneSnapshot: fakePaneSnapshot([{ pane_id: '%pB' }]) },
       { target_agent_id: 'B', prompt: 'p' }
     )
     expect('ok' in res && res.ok).toBe(true)
@@ -67,7 +68,10 @@ describe('poke() cross-team with allowCrossTeam flag', () => {
     const db = fresh()
     seed(db, 'A', 'alpha', 'alice', '%pA')
     seed(db, 'B', 'alpha', 'bob', '%pB')
-    const res = await poke({ db, callerAgentId: 'A' }, { target_agent_id: 'B', prompt: 'p' })
+    const res = await poke(
+      { db, callerAgentId: 'A', paneSnapshot: fakePaneSnapshot([{ pane_id: '%pB' }]) },
+      { target_agent_id: 'B', prompt: 'p' }
+    )
     expect('ok' in res && res.ok).toBe(true)
   })
 })

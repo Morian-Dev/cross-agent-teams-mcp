@@ -9,8 +9,15 @@ import {
   sendEnter
 } from '../daemon/tmux-cli.js'
 import type { ChannelWakeFanout } from '../daemon/channel-wake-fanout.js'
-import { dispatchPoke, type TmuxPokeResult } from './transport-dispatch.js'
+import { dispatchPoke, type TargetRow as DispatchTargetRow, type TmuxPokeResult } from './transport-dispatch.js'
 import { runQuietGuard } from './poke-guard.js'
+import {
+  memoizePaneSnapshot,
+  verifyPaneHost,
+  type PaneHostRow,
+  type PaneHostVerdict,
+  type PaneSnapshotLoader,
+} from './pane-host-verify.js'
 
 // allowCrossTeam is for internal auto-poke callers only; MCP tool entry MUST NOT pass it.
 export interface PokeDeps {
@@ -18,6 +25,9 @@ export interface PokeDeps {
   callerAgentId: string | null
   allowCrossTeam?: boolean
   channelWakeFanout?: ChannelWakeFanout
+  localDevice?: string
+  // Supplied by fan-out so one tmux snapshot serves the whole round.
+  paneSnapshot?: PaneSnapshotLoader
 }
 
 export interface PokeInput {
@@ -63,8 +73,10 @@ export type PokeResult =
 interface TargetRow {
   agent_id: string
   agent_type: import('../lib/agent-type.js').AgentType | null
+  device: string
   team: string
   tmux_pane_id: string | null
+  runtime_ui_pid: number | null
   delivery_kind: string
   delivery_payload: string | null
 }
@@ -117,6 +129,7 @@ async function tmuxPokeImpl(args: {
   pane_id: string
   content: string
   skipGuard?: boolean
+  confirmOwnership?: () => boolean
 }): Promise<TmuxPokeResult> {
   if (!(await isTmuxAvailable())) {
     return { error: 'tmux_unavailable', detail: 'tmux binary not available on PATH' }
@@ -128,6 +141,13 @@ async function tmuxPokeImpl(args: {
       // (pane_dead / tmux_cmd_failed) instead of throwing out of the primitive.
       const guard = await runStage('capture_before', () => runQuietGuard(args.pane_id))
       if (guard === 'fail') return { error: 'guard_failed' }
+    }
+    // Last ownership read before anything is written. The guard above parks for
+    // POKE_QUIET_MS, which is long enough for a takeover to land, so the
+    // dispatcher's earlier check cannot be the one the write relies on. This is
+    // synchronous and immediately precedes the write, leaving no await in between.
+    if (args.confirmOwnership && !args.confirmOwnership()) {
+      return { error: 'pane_reassigned' }
     }
     const pane_tail_before = await runStage('capture_before', () => capturePaneTail(args.pane_id, TAIL_LINES))
     await runStage('load_buffer', () => loadBuffer(bufName, args.content))
@@ -155,8 +175,10 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
       `SELECT
          agent_id,
          agent_type,
+         device,
          team,
          tmux_pane_id,
+         runtime_ui_pid,
          delivery_kind,
          delivery_payload
        FROM agents
@@ -180,37 +202,79 @@ export async function poke(deps: PokeDeps, input: PokeInput): Promise<PokeResult
   // fully described by the target row itself.
   const fanout = deps.channelWakeFanout
   const delivery = parseDeliveryRow(target) as DeliverySpec
+  const dispatchTarget: DispatchTargetRow = {
+    agent_id: target.agent_id,
+    agent_type: target.agent_type,
+    device: target.device,
+    delivery,
+    tmux_pane_id: target.tmux_pane_id,
+    runtime_ui_pid: target.runtime_ui_pid,
+  }
+  const verify = createPaneHostVerifier(deps)
+  const confirmOwn = ({ row, paneId }: { row: DispatchTargetRow; paneId: string }): boolean =>
+    row.device !== (deps.localDevice ?? 'local') || stillOwnsPane(deps.db, row.agent_id, paneId)
   if (!fanout) {
     if (delivery.kind === 'codex-appserver' || delivery.kind === 'opencode-server' || delivery.kind === 'kimi-server') {
       return dispatchPoke(
-        { tmuxPoke: tmuxPokeImpl },
-        { agent_type: target.agent_type, delivery, tmux_pane_id: target.tmux_pane_id },
+        { tmuxPoke: tmuxPokeImpl, verifyPaneHost: verify, confirmPaneOwnership: confirmOwn },
+        dispatchTarget,
         { content: input.prompt, meta: {}, skipGuard: input.skipGuard }
       )
     }
 
-    // Legacy tmux-only path preserved when no fanout supplied by caller.
+    // Legacy tmux-only path preserved when no fanout supplied by caller. It
+    // routes through the same dispatcher so verification, the undecidable →
+    // tmux_unavailable mapping and the pre-write ownership recheck cannot drift.
     if (!target.tmux_pane_id) return { error: 'tmux_pane_not_set' }
-    const tr = await tmuxPokeImpl({
-      pane_id: target.tmux_pane_id,
-      content: input.prompt,
-      skipGuard: input.skipGuard
-    })
-    if ('ok' in tr && tr.ok) {
-      return {
-        ok: true,
-        transport_used: 'tmux-poke',
-        pane_id: target.tmux_pane_id,
-        pane_tail_before: tr.pane_tail_before,
-        pane_tail_after: tr.pane_tail_after
-      }
-    }
-    return { ...(tr as { error: string; detail?: unknown }), transport_used: 'tmux-poke' }
+    return dispatchPoke(
+      { tmuxPoke: tmuxPokeImpl, verifyPaneHost: verify, confirmPaneOwnership: confirmOwn },
+      dispatchTarget,
+      { content: input.prompt, meta: {}, skipGuard: input.skipGuard }
+    )
   }
 
   return dispatchPoke(
-    { channelWakeFanout: fanout, tmuxPoke: tmuxPokeImpl },
-    { agent_type: target.agent_type, delivery, tmux_pane_id: target.tmux_pane_id },
+    { channelWakeFanout: fanout, tmuxPoke: tmuxPokeImpl, verifyPaneHost: verify, confirmPaneOwnership: confirmOwn },
+    dispatchTarget,
     { content: input.prompt, meta: {}, skipGuard: input.skipGuard }
   )
+}
+
+function findPaneClaimants(
+  db: Database.Database,
+  args: { device: string; paneId: string; excludeAgentId: string }
+): PaneHostRow[] {
+  return db
+    .prepare(
+      `SELECT agent_id, device, runtime_ui_pid
+       FROM agents
+       WHERE device = ? AND tmux_pane_id = ? AND agent_id != ?`
+    )
+    .all(args.device, args.paneId, args.excludeAgentId) as PaneHostRow[]
+}
+
+function stillOwnsPane(
+  db: Database.Database,
+  agentId: string,
+  paneId: string
+): boolean {
+  const row = db
+    .prepare(`SELECT 1 AS held FROM agents WHERE agent_id = ? AND tmux_pane_id = ?`)
+    .get(agentId, paneId) as { held: number } | undefined
+  return row !== undefined
+}
+
+function createPaneHostVerifier(
+  deps: PokeDeps
+): (args: { row: DispatchTargetRow; paneId: string }) => Promise<PaneHostVerdict> {
+  const loadSnapshot = deps.paneSnapshot ?? memoizePaneSnapshot()
+  return async ({ row, paneId }) =>
+    verifyPaneHost({
+      row,
+      paneId,
+      paneSnapshot: await loadSnapshot(),
+      localDevice: deps.localDevice ?? 'local',
+      findPaneClaimants: args => findPaneClaimants(deps.db, args),
+      stillOwnsPane: (agentId, pane) => stillOwnsPane(deps.db, agentId, pane),
+    })
 }

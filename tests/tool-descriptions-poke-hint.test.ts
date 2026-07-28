@@ -70,6 +70,9 @@ describe('tool descriptions: auto-poke and delivery status', () => {
     expect(d).toMatch(/only.*short.*hint|短.*提醒|only.*hint/i)
     expect(d).toMatch(/get_inbox/)
     expect(d).toMatch(/新邮件 from/)
+    // The documented example must show the target segment, otherwise callers
+    // are told a format the daemon no longer injects.
+    expect(d).toMatch(/新邮件 from <sender> → </)
   })
 
   it('broadcast description states auto-poke injects only a short hint, not the body', async () => {
@@ -79,6 +82,9 @@ describe('tool descriptions: auto-poke and delivery status', () => {
     expect(d).toMatch(/only.*short.*hint|短.*提醒|only.*hint/i)
     expect(d).toMatch(/get_inbox/)
     expect(d).toMatch(/新邮件 from/)
+    // The documented example must show the target segment, otherwise callers
+    // are told a format the daemon no longer injects.
+    expect(d).toMatch(/新邮件 from <sender> → </)
   })
 
   it('send_message and broadcast tool schemas expose auto_poke as optional boolean', async () => {
