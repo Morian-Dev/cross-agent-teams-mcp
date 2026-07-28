@@ -2,6 +2,11 @@ import { describe, it, expect, afterEach, vi, beforeEach } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fakePaneSnapshot } from './helpers/pane-snapshot.js'
+
+// Host verification precedes the paste; without a snapshot the pane is
+// undecidable and loadBuffer never gets a chance to reject.
+const snapshot = fakePaneSnapshot([{ pane_id: '%42' }])
 
 vi.mock('../src/daemon/tmux-cli.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/daemon/tmux-cli.js')>()
@@ -43,7 +48,7 @@ describe('poke tmux_cmd_failed with stage info', () => {
     )
 
     const result = await poke(
-      { db, callerAgentId: 'caller-a' },
+      { db, callerAgentId: 'caller-a', paneSnapshot: snapshot },
       { target_agent_id: 'target-b', prompt: 'hi' }
     )
 

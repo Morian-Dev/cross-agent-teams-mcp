@@ -411,6 +411,10 @@ describe('reconnect kimi-code by (base_url, session_id)', () => {
   })
 
   it('register and reconnect agree on the trimmed session_id', async () => {
+    // Explicit ref like its siblings: without one the bearer falls back to
+    // ~/.kimi-code/server.token, which only exists on a kimi developer's box.
+    process.env.KIMI_RECONNECT_TOK = 'kimi-secret'
+    envKeys.push('KIMI_RECONNECT_TOK')
     vi.stubGlobal('fetch', makeKimiFetch({
       seen: [],
       session: { body: envelope({ id: 'session_pad' }) },
@@ -425,6 +429,7 @@ describe('reconnect kimi-code by (base_url, session_id)', () => {
         name: 'kimi-pad',
         base_url: KIMI_BASE_URL,
         session_id: '  session_pad  ',
+        auth_token_ref: 'KIMI_RECONNECT_TOK',
       },
     }))
     // The schema trims, so response, stored row, and lookups all agree.

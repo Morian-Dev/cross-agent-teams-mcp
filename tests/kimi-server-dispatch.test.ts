@@ -684,9 +684,12 @@ describe('gate deferral logging', () => {
     it(`records the ${c.name} sub-reason so it is diagnosable without widening the public result`, async () => {
       const records: Record<string, unknown>[] = []
       const res = await dispatchKimiServerPoke(
-        { delivery: DELIVERY, content: 'hi' },
+        // Bearer via an explicit ref: with neither ref nor tokenFilePath the
+        // auth step falls back to ~/.kimi-code/server.token and returns
+        // missing_auth_token before the gate ever runs.
+        { delivery: { ...DELIVERY, auth_token_ref: 'KIMI_SERVER_TOKEN' }, content: 'hi' },
         {
-          env: { CROSS_AGENT_TEAMS_MCP_TOKEN: 'tok' },
+          env: { CROSS_AGENT_TEAMS_MCP_TOKEN: 'tok', KIMI_SERVER_TOKEN: 'secret-token' },
           fetch: (async () => { throw new Error('must not be called') }) as unknown as typeof fetch,
           precheck: c.precheck,
           logGate: (r) => { records.push(r) }
