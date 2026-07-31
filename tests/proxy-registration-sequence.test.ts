@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { startServer } from '../src/daemon/server.js'
+import { openDb } from '../src/storage/db.js'
 import { runRegistrationSequence } from '../plugins/cross-agent-teams-channel/src/daemon-client.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'atm-proxy-reg-'))
@@ -53,6 +54,40 @@ describe('proxy registration sequence (self-binding)', () => {
     expect(seq.lastSubscribeResult).toEqual({ ok: true })
 
     await seq.close()
+    await app.close()
+  }, 20000)
+
+  it('never puts an identity key on the proxy own row', async () => {
+    const dir = tmp(); cleanups.push(dir)
+    const dbPath = join(dir, 'data.db')
+    const { app, port, host } = await startServer({ dbPath, port: 0 })
+    const url = `http://${host}:${port}/mcp`
+
+    // The key belongs to the host agent's identity, not to the proxy — even
+    // with one exported into the proxy's environment.
+    const previous = process.env.XATS_IDENTITY_KEY
+    process.env.XATS_IDENTITY_KEY = 'abc-123'
+    try {
+      const seq = await runRegistrationSequence({
+        daemonUrl: url,
+        channel_session_id: 'csid-key',
+        backoffInitialMs: 10,
+        backoffMaxMs: 50
+      })
+      await seq.close()
+    } finally {
+      if (previous === undefined) delete process.env.XATS_IDENTITY_KEY
+      else process.env.XATS_IDENTITY_KEY = previous
+    }
+
+    const db = openDb(dbPath)
+    const rows = db.prepare(
+      `SELECT identity_key FROM agents WHERE role='__channel_proxy__'`
+    ).all() as Array<{ identity_key: string | null }>
+    expect(rows).toHaveLength(1)
+    expect(rows[0].identity_key).toBeNull()
+    db.close()
+
     await app.close()
   }, 20000)
 

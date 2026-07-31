@@ -5,6 +5,7 @@ export type PublicDelivery =
   | { kind: 'none' }
   | { kind: 'codex-appserver' }
   | { kind: 'opencode-server' }
+  | { kind: 'kimi-server' }
   | { kind: 'claude-channel'; channel_session_id: string }
 
 export interface PublicAgentListRow {

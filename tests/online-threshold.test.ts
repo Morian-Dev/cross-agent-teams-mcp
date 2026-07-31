@@ -15,6 +15,7 @@ function agent(overrides: Partial<AgentRow>): AgentRow {
     runtime_ui_pid: null,
     delivery: { kind: 'none' },
     channel_session_id: null,
+    identity_key: null,
     last_seen_at: new Date().toISOString(),
     ...overrides,
   }

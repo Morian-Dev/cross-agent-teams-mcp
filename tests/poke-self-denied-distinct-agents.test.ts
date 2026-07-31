@@ -19,6 +19,11 @@ vi.mock('../src/daemon/tmux-cli.js', async (importOriginal) => {
 })
 
 import { poke } from '../src/mcp/poke.js'
+import { fakePaneSnapshot } from './helpers/pane-snapshot.js'
+
+// Self-poke semantics are keyed on agent_id, but the paste is still gated by
+// host verification — give it a snapshot so these cases reach that decision.
+const snapshot = fakePaneSnapshot([{ pane_id: '%1' }, { pane_id: '%2' }, { pane_id: '%42' }])
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'atm-poke-self-distinct-'))
 
@@ -49,7 +54,7 @@ describe('poke() distinct agents are never self-poke', () => {
     const db = fresh()
     seed(db, 'A', 'default', 'alice', '%1')
     seed(db, 'B', 'default', 'bob', '%2')
-    const res = await poke({ db, callerAgentId: 'A' }, { target_agent_id: 'B', prompt: 'p' })
+    const res = await poke({ db, callerAgentId: 'A', paneSnapshot: snapshot }, { target_agent_id: 'B', prompt: 'p' })
     expect(res).not.toMatchObject({ error: 'self_poke_denied' })
     expect('ok' in res && res.ok).toBe(true)
   })
@@ -58,7 +63,7 @@ describe('poke() distinct agents are never self-poke', () => {
     const db = fresh()
     seed(db, 'A', 'default', 'alice', '%42')
     seed(db, 'B', 'default', 'bob', '%42')
-    const res = await poke({ db, callerAgentId: 'A' }, { target_agent_id: 'B', prompt: 'p' })
+    const res = await poke({ db, callerAgentId: 'A', paneSnapshot: snapshot }, { target_agent_id: 'B', prompt: 'p' })
     expect(res).not.toMatchObject({ error: 'self_poke_denied' })
     expect('ok' in res && res.ok).toBe(true)
   })
@@ -67,7 +72,7 @@ describe('poke() distinct agents are never self-poke', () => {
     const db = fresh()
     seed(db, 'A', 'default', 'alice', null)
     seed(db, 'B', 'default', 'bob', null)
-    const res = await poke({ db, callerAgentId: 'A' }, { target_agent_id: 'B', prompt: 'p' })
+    const res = await poke({ db, callerAgentId: 'A', paneSnapshot: snapshot }, { target_agent_id: 'B', prompt: 'p' })
     expect(res).not.toMatchObject({ error: 'self_poke_denied' })
     expect(res).toMatchObject({ error: 'tmux_pane_not_set' })
   })

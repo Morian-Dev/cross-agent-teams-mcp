@@ -1,4 +1,6 @@
 import type { AgentsRepo, RuntimeUiPidMatch } from '../storage/agents-repo.js'
+import { kimiAuthHeaders, DEFAULT_KIMI_TOKEN_FILE } from './kimi-auth.js'
+import { kimiSessionUrl, parseStrictEnvelopeData } from './kimi-session-state.js'
 
 export interface ReconnectCandidate {
   agent_id: string
@@ -54,6 +56,34 @@ export function resolveReconnect(
   return { kind: 'ambiguous', candidates: rows.map(toCandidate) }
 }
 
+/**
+ * Reverse-look-up a prior local identity by the launcher-minted
+ * `identity_key`. `UNIQUE(device, identity_key)` admits at most one row, so
+ * the ambiguous branch is unreachable in practice — it is kept so a somehow
+ * duplicated key surfaces instead of being silently resolved to one row.
+ */
+export function resolveIdentityKeyReconnect(
+  repo: AgentsRepo,
+  identity_key: string,
+  localDevice: string
+): ReconnectResolution {
+  const rows = repo.findByIdentityKey(identity_key, localDevice)
+  if (rows.length === 0) {
+    return {
+      kind: 'need_register',
+      reason:
+        'No local agent holds this identity_key. ' +
+        'There is no prior identity to reconnect; call register_agent to ' +
+        'register a new identity and pass the same identity_key so later ' +
+        'restarts can recover it.',
+    }
+  }
+  if (rows.length === 1) {
+    return { kind: 'single', match: toCandidate(rows[0]) }
+  }
+  return { kind: 'ambiguous', candidates: rows.map(toCandidate) }
+}
+
 export function resolveCodexReconnect(
   repo: AgentsRepo,
   thread_id: string,
@@ -73,6 +103,98 @@ export function resolveCodexReconnect(
     return { kind: 'single', match: toCandidate(rows[0]) }
   }
   return { kind: 'ambiguous', candidates: rows.map(toCandidate) }
+}
+
+/** Pure-read kimi reverse lookup by (base_url, session_id). session_id is
+ *  REQUIRED for the kimi path: the daemon never auto-resolves a kimi session
+ *  by recency, mirroring the registration-time refusal to guess. */
+export function resolveKimiReconnect(
+  repo: AgentsRepo,
+  base_url: string,
+  session_id: string,
+  localDevice: string
+): ReconnectResolution {
+  const rows = repo.findByKimiSession(base_url, session_id, localDevice)
+  if (rows.length === 0) {
+    return {
+      kind: 'need_register',
+      reason:
+        `No local kimi agent is registered for session_id ${session_id} ` +
+        `on base_url ${base_url}. ` +
+        'There is no prior identity to reconnect; call register_agent to ' +
+        'register a new identity.',
+    }
+  }
+  if (rows.length === 1) {
+    return { kind: 'single', match: toCandidate(rows[0]) }
+  }
+  return { kind: 'ambiguous', candidates: rows.map(toCandidate) }
+}
+
+export interface KimiSessionProbeDeps {
+  env?: NodeJS.ProcessEnv
+  fetch?: typeof globalThis.fetch
+  tokenFilePath?: string
+}
+
+export type ValidateKimiSessionResult =
+  | { ok: true }
+  | {
+      error: 'missing_auth_token'
+      detail: { ref: string } | { token_file: string }
+    }
+  | {
+      error: 'session_not_found'
+      detail: { base_url: string; session_id: string; cause: string }
+    }
+
+/**
+ * Revalidate a kimi session before a reconnect reuses its identity. Bearer
+ * resolution is exactly the poke dispatcher's (delivery auth_token_ref, else
+ * the kimi token file). Unlike the busy gate, every probe failure fails
+ * CLOSED: rebinding onto an archived/stale session would silently misroute
+ * pokes, so the caller mutates nothing on session_not_found.
+ */
+export async function validateKimiSession(
+  args: { base_url: string; session_id: string; auth_token_ref?: string },
+  deps: KimiSessionProbeDeps = {}
+): Promise<ValidateKimiSessionResult> {
+  const env = deps.env ?? process.env
+  const fetchImpl = deps.fetch ?? globalThis.fetch
+  const auth = kimiAuthHeaders(
+    args.auth_token_ref,
+    env,
+    deps.tokenFilePath ?? DEFAULT_KIMI_TOKEN_FILE
+  )
+  if ('error' in auth) return auth
+  const notFound = (cause: string): ValidateKimiSessionResult => ({
+    error: 'session_not_found',
+    detail: { base_url: args.base_url, session_id: args.session_id, cause },
+  })
+  let response: Response
+  try {
+    response = await fetchImpl(
+      kimiSessionUrl(args.base_url, args.session_id),
+      { method: 'GET', headers: auth.headers }
+    )
+  } catch (error) {
+    return notFound(error instanceof Error ? error.message : String(error))
+  }
+  let bodyText = ''
+  try {
+    bodyText = await response.text()
+  } catch {
+    bodyText = ''
+  }
+  if (!response.ok) return notFound(`http_${response.status}`)
+  const data = parseStrictEnvelopeData(bodyText)
+  if (data === undefined) return notFound('error_envelope')
+  // A 200 envelope alone proves nothing: require the payload to identify the
+  // requested session and to not be archived, else rebinding would silently
+  // misroute pokes to a session nobody is watching.
+  if (data.id !== args.session_id) return notFound('session_mismatch')
+  if (data.archived === true) return notFound('archived')
+  return { ok: true }
 }
 
 /** Pure-read opencode reverse lookup by (base_url, session_id). */

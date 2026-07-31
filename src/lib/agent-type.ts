@@ -1,1 +1,1 @@
-export type AgentType = 'codex' | 'claude-code' | 'opencode' | 'custom'
+export type AgentType = 'codex' | 'claude-code' | 'opencode' | 'kimi-code' | 'custom'

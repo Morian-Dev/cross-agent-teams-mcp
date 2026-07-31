@@ -9,6 +9,7 @@ import { runCleanup } from './cleanup.js'
 import { SseFanout } from './sse-fanout.js'
 import { ChannelWakeFanout } from './channel-wake-fanout.js'
 import { clearAllRetries } from '../mcp/poke-retry.js'
+import { clearAllKimiRetries } from '../mcp/kimi-poke-retry.js'
 import { resolveLocalDeviceLabel } from './local-device.js'
 import { bindHostCoversIpv4Loopback, classifyPeerAddress, type SessionOriginInfo } from './network-origin.js'
 
@@ -114,6 +115,7 @@ export async function buildServer(opts: ServerOpts): Promise<FastifyInstance> {
     clearInterval(interval)
     clearInterval(orphanGcInterval)
     clearAllRetries()
+    clearAllKimiRetries()
     fanout.stopAll()
     db.close()
   })
@@ -128,7 +130,13 @@ export interface StartServerResult {
 }
 
 export async function startServer(opts: StartOpts): Promise<StartServerResult> {
-  const app = await buildServer(opts)
+  // The daemon process entry supplies no mcpLog, so default the sink to the
+  // same stream as the startup banner (stdout, which the launchers append to
+  // the daemon log file). Leaving it unset silently discards every session
+  // created/closed/takeover/reap line the transport already emits. Embedded
+  // buildServer callers (library use, unit tests) stay silent by default.
+  const mcpLog = opts.mcpLog ?? ((line: string) => { console.log(line) })
+  const app = await buildServer({ ...opts, mcpLog })
   const host = opts.host ?? '127.0.0.1'
 
   // Hook for the loopback companion's graceful close. Registered BEFORE

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { startServer } from '../src/daemon/server.js'
+import { openDb } from '../src/storage/db.js'
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'atm-register-tool-schema-'))
 
@@ -46,11 +47,41 @@ describe('register_agent tool schema', () => {
         thread_id: expect.anything(),
         ws_url: expect.anything(),
         auth_token_ref: expect.anything(),
+        identity_key: expect.anything(),
         delivery: expect.anything(),
       }),
       required: expect.arrayContaining(['agent_type', 'name']),
       additionalProperties: false,
     })
+
+    await transport.terminateSession()
+    await client.close()
+    await app.close()
+  })
+
+  it('rejects a blank identity_key before any row is written', async () => {
+    const dir = tmp()
+    cleanups.push(dir)
+
+    const dbPath = join(dir, 'data.db')
+    const { app, port, host } = await startServer({ dbPath, port: 0 })
+    const url = new URL(`http://${host}:${port}/mcp`)
+    const transport = new StreamableHTTPClientTransport(url)
+    const client = new Client({ name: 'identity-key-check', version: '0.0.0' })
+    await client.connect(transport)
+
+    for (const identity_key of ['', '   ']) {
+      const resp = await client.callTool({
+        name: 'register_agent',
+        arguments: { agent_type: 'custom', agent_type_name: 'x', name: 'alice', identity_key },
+      }) as { isError?: boolean }
+      expect(resp.isError, `identity_key=${JSON.stringify(identity_key)}`).toBe(true)
+    }
+
+    const db = openDb(dbPath)
+    const count = db.prepare(`SELECT COUNT(*) AS c FROM agents`).get() as { c: number }
+    expect(count.c).toBe(0)
+    db.close()
 
     await transport.terminateSession()
     await client.close()

@@ -8,7 +8,7 @@ Persist agent identity tied to MCP session ids, scope visibility by team, and tr
 
 The database SHALL contain an `agents` table with columns: `agent_id TEXT PRIMARY KEY`, `agent_type TEXT`, `agent_type_name TEXT`, `device TEXT NOT NULL`, `team TEXT NOT NULL`, `role TEXT NOT NULL`, `name TEXT NOT NULL`, `model TEXT`, `registered_at TEXT NOT NULL`, `last_seen_at TEXT NOT NULL`, `last_processed_event_id INTEGER NOT NULL DEFAULT 0`, `tmux_pane_id TEXT`, `claude_ui_pid INTEGER`, `remote_addr TEXT`.
 
-The `name` column is the human-readable identifier used as part of the 3-tuple identity key `(device, team, name)` — it MUST NOT be NULL, MUST NOT be empty after trimming, and MUST NOT contain the `:` character (the colon is reserved as the `name:device` syntax delimiter in the mailbox capability). The `device` column is the host-namespace identifier used as part of the same identity key — it MUST NOT be NULL, MUST NOT be empty after trimming, MUST NOT contain `:`, and MUST be 64 characters or fewer. The `role` column remains a non-null informational field that describes the agent's function (e.g. `backend`, `frontend`) but is NOT part of the identity key; multiple successive registrations for the same `(device, team, name)` MAY carry different `role` values and MUST collapse to a single row. The `agent_type` column stores the explicitly declared runtime kind (`codex`, `claude-code`, `opencode`, or `custom`) and MAY be NULL only for legacy rows written before this requirement. The `agent_type_name` column is nullable and stores an optional free-form runtime label used only when `agent_type='custom'`. The `tmux_pane_id` column remains nullable and stores an optional tmux pane identifier (e.g. `%42`).
+The `name` column is the human-readable identifier used as part of the 3-tuple identity key `(device, team, name)` — it MUST NOT be NULL, MUST NOT be empty after trimming, and MUST NOT contain the `:` character (the colon is reserved as the `name:device` syntax delimiter in the mailbox capability). The `device` column is the host-namespace identifier used as part of the same identity key — it MUST NOT be NULL, MUST NOT be empty after trimming, MUST NOT contain `:`, and MUST be 64 characters or fewer. The `role` column remains a non-null informational field that describes the agent's function (e.g. `backend`, `frontend`) but is NOT part of the identity key; multiple successive registrations for the same `(device, team, name)` MAY carry different `role` values and MUST collapse to a single row. The `agent_type` column stores the explicitly declared runtime kind (`codex`, `claude-code`, `opencode`, `kimi-code`, or `custom`) and MAY be NULL only for legacy rows written before this requirement. The `agent_type_name` column is nullable and stores an optional free-form runtime label used only when `agent_type='custom'`. The `tmux_pane_id` column remains nullable and stores an optional tmux pane identifier (e.g. `%42`).
 
 The `claude_ui_pid` column is nullable and is populated only on `__channel_proxy__` rows; it stores the parent process id (`process.ppid`) of the channel proxy, which equals the Claude Code UI process id that spawned the proxy. It enables the host-to-proxy match during `register_agent({agent_type:'claude-code'})` auto-bind. For non-proxy rows it MUST remain NULL. The `remote_addr` column is nullable and stores the peer address of the MCP session that wrote the row when that session was non-loopback (used for daemon-internal audit only); for loopback sessions and legacy rows it MUST be NULL. Neither `claude_ui_pid` nor `remote_addr` is part of the identity key.
 
@@ -474,7 +474,7 @@ When a `register_agent` tool call carries an `Authorization` request header, the
 
 The 409 rejection body MUST NOT be a bare `{ "error": <string> }` object. Strict MCP clients (e.g. codex's `rmcp`) deserialize any response body as a JSON-RPC message; a bare `{ "error": "agent_id_collision" }` object matches no JSON-RPC 2.0 variant and poisons the client transport. The body MUST be either an empty body or a well-formed JSON-RPC 2.0 error object `{ "jsonrpc": "2.0", "id": null, "error": { "code": <integer>, "message": <string> } }` that a strict client can deserialize without error. (This concerns only the transport-level HTTP rejection emitted before/around tool dispatch; tool-result-level `{ error: ... }` payloads returned inside a normal 200 JSON-RPC `result` are unaffected.)
 
-当 `register_agent` 调用的 `(device, team, name)` 已绑定到不同的 MCP session id 时, daemon MUST 将其视为身份 TAKEOVER, 而不是 collision, 但下述 Codex 同 thread 例外除外.  TAKEOVER 必须执行以下步骤:
+当 `register_agent` 调用的 `(device, team, name)` 已绑定到不同的 MCP session id 时, daemon MUST 将其视为身份 TAKEOVER, 而不是 collision, 但下述稳定 runtime 身份共用连接的例外除外.  TAKEOVER 必须执行以下步骤:
 
 1. 将内存连接账本替换为新的 MCP session id.
 2. 对每个旧 MCP transport 调用 SDK transport 的 `close()` 方法.  关闭 MUST 经过 transport 的 `onclose` 链, 从 daemon 的 `sessions` Map 删除旧 session, 并清理对应的 SSE fanout 和 channel-wake 绑定.
@@ -483,9 +483,14 @@ The 409 rejection body MUST NOT be a bare `{ "error": <string> }` object. Strict
 
 强制关闭 MUST 使用幂等 session 清理器同步撤销旧 session 的路由、连接账本和 fanout 所有权.  SDK transport 的 `close()` 仍 MUST 被调用.  如果 `close()` 同步抛错或 Promise rejection, daemon MUST 显式记录包含旧 session id 的错误, 并保留已经完成的路由撤销, 不得让旧 session 继续通过 `/mcp` 到达业务工具.
 
-唯一例外是稳定 Codex runtime 身份共用连接.  当新旧注册都声明 `agent_type='codex'`, 都携带通过校验的 `delivery.kind='codex-appserver'`, 且 `delivery.thread_id` 相同时, daemon MUST 将这些 MCP session 视为同一 Codex thread 的并发连接.  内存账本 MUST 保留所有连接, MUST NOT 关闭任何已有 transport, MUST NOT 输出 takeover 日志, 且所有连接 MUST 继续以同一个 `agent_id` 调用业务工具.  任一连接关闭时, daemon MUST 只释放该连接, 其余同 thread 连接保持有效.  不同 `thread_id`, 缺少稳定 Codex delivery, 或任何非 Codex agent 类型仍执行正常 TAKEOVER.
+例外是**稳定 runtime 身份共用连接**, 适用于以下两种情况:
 
-因此, collision 保护仍仅适用于同一 session 内的 Authorization mismatch.  跨 session 重用同一身份时, daemon 根据上述规则执行 TAKEOVER 或 Codex 同 thread 共存, 不得返回 collision.
+- **Codex 同 thread**: 新旧注册都声明 `agent_type='codex'`, 都携带通过校验的 `delivery.kind='codex-appserver'`, 且 `delivery.thread_id` 相同.
+- **kimi 同 session**: 新旧注册都声明 `agent_type='kimi-code'`, 都携带通过校验的 `delivery.kind='kimi-server'`, 且 canonical 化后的 `delivery.base_url` 与 `delivery.session_id` 都相同.  canonical 化规则由注册持久化、共享 key 与 reconnect 查询共用: scheme/host 小写、默认端口移除 (均由 URL 解析器完成)、hash 剥离、尾部斜杠去除, 不可解析的输入退化为仅去尾斜杠.  kimi 的 endpoint URL 由 base_url 直接拼接 `/api/v1/...` 构成, 因此所有 kimi base_url 入口 — register schema、显式 kimi reconnect schema、以及 delivery 对象的写入校验 (validateDeliveryForWrite, 覆盖 `agent_type='custom'` 携带 kimi-server delivery 的旁路) — MUST 共用同一 validator 拒绝携带 query、fragment 或 userinfo 的 base_url; 判定 MUST 检查原始字符串中的 `?` / `#` 分隔符, 因为 WHATWG URL 对裸尾部 `?`/`#` 报告空 search/hash 却在序列化中保留分隔符.  canonical 化在 service 持久化边界执行, 不只在 MCP tool 层.  kimi 的 session id 只在单个 server 内唯一, 因此共享 key MUST 由 `(base_url, session_id)` 二元组构成 — 相同 `session_id` 出现在等价 URL 拼写上共享, 出现在真正不同的 `base_url` 上仍执行 TAKEOVER.  这覆盖 kimi 双引擎架构下同一逻辑 agent 的两条 MCP 连接 (TUI 进程内引擎与 server 引擎): server 侧 turn 的同名 re-register MUST NOT 关闭 TUI 侧连接.
+
+满足任一情况时, daemon MUST 将这些 MCP session 视为同一 runtime 身份的并发连接.  内存账本 MUST 保留所有连接, MUST NOT 关闭任何已有 transport, MUST NOT 输出 takeover 日志, 且所有连接 MUST 继续以同一个 `agent_id` 调用业务工具.  任一连接关闭时, daemon MUST 只释放该连接, 其余同 key 连接保持有效.  不同的稳定 key (thread_id / base_url+session_id), 缺少对应的已校验 delivery, 或任何其他 agent 类型仍执行正常 TAKEOVER.
+
+因此, collision 保护仍仅适用于同一 session 内的 Authorization mismatch.  跨 session 重用同一身份时, daemon 根据上述规则执行 TAKEOVER 或稳定 runtime 身份共存, 不得返回 collision.
 
 When the request carries no `Authorization` header (or an empty one after trim), the daemon MUST NOT enforce Authorization-based collision detection.
 
@@ -536,6 +541,34 @@ Arriving on a different TCP socket (e.g. after keep-alive expiry) MUST NOT by it
 - **THEN** daemon 关闭 `sess-A` 和 `sess-B`
 - **AND** 内存连接账本只保留 `sess-C`
 - **AND** daemon 为两个被关闭的 session 分别输出 takeover 日志
+
+#### Scenario: 同一 kimi session 的两条引擎连接共存
+
+- **GIVEN** `sess-TUI` 已通过 `agent_type='kimi-code'` 和 `delivery={ kind:'kimi-server', session_id:'S', base_url:'http://127.0.0.1:58627' }` 注册 `(default, kimi-1)`, 并获得 `agent_id='X'`
+- **WHEN** `sess-SRV` (server 引擎侧的新 MCP session) 使用相同 `agent_type`, `(device, team, name)` 和相同 `session_id='S'` 注册
+- **THEN** `sess-SRV` 获得相同的 `agent_id='X'`
+- **AND** daemon 不关闭 `sess-TUI`, 也不输出 takeover 日志
+- **AND** 两条连接都能继续调用 `get_inbox` 等业务工具
+
+#### Scenario: 不同 kimi session 的同名注册仍执行 takeover
+
+- **GIVEN** `sess-TUI` 以 `session_id='S1'` 绑定到 `(default, kimi-1)`
+- **WHEN** `sess-NEW` 以相同身份和不同的 `session_id='S2'` 注册
+- **THEN** daemon 关闭 `sess-TUI` 并输出 takeover 日志
+- **AND** 内存连接账本只保留 `sess-NEW`
+
+#### Scenario: 相同 session_id 不同 base_url 仍执行 takeover
+
+- **GIVEN** `sess-A` 以 `delivery={ kind:'kimi-server', session_id:'S', base_url:'http://127.0.0.1:58627' }` 绑定到 `(default, kimi-1)`
+- **WHEN** `sess-B` 以相同身份、相同 `session_id='S'` 但 `base_url='http://127.0.0.1:59999'` 注册
+- **THEN** daemon 关闭 `sess-A` 并输出 takeover 日志 (跨 server 的同名 session id 不是同一 runtime)
+- **AND** agents row 的 delivery 指向 `sess-B` 的 base_url
+
+#### Scenario: 等价 base_url 拼写视为同一 runtime
+
+- **GIVEN** `sess-A` 以 `base_url='http://127.0.0.1'` + `session_id='S'` 绑定到 `(default, kimi-1)`
+- **WHEN** `sess-B` 以相同身份、相同 `session_id='S'` 和 `base_url='HTTP://127.0.0.1:80/'` (大写 scheme + 默认端口 + 尾斜杠) 注册
+- **THEN** 两条连接共享同一 runtime 身份, daemon 不关闭 `sess-A`, 不输出 takeover 日志
 
 ### Requirement: Mismatched agent_id for tool call returns 403
 
@@ -640,24 +673,24 @@ Validation failures SHALL return `{error: 'invalid_delivery', reason: ...}` with
 
 The daemon SHALL expose Codex app-server registration through `register_agent({ agent_type: 'codex', ... })`.  For Codex callers, the tool accepts the normal identity fields plus optional `ws_url`, `auth_token_ref`, and `thread_id`.  It SHALL:
 
-1. Connect to the Codex app-server websocket, defaulting `ws_url` to `ws://127.0.0.1:8799` when not provided.
-2. Initialize the Codex protocol.
-3. If `thread_id` is provided, attempt `thread/resume` only for that thread id.
-4. If `thread_id` is omitted, call `thread/loaded/list`, attempt `thread/resume` against the loaded thread ids, and return `{ error: 'thread_id_required', detail: { ws_url, thread_ids: [...] } }` instead of registering any thread.
-5. Register the caller as `delivery.kind='codex-appserver'` only after a caller-supplied `thread_id` has been confirmed resumable.
+1. Resolve one or more Codex app-server websocket candidates from explicit input, the legacy single-endpoint environment override, the multi-endpoint environment configuration, or the built-in default.
+2. Initialize the Codex protocol for each selected candidate needed to identify the target runtime.
+3. If `thread_id` is provided, attempt `thread/resume` only for that thread id and register only when exactly one candidate accepts it.
+4. If `thread_id` is omitted, preserve the existing single-endpoint diagnostic flow: call `thread/loaded/list`, attempt `thread/resume` against the loaded thread ids, and return `{ error: 'thread_id_required', detail: { ws_url, thread_ids: [...] } }` instead of registering any thread.
+5. Register the caller as `delivery.kind='codex-appserver'` only after a caller-supplied `thread_id` has been confirmed resumable on exactly one endpoint.
 6. Leave tmux pane binding unchanged.  If the caller wants tmux fallback delivery, it MUST rely on the normal runtime-binding path or invoke `bind_runtime_identity(...)` explicitly afterward.
 
 The daemon MUST NOT infer the caller's current Codex thread solely from the set of loaded or resumable threads.  The tool surface MUST reject Codex-only top-level fields unless `agent_type='codex'`.  When no new usable pane id is available, the persisted `tmux_pane_id` follows the normal registration semantics: omit on first insert yields `NULL`, omit on re-registration preserves the existing value.
 
-The Codex registration path is Codex-only.  If the websocket endpoint is unreachable or does not speak the expected Codex protocol, the tool SHALL return `{error: 'unsupported_client', detail: { expected: 'codex', reason: ..., ws_url, cause? }}` rather than guessing.
+The Codex registration path is Codex-only.  If no candidate websocket endpoint is reachable or speaks the expected Codex protocol, the tool SHALL return `{error: 'unsupported_client', detail: { expected: 'codex', reason: ..., ws_url, cause? }}` rather than guessing.  If multiple candidates accept the same `thread_id`, it SHALL return `{ error: 'codex_endpoint_ambiguous', detail: { thread_id, ws_urls } }` without mutating an agent row.
 
 #### Scenario: register_agent registers a caller-supplied Codex thread_id without changing tmux pane state
 
 - **GIVEN** the caller invokes `register_agent({ agent_type: 'codex', name: 'lead', model: 'gpt-5', team: 'default', role: 'worker', thread_id: '11111111-1111-4111-8111-111111111111' })`
-- **AND** `thread/resume` succeeds for `11111111-1111-4111-8111-111111111111`
+- **AND** exactly one configured candidate accepts `thread/resume` for `11111111-1111-4111-8111-111111111111`
 - **WHEN** the tool completes successfully
-- **THEN** it returns `{ agent_id, team: 'default', thread_id: '11111111-1111-4111-8111-111111111111', ws_url: 'ws://127.0.0.1:8799' }`
-- **AND** the caller's `agents` row is persisted with `delivery.kind='codex-appserver'`
+- **THEN** it returns `{ agent_id, team: 'default', thread_id: '11111111-1111-4111-8111-111111111111', ws_url: '<matched-url>' }`
+- **AND** the caller's `agents` row is persisted with `delivery.kind='codex-appserver'` and the matched URL
 - **AND** the tool does not require tmux pane discovery to succeed
 
 #### Scenario: register_agent rejects Codex thread inputs without agent_type=codex
@@ -678,7 +711,7 @@ The Codex registration path is Codex-only.  If the websocket endpoint is unreach
 
 - **GIVEN** agent `(default, lead)` already exists with `tmux_pane_id='%42'`
 - **AND** the caller invokes `register_agent({ agent_type: 'codex', name: 'lead', model: 'gpt-5', team: 'default', thread_id: '11111111-1111-4111-8111-111111111111' })`
-- **AND** `thread/resume` succeeds for `11111111-1111-4111-8111-111111111111`
+- **AND** exactly one configured candidate accepts `thread/resume`
 - **AND** Codex tmux pane detection returns `not_found`
 - **WHEN** the tool completes successfully
 - **THEN** the caller's `agents` row keeps `tmux_pane_id='%42'`
@@ -687,29 +720,36 @@ The Codex registration path is Codex-only.  If the websocket endpoint is unreach
 #### Scenario: register_agent requires explicit thread_id when resumable threads exist for Codex
 
 - **GIVEN** the caller invokes `register_agent({ agent_type: 'codex', name: 'lead', model: 'gpt-5' })`
-- **AND** the default websocket endpoint reports resumable thread ids `['11111111-1111-4111-8111-111111111111']`
+- **AND** the selected single websocket endpoint reports resumable thread ids `['11111111-1111-4111-8111-111111111111']`
 - **WHEN** the tool completes
-- **THEN** it returns `{ error: 'thread_id_required', detail: { ws_url: 'ws://127.0.0.1:8799', thread_ids: ['11111111-1111-4111-8111-111111111111'] } }`
+- **THEN** it returns `{ error: 'thread_id_required', detail: { ws_url, thread_ids: ['11111111-1111-4111-8111-111111111111'] } }`
 - **AND** no `agents` row is inserted or updated for the caller
 
 #### Scenario: register_agent returns no_loaded_threads for Codex
 
 - **GIVEN** the caller invokes `register_agent({ agent_type: 'codex', name: 'lead', model: 'gpt-5' })`
-- **AND** the Codex app-server reports zero loaded threads
+- **AND** the selected single Codex app-server reports zero loaded threads
 - **WHEN** the tool completes
-- **THEN** it returns `{ error: 'no_loaded_threads', detail: { ws_url: 'ws://127.0.0.1:8799' } }`
+- **THEN** it returns `{ error: 'no_loaded_threads', detail: { ws_url } }`
 
 #### Scenario: register_agent returns codex_resume_failed for an explicit thread_id
 
 - **GIVEN** the caller invokes `register_agent({ agent_type: 'codex', name: 'lead', model: 'gpt-5', thread_id: '11111111-1111-4111-8111-111111111111' })`
-- **AND** the app-server returns a JSON-RPC error for `thread/resume`
+- **AND** no initialized candidate accepts `thread/resume`
 - **WHEN** the tool completes
-- **THEN** it returns `{ error: 'codex_resume_failed', detail: { thread_id: '11111111-1111-4111-8111-111111111111', cause: ... } }`
+- **THEN** it returns `{ error: 'codex_resume_failed', detail: { thread_id: '11111111-1111-4111-8111-111111111111', attempts: [...] } }`
+
+#### Scenario: register_agent rejects an ambiguous Codex endpoint match
+
+- **GIVEN** two configured app-server candidates both accept `thread/resume` for the caller's `thread_id`
+- **WHEN** the tool completes
+- **THEN** it returns `{ error: 'codex_endpoint_ambiguous', detail: { thread_id, ws_urls } }`
+- **AND** no `agents` row is inserted or updated for the caller
 
 #### Scenario: register_agent returns unsupported_client outside Codex
 
 - **GIVEN** the caller invokes `register_agent({ agent_type: 'codex', name: 'lead', model: 'gpt-5', thread_id: '11111111-1111-4111-8111-111111111111' })`
-- **AND** the websocket endpoint is unreachable or does not implement the Codex protocol
+- **AND** every selected websocket endpoint is unreachable or does not implement the Codex protocol
 - **WHEN** the tool completes
 - **THEN** it returns `{ error: 'unsupported_client', detail: { expected: 'codex', reason: ..., ws_url, cause? } }`
 
@@ -1254,39 +1294,63 @@ When `register_agent` is invoked with `agent_type='claude-code'` and `model` is 
 
 ### Requirement: register_agent({agent_type:'codex'}) defaults ws_url to empty string when omitted
 
-When `register_agent` is invoked with `agent_type='codex'` and `ws_url` is omitted, the daemon SHALL set `ws_url=''` before invoking the codex-appserver path. The empty string is then resolved by `RegisterCodexSelfService` to either the env override (`CROSS_AGENT_TEAMS_CODEX_WS_URL`) or the built-in default (`ws://127.0.0.1:8799`), preserving the behavior previously specific to `register_codex_self`.
+When `register_agent` is invoked with `agent_type='codex'` and `ws_url` is omitted, the daemon SHALL set `ws_url=''` before invoking the codex-appserver path.  `RegisterCodexSelfService` SHALL resolve candidates using this precedence: explicit non-empty `ws_url`, legacy `CROSS_AGENT_TEAMS_CODEX_WS_URL`, JSON array `CROSS_AGENT_TEAMS_CODEX_WS_URLS`, then built-in `ws://127.0.0.1:8799`.  Invalid multi-endpoint JSON or non-WebSocket entries SHALL be rejected as configuration errors before registration mutates state.
 
 #### Scenario: agent_type='codex' without ws_url uses the built-in default
 
 - **WHEN** a caller invokes `register_agent({agent_type:'codex', name:'gpt', model:'gpt-5', thread_id:'<uuid>'})` without `ws_url`
+- **AND** neither endpoint environment variable is configured
 - **THEN** the daemon connects to `ws://127.0.0.1:8799`
 - **AND** the returned `ws_url` reflects that default
 
-#### Scenario: agent_type='codex' without ws_url honors environment override
+#### Scenario: agent_type='codex' without ws_url honors legacy environment override
 
 - **GIVEN** the daemon process environment has `CROSS_AGENT_TEAMS_CODEX_WS_URL=ws://127.0.0.1:8899`
+- **AND** it also has a multi-endpoint configuration
 - **WHEN** a caller invokes `register_agent({agent_type:'codex', name:'gpt', model:'gpt-5', thread_id:'<uuid>'})` without `ws_url`
-- **THEN** the daemon connects to the env-override URL
+- **THEN** the daemon connects only to the legacy env-override URL
 - **AND** the returned `ws_url` is `ws://127.0.0.1:8899`
+
+#### Scenario: agent_type='codex' auto-matches a multi-endpoint runtime
+
+- **GIVEN** `CROSS_AGENT_TEAMS_CODEX_WS_URLS` is `["ws://127.0.0.1:8799","ws://127.0.0.1:8800"]`
+- **AND** only the second endpoint accepts the caller's `thread_id`
+- **WHEN** a caller invokes `register_agent({agent_type:'codex', name:'gpt', model:'gpt-5', thread_id:'<uuid>'})` without `ws_url`
+- **THEN** the returned `ws_url` is `ws://127.0.0.1:8800`
+
+#### Scenario: invalid multi-endpoint configuration fails closed
+
+- **GIVEN** `CROSS_AGENT_TEAMS_CODEX_WS_URLS` is invalid JSON or contains a non-`ws` URL
+- **WHEN** a Codex caller omits `ws_url`
+- **THEN** registration returns a machine-readable configuration error
+- **AND** no `agents` row is inserted or updated
 
 ### Requirement: register_agent tool description contains DETECTION block for agent types
 
-The `register_agent` MCP tool description SHALL contain a clearly marked DETECTION block instructing LLM callers to determine `agent_type` by running a sequence of mechanical probes against their tool shell environment, in order, with first-match-wins semantics. THREE active probes SHALL be promoted; everything else falls through to a `agent_type="custom"` fallback:
+The `register_agent` MCP tool description SHALL contain a clearly marked DETECTION block instructing LLM callers to determine `agent_type` by running a sequence of mechanical probes against their tool shell environment, in order, with first-match-wins semantics. FOUR active probes SHALL be promoted; everything else falls through to a `agent_type="custom"` fallback:
 
-1. `printenv OPENCODE_XATS_BASE_URL` non-empty → `agent_type='opencode'`; pass that value as `base_url`. Do NOT pass `session_id` — the daemon auto-resolves it as the most recently updated session on that base_url. The env var is set ONLY by the `free-xats-opencode` launcher, so its presence is itself the runtime assertion that the caller is opencode.
-2. `printenv CODEX_THREAD_ID` non-empty → `agent_type='codex'`, pass that value as `thread_id` (REQUIRED for codex per the Zod refinement); do NOT pass `ui_pid` (the launcher's `pre_register_codex_pane` flow handles tmux pane binding and supplying `ui_pid` from codex disables that path).
-3. `printenv CLAUDECODE` non-empty OR `printenv CLAUDE_CODE_ENTRYPOINT` non-empty → `agent_type='claude-code'`; pass `$PPID` as `ui_pid` to enable channel auto-bind.
-4. None of the above → `agent_type='custom'`, `agent_type_name=<the harness you are running under, e.g. cursor, ...>`. Detect the harness name from your runtime environment when you can — for example, `printenv CURSOR_TRACE_ID` non-empty is a cursor signal — but the DETECTION block MUST also explicitly warn against guessing agent type from system-wide signals like "binary X exists on PATH", because such probes detect what the user has installed, not what runtime the LLM is inside.
+1. `printenv KIMI_XATS_BASE_URL` non-empty → `agent_type='kimi-code'`; pass that value as `base_url`, and pass `session_id` from `printenv KIMI_XATS_SESSION_ID` (the `xats-kimi` launcher pre-creates the session via the kimi server REST API and exports BOTH variables; the id is exact — callers MUST NOT derive it from `~/.kimi-code/session_index.jsonl`, whose last `workDir` match can be a different kimi session in the same directory). `session_id` is REQUIRED for kimi-code — the daemon does NOT auto-resolve it. The env vars are set ONLY by the `xats-kimi` launcher, so their presence is itself the runtime assertion that the caller is kimi-code.
+2. `printenv OPENCODE_XATS_BASE_URL` non-empty → `agent_type='opencode'`; pass that value as `base_url`. Do NOT pass `session_id` — the daemon auto-resolves it as the most recently updated session on that base_url. The env var is set ONLY by the `free-xats-opencode` launcher, so its presence is itself the runtime assertion that the caller is opencode.
+3. `printenv CODEX_THREAD_ID` non-empty → `agent_type='codex'`, pass that value as `thread_id` (REQUIRED for codex per the Zod refinement); do NOT pass `ui_pid` (the launcher's `pre_register_codex_pane` flow handles tmux pane binding and supplying `ui_pid` from codex disables that path).
+4. `printenv CLAUDECODE` non-empty OR `printenv CLAUDE_CODE_ENTRYPOINT` non-empty → `agent_type='claude-code'`; pass `$PPID` as `ui_pid` to enable channel auto-bind.
+5. None of the above → `agent_type='custom'`, `agent_type_name=<the harness you are running under, e.g. cursor, ...>`. Detect the harness name from your runtime environment when you can — for example, `printenv CURSOR_TRACE_ID` non-empty is a cursor signal — but the DETECTION block MUST also explicitly warn against guessing agent type from system-wide signals like "binary X exists on PATH", because such probes detect what the user has installed, not what runtime the LLM is inside.
 
 The DETECTION block's textual presence is the contract — implementers may reword the prose, but the description MUST contain:
 
-- The three env-based probe signals `OPENCODE_XATS_BASE_URL`, `CODEX_THREAD_ID`, and `CLAUDECODE` or `CLAUDE_CODE_ENTRYPOINT`.
+- The five env-based probe signals `KIMI_XATS_BASE_URL`, `KIMI_XATS_SESSION_ID`, `OPENCODE_XATS_BASE_URL`, `CODEX_THREAD_ID`, and `CLAUDECODE` or `CLAUDE_CODE_ENTRYPOINT`.
 - The `agent_type="custom"` fallback rule with the `agent_type_name` requirement.
 - A reference to `CURSOR_TRACE_ID` (or equivalent) as an example of how to derive `agent_type_name` for cursor under the custom fallback — NOT as a separate active probe.
 - An anti-pattern warning against system-wide probes (the literal phrase "PATH" appearing alongside language about installed binaries vs. runtime identity is sufficient).
 - An explicit opencode branch that instructs callers to pass `agent_type='opencode'` with `base_url=$OPENCODE_XATS_BASE_URL`, and to OMIT `session_id` (daemon auto-resolves) unless the caller has an explicit override.
+- An explicit kimi-code branch that instructs callers to pass `agent_type='kimi-code'` with `base_url=$KIMI_XATS_BASE_URL` and a REQUIRED `session_id` read from `$KIMI_XATS_SESSION_ID`.
 
-The description MUST NOT contain the previously promoted active probe `command -v opencode` (or any other "binary X is on PATH" probe). The `OPENCODE_XATS_BASE_URL` env-based probe is the ONLY sanctioned mechanism for promoting `agent_type='opencode'`; PATH-based probes remain rejected because they assert runtime identity from system-wide state instead of session-local state.
+The description MUST NOT contain the previously promoted active probe `command -v opencode` (or any other "binary X is on PATH" probe). The env-based probes are the ONLY sanctioned mechanisms for promoting `agent_type='opencode'` / `agent_type='kimi-code'`; PATH-based probes remain rejected because they assert runtime identity from system-wide state instead of session-local state.
+
+#### Scenario: tools/list returns register_agent description containing KIMI_XATS_BASE_URL probe
+
+- **WHEN** an MCP client enumerates `register_agent` via `tools/list`
+- **THEN** the description string contains the literal substring `KIMI_XATS_BASE_URL`
+- **AND** that substring appears in the DETECTION block as the env-var probe for `agent_type='kimi-code'`
 
 #### Scenario: tools/list returns register_agent description containing OPENCODE_XATS_BASE_URL probe
 
@@ -1331,6 +1395,7 @@ The description MUST NOT contain the previously promoted active probe `command -
 The instructions string attached to the MCP `server.setInstructions` call SHALL describe registration in terms of `register_agent` only.  It MUST mention:
 
 - `register_agent` as the single registration entry point.
+- That `agent_type="kimi-code"` is selected when `KIMI_XATS_BASE_URL` is non-empty, and that callers pass that value as `base_url` plus a REQUIRED `session_id` read from `$KIMI_XATS_SESSION_ID`.
 - That `agent_type="opencode"` is selected when `OPENCODE_XATS_BASE_URL` is non-empty, and that callers pass that value as `base_url` (daemon auto-resolves `session_id`).
 - That `agent_type="codex"` requires `thread_id` from `$CODEX_THREAD_ID`.
 - That `agent_type="claude-code"` should pass `$PPID` as `ui_pid` for channel auto-bind.
@@ -1357,6 +1422,11 @@ The `xats` abbreviation guidance and the `project_dir` team-default convention f
 
 - **WHEN** an MCP client fetches the server `instructions` during `initialize`
 - **THEN** the `instructions` string contains the literal substring `OPENCODE_XATS_BASE_URL`
+
+#### Scenario: instructions mention KIMI_XATS_BASE_URL for kimi-code callers
+
+- **WHEN** an MCP client fetches the server `instructions` during `initialize`
+- **THEN** the `instructions` string contains the literal substring `KIMI_XATS_BASE_URL`
 
 #### Scenario: instructions mention agent_type=custom fallback
 
@@ -1562,3 +1632,87 @@ When `register_agent` is invoked with `agent_type='opencode'` and `model` is omi
 
 - **WHEN** a caller invokes `register_agent({agent_type:'opencode', name:'oc-1', base_url:'http://127.0.0.1:18888', model:'glm-5.2'})`
 - **THEN** the agents row has `model='glm-5.2'`
+
+### Requirement: register_agent({agent_type:'kimi-code'}) validates inputs and writes kimi-server delivery
+
+The daemon SHALL handle `register_agent({agent_type:'kimi-code'})` as a dedicated branch in `executeRegister`, mirroring the `opencode` branch. The following normative rules apply:
+
+1. `base_url` MUST be a non-empty `http://` or `https://` URL. The Zod schema SHALL reject calls where `base_url` is missing, empty, or not parseable as an http/https URL, BEFORE any backend service runs and BEFORE any agents row is written or read.
+2. `session_id` is REQUIRED. It MUST be a trimmed non-empty string (Zod rejection otherwise). Unlike opencode, the daemon MUST NOT auto-resolve `session_id` — kimi has no reliable "most recent session" semantic from inside a session, so the caller passes the exact id from `$KIMI_XATS_SESSION_ID` (exported by the `xats-kimi` launcher, which pre-creates the session via the kimi server REST API) per the DETECTION block.
+3. `auth_token_ref` is OPTIONAL; when supplied it MUST be a trimmed non-empty string and is propagated verbatim into the persisted `delivery_payload`.
+4. The daemon SHALL NOT perform a health check against the kimi server at registration time (the kimi server may be started later by `start-xats`; reachability failures surface at poke time as `kimi_connect_failed`).
+5. On success, the daemon writes `delivery={kind:'kimi-server', session_id, base_url, auth_token_ref?}` on the caller's agents row via the `agent-delivery` persistence rules (`UPDATE agents SET delivery_kind='kimi-server', delivery_payload=...`).
+6. The successful response envelope SHALL be `{ agent_id, team, session_id, base_url }`.
+7. When `model` is omitted, the daemon SHALL persist `model = NULL` (no model-default inference, same as opencode).
+
+The schema rejection error message for missing/malformed `base_url` or `session_id` SHOULD reference `KIMI_XATS_BASE_URL` / `KIMI_XATS_SESSION_ID` so an LLM that forgot to read its environment can self-correct.
+
+#### Scenario: register_agent({agent_type:'kimi-code'}) writes kimi-server delivery
+
+- **GIVEN** a caller invokes `register_agent({agent_type:'kimi-code', name:'kimi-1', team:'default', base_url:'http://127.0.0.1:58627', session_id:'session_abc'})`
+- **WHEN** the call succeeds
+- **THEN** the agents row is written with `delivery_kind='kimi-server'` and `delivery_payload='{"session_id":"session_abc","base_url":"http://127.0.0.1:58627"}'`
+- **AND** the response is `{ agent_id: <uuid>, team: 'default', session_id: 'session_abc', base_url: 'http://127.0.0.1:58627' }`
+
+#### Scenario: register_agent({agent_type:'kimi-code'}) schema rejects missing session_id
+
+- **WHEN** a caller invokes `register_agent({agent_type:'kimi-code', name:'kimi-1', base_url:'http://127.0.0.1:58627'})` with no `session_id`
+- **THEN** the response is a Zod validation error citing the missing `session_id`
+- **AND** no agents row is written
+
+#### Scenario: register_agent({agent_type:'kimi-code'}) schema rejects missing base_url
+
+- **WHEN** a caller invokes `register_agent({agent_type:'kimi-code', name:'kimi-1', session_id:'session_abc'})` with no `base_url`
+- **THEN** the response is a Zod validation error citing the missing `base_url`
+- **AND** no agents row is written
+
+#### Scenario: register_agent({agent_type:'kimi-code'}) schema rejects ws:// base_url
+
+- **WHEN** a caller invokes `register_agent({agent_type:'kimi-code', name:'kimi-1', base_url:'ws://127.0.0.1:58627', session_id:'session_abc'})`
+- **THEN** the response is a Zod validation error citing the malformed `base_url`
+
+#### Scenario: register_agent({agent_type:'kimi-code'}) preserves auth_token_ref in delivery
+
+- **GIVEN** a caller invokes `register_agent({agent_type:'kimi-code', name:'kimi-1', base_url:'http://127.0.0.1:58627', session_id:'session_abc', auth_token_ref:'KIMI_SERVER_TOKEN'})`
+- **WHEN** the agents row is written
+- **THEN** `delivery_payload` JSON-decodes to an object containing `auth_token_ref: 'KIMI_SERVER_TOKEN'`
+
+#### Scenario: register_agent({agent_type:'kimi-code'}) without model persists NULL
+
+- **WHEN** a caller invokes `register_agent({agent_type:'kimi-code', name:'kimi-1', base_url:'http://127.0.0.1:58627', session_id:'session_abc'})` with no `model`
+- **AND** the call succeeds
+- **THEN** the agents row has `model IS NULL`
+
+### Requirement: Registry row removal is not agent termination
+
+Removing an `agents` row — whether via `unregister_self` or via `DELETE /api/agents/:agent_id` — SHALL be understood as deleting the daemon's registration record for an agent, and NOTHING else. It MUST NOT be documented, described, or relied upon as a way to stop, kill, or shut down the agent behind that row.
+
+Removal SHALL NOT touch the process, tmux pane, MCP session, or runtime-side session that the row described. The daemon has no mechanism to terminate any of those, and MUST NOT claim otherwise.
+
+Two consequences SHALL be stated wherever removal is documented:
+
+1. A running agent whose row is removed will fail its next xats tool call with the daemon's unregistered-session rejection, and must call `register_agent` again to become addressable. This is expected behaviour of an operator action, not a fault.
+2. For runtimes whose identity is a server-side session rather than a local process — `kimi-code`, whose delivery is `{ kind: 'kimi-server', session_id, base_url }` — the underlying session continues to exist and continues to accept prompts after the row is removed. Removal ends the agent's addressability through xats; it does not end the session.
+
+Historical `messages` and `events` rows MAY continue to reference a removed `agent_id` as stored text. Removal MUST NOT rewrite historical rows.
+
+#### Scenario: Removed row does not stop the underlying runtime
+
+- **GIVEN** a registered `kimi-code` agent whose delivery carries `session_id` `S` on a reachable kimi server
+- **WHEN** an operator removes that agent's row via `DELETE /api/agents/:agent_id`
+- **THEN** the row is gone and the agent is no longer addressable through xats
+- **AND** session `S` still exists on the kimi server and still accepts prompts
+
+#### Scenario: A live agent whose row was removed must re-register
+
+- **GIVEN** an agent with a live MCP session whose row has been removed by an operator
+- **WHEN** that agent invokes any business tool
+- **THEN** the call is rejected as an unregistered session
+- **AND** the agent can recover by calling `register_agent` again
+
+#### Scenario: Historical mail survives removal
+
+- **GIVEN** an agent `A` that has sent messages, and whose row is then removed
+- **WHEN** any agent reads mailbox history referencing `A`
+- **THEN** the stored `from_agent_id` / sender text for those messages is unchanged
+

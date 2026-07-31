@@ -7,6 +7,12 @@ import { applySchema } from '../src/storage/schema.js'
 import * as tmuxCli from '../src/daemon/tmux-cli.js'
 import { __setCapturePaneTail, __resetCapturePaneTail } from '../src/mcp/poke-guard.js'
 import { poke } from '../src/mcp/poke.js'
+import { fakePaneSnapshot } from './helpers/pane-snapshot.js'
+
+// Host verification runs before the paste, so the pane must be visible in a
+// snapshot; without one every route below is undecidable and never reaches the
+// tmux-cli mocks these cases are about.
+const snapshot = fakePaneSnapshot([{ pane_id: '%1' }, { pane_id: '%2' }])
 
 vi.mock('../src/daemon/tmux-cli.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/daemon/tmux-cli.js')>()
@@ -53,7 +59,7 @@ describe('tmuxPokeImpl runs the quiet-guard on the paste branch', () => {
     seed(db, 'A', 'alice', '%1')
     seed(db, 'B', 'bob', '%2')
 
-    const res = await poke({ db, callerAgentId: 'A' }, { target_agent_id: 'B', prompt: 'p' })
+    const res = await poke({ db, callerAgentId: 'A', paneSnapshot: snapshot }, { target_agent_id: 'B', prompt: 'p' })
 
     expect(res).toEqual({ error: 'guard_failed', transport_used: 'tmux-poke' })
     expect(vi.mocked(tmuxCli.loadBuffer)).not.toHaveBeenCalled()
@@ -69,7 +75,7 @@ describe('tmuxPokeImpl runs the quiet-guard on the paste branch', () => {
     seed(db, 'A', 'alice', '%1')
     seed(db, 'B', 'bob', '%2')
 
-    const res = await poke({ db, callerAgentId: 'A' }, { target_agent_id: 'B', prompt: 'p' })
+    const res = await poke({ db, callerAgentId: 'A', paneSnapshot: snapshot }, { target_agent_id: 'B', prompt: 'p' })
 
     expect(res).toEqual({ error: 'pane_dead', detail: expect.any(String), transport_used: 'tmux-poke' })
     expect(vi.mocked(tmuxCli.loadBuffer)).not.toHaveBeenCalled()
@@ -83,7 +89,7 @@ describe('tmuxPokeImpl runs the quiet-guard on the paste branch', () => {
     seed(db, 'A', 'alice', '%1')
     seed(db, 'B', 'bob', '%2')
 
-    const res = await poke({ db, callerAgentId: 'A' }, { target_agent_id: 'B', prompt: 'p' })
+    const res = await poke({ db, callerAgentId: 'A', paneSnapshot: snapshot }, { target_agent_id: 'B', prompt: 'p' })
 
     expect('ok' in res && res.ok).toBe(true)
     expect(res).toMatchObject({ ok: true, transport_used: 'tmux-poke', pane_id: '%2' })
@@ -103,7 +109,7 @@ describe('tmuxPokeImpl runs the quiet-guard on the paste branch', () => {
     seed(db, 'B', 'bob', '%2')
 
     const res = await poke(
-      { db, callerAgentId: 'A' },
+      { db, callerAgentId: 'A', paneSnapshot: snapshot },
       { target_agent_id: 'B', prompt: 'p', skipGuard: true }
     )
 

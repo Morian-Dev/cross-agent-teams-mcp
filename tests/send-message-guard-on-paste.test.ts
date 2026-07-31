@@ -12,6 +12,7 @@ import { __setCapturePaneTail, __resetCapturePaneTail } from '../src/mcp/poke-gu
 import { SendMessageService } from '../src/mcp/send-message.js'
 import { createAutoPokeImpl } from '../src/mcp/tools.js'
 import { clearAllRetries } from '../src/mcp/poke-retry.js'
+import { fakePaneSnapshot } from './helpers/pane-snapshot.js'
 
 // Mock only the paste-flow primitives; the quiet-guard's capture is driven via
 // __setCapturePaneTail so each test can toggle pane activity precisely.
@@ -57,6 +58,7 @@ function setup(panes: Record<string, 'idle' | 'active'>): {
   const svc = new SendMessageService(db, agents, events, {
     poke: autoPokeImpl,
     tmuxAvailable: async () => true,
+    paneSnapshot: fakePaneSnapshot(Object.keys(paneState).map(pane_id => ({ pane_id }))),
   })
   return {
     svc,

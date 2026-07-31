@@ -4,11 +4,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { startServer } from '../src/daemon/server.js'
 import { scheduleRetry, __peekRetryMap, clearAllRetries } from '../src/mcp/poke-retry.js'
+import { scheduleKimiRetry, __peekKimiRetryMap, clearAllKimiRetries } from '../src/mcp/kimi-poke-retry.js'
 
 describe('daemon shutdown clears pending poke-retry timers', () => {
   const cleanups: string[] = []
   afterEach(() => {
     clearAllRetries()
+    clearAllKimiRetries()
     cleanups.forEach(d => rmSync(d, { recursive: true, force: true }))
     cleanups.length = 0
   })
@@ -35,5 +37,22 @@ describe('daemon shutdown clears pending poke-retry timers', () => {
     await app.close()
 
     expect(__peekRetryMap().size).toBe(0)
+  })
+
+  it('app.close() also clears pending kimi retry timers', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'atm-shutdown-kimi-retry-'))
+    cleanups.push(dir)
+    const { app } = await startServer({ dbPath: join(dir, 'data.db'), port: 0 })
+
+    scheduleKimiRetry({
+      agentId: 'K',
+      messageId: 'm-shutdown-kimi-1',
+      attemptFn: async () => ({ ok: false, reason: 'kimi_session_busy' })
+    })
+    expect(__peekKimiRetryMap().size).toBeGreaterThanOrEqual(1)
+
+    await app.close()
+
+    expect(__peekKimiRetryMap().size).toBe(0)
   })
 })

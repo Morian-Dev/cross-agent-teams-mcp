@@ -7,6 +7,7 @@ import {
   type DeliveryRow,
 } from '../lib/delivery-spec.js'
 import type { AgentType } from '../lib/agent-type.js'
+import { canonicalKimiBaseUrl } from '../lib/kimi-url.js'
 import { isAlive } from '../daemon/pid.js'
 
 export interface RegisterInput {
@@ -22,6 +23,7 @@ export interface RegisterInput {
   claude_ui_pid?: number
   runtime_ui_pid?: number
   remote_addr?: string | null
+  identity_key?: string
 }
 
 export interface AgentRow {
@@ -37,6 +39,7 @@ export interface AgentRow {
   runtime_ui_pid: number | null
   delivery: DeliverySpec
   channel_session_id: string | null
+  identity_key: string | null
   last_seen_at: string
 }
 
@@ -57,6 +60,13 @@ export type CodexThreadMatch = RuntimeUiPidMatch
 
 export type OpencodeSessionMatch = RuntimeUiPidMatch
 
+export type KimiSessionMatch = RuntimeUiPidMatch
+
+/** Adds the pid the register-time four-branch rule arbitrates on. */
+export interface IdentityKeyMatch extends RuntimeUiPidMatch {
+  runtime_ui_pid: number | null
+}
+
 export const REACHABLE_MS = 4 * 24 * 60 * 60 * 1000
 
 type DbAgentRow = {
@@ -70,6 +80,7 @@ type DbAgentRow = {
   model: string | null
   tmux_pane_id: string | null
   runtime_ui_pid: number | null
+  identity_key: string | null
   last_seen_at: string
 } & DeliveryRow
 
@@ -105,6 +116,7 @@ function toAgentRow(row: DbAgentRow): AgentRow {
     delivery,
     channel_session_id:
       delivery.kind === 'claude-channel' ? delivery.channel_session_id : null,
+    identity_key: row.identity_key,
     last_seen_at: row.last_seen_at,
   }
 }
@@ -133,6 +145,31 @@ export class AgentsRepo {
          AND runtime_ui_pid = ?
        ORDER BY last_seen_at DESC`
     ).all(localDevice, ui_pid) as RuntimeUiPidMatch[]
+  }
+
+  /**
+   * Reverse lookup by the launcher-minted identity key. Unlike the pid /
+   * thread / session lookups this key survives a pane restart; the device
+   * scope and the proxy-row exclusion are the same as theirs.
+   */
+  findByIdentityKey(
+    identity_key: string,
+    localDevice: string
+  ): IdentityKeyMatch[] {
+    return this.db.prepare(
+      `SELECT agent_id, device, team, name, role, runtime_ui_pid, last_seen_at
+       FROM agents
+       WHERE device = ?
+         AND role != '__channel_proxy__'
+         AND identity_key = ?
+       ORDER BY last_seen_at DESC`
+    ).all(localDevice, identity_key) as IdentityKeyMatch[]
+  }
+
+  clearIdentityKey(agent_id: string): void {
+    this.db.prepare(
+      `UPDATE agents SET identity_key = NULL WHERE agent_id = ?`
+    ).run(agent_id)
   }
 
   findByCodexThreadId(
@@ -202,6 +239,76 @@ export class AgentsRepo {
     ).all(localDevice, base_url) as OpencodeSessionMatch[]
   }
 
+  /**
+   * Precise kimi reverse lookup. base_url compared via the shared kimi
+   * canonicalizer in JS (not SQL rtrim) so rows persisted before URL
+   * canonicalization — case/default-port/slash variants — still match;
+   * scoped to localDevice (remote servers unreachable here).
+   */
+  findByKimiSession(
+    base_url: string,
+    session_id: string,
+    localDevice: string
+  ): KimiSessionMatch[] {
+    const target = canonicalKimiBaseUrl(base_url)
+    const rows = this.db.prepare(
+      `SELECT agent_id, device, team, name, role, last_seen_at,
+         CASE
+           WHEN json_valid(delivery_payload)
+           THEN json_extract(delivery_payload, '$.base_url')
+         END AS payload_base_url
+       FROM agents
+       WHERE device = ?
+         AND role != '__channel_proxy__'
+         AND delivery_kind = 'kimi-server'
+         AND CASE
+           WHEN json_valid(delivery_payload)
+           THEN json_extract(delivery_payload, '$.session_id')
+         END = ?
+       ORDER BY last_seen_at DESC`
+    ).all(localDevice, session_id) as Array<
+      KimiSessionMatch & { payload_base_url: string | null }
+    >
+    return rows
+      .filter(row =>
+        typeof row.payload_base_url === 'string'
+        && canonicalKimiBaseUrl(row.payload_base_url) === target
+      )
+      .map(({ payload_base_url: _url, ...match }) => match)
+  }
+
+  /**
+   * Broad base_url-only kimi lookup. Used to decide whether a reconnect
+   * base_url targets a kimi server; never used to auto-pick a session.
+   * Same canonical JS comparison as findByKimiSession.
+   */
+  findByKimiBaseUrl(
+    base_url: string,
+    localDevice: string
+  ): KimiSessionMatch[] {
+    const target = canonicalKimiBaseUrl(base_url)
+    const rows = this.db.prepare(
+      `SELECT agent_id, device, team, name, role, last_seen_at,
+         CASE
+           WHEN json_valid(delivery_payload)
+           THEN json_extract(delivery_payload, '$.base_url')
+         END AS payload_base_url
+       FROM agents
+       WHERE device = ?
+         AND role != '__channel_proxy__'
+         AND delivery_kind = 'kimi-server'
+       ORDER BY last_seen_at DESC`
+    ).all(localDevice) as Array<
+      KimiSessionMatch & { payload_base_url: string | null }
+    >
+    return rows
+      .filter(row =>
+        typeof row.payload_base_url === 'string'
+        && canonicalKimiBaseUrl(row.payload_base_url) === target
+      )
+      .map(({ payload_base_url: _url, ...match }) => match)
+  }
+
   register(input: RegisterInput): {
     agent_id: string
     team: string
@@ -241,6 +348,12 @@ export class AgentsRepo {
           new_csid: rebindCsid,
         })
       }
+      if (input.tmux_pane_id) {
+        const written = this.db.prepare(
+          `SELECT agent_id FROM agents WHERE device=? AND team=? AND name=?`
+        ).get(device, team, name) as { agent_id: string }
+        this.clearPaneBinding(device, input.tmux_pane_id, written.agent_id)
+      }
     })
     tx()
     const row = this.db.prepare(
@@ -271,9 +384,9 @@ export class AgentsRepo {
       `INSERT INTO agents (
          agent_id, agent_type, agent_type_name, device, team, role, name, model, registered_at, last_seen_at,
          tmux_pane_id, claude_ui_pid, runtime_ui_pid, delivery_kind, delivery_payload, remote_addr,
-         last_processed_event_id
+         identity_key, last_processed_event_id
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                COALESCE((SELECT MAX(event_id) FROM events), 0))
        ON CONFLICT (device, team, name) DO UPDATE SET
          agent_type = excluded.agent_type,
@@ -285,6 +398,7 @@ export class AgentsRepo {
          claude_ui_pid = COALESCE(excluded.claude_ui_pid, claude_ui_pid),
          runtime_ui_pid = COALESCE(excluded.runtime_ui_pid, runtime_ui_pid),
          remote_addr = excluded.remote_addr,
+         identity_key = COALESCE(excluded.identity_key, identity_key),
          delivery_kind = CASE
            WHEN ? THEN delivery_kind
            ELSE excluded.delivery_kind
@@ -310,9 +424,23 @@ export class AgentsRepo {
       serialized.delivery_kind,
       serialized.delivery_payload,
       input.remote_addr ?? null,
+      input.identity_key ?? null,
       preserveExistingDelivery,
       preserveExistingDelivery,
     )
+  }
+
+  /**
+   * A tmux pane hosts one agent UI at a time, so the newest binding evicts any
+   * incumbent on the same (device, pane). Only the pane column is cleared —
+   * the incumbent row, its cursor, mailbox and delivery stay intact.
+   */
+  private clearPaneBinding(device: string, pane: string, keepAgentId: string): void {
+    this.db.prepare(
+      `UPDATE agents
+       SET tmux_pane_id=NULL
+       WHERE device=? AND tmux_pane_id=? AND agent_id != ?`
+    ).run(device, pane, keepAgentId)
   }
 
   private reactiveRebindHosts(args: {
@@ -366,22 +494,29 @@ export class AgentsRepo {
       runtime_bound_at?: string
     }
   ): void {
-    this.db.prepare(
-      `UPDATE agents
-       SET tmux_pane_id=?,
-           runtime_ui_pid=?,
-           runtime_tty=?,
-           runtime_verification_mode=?,
-           runtime_bound_at=?
-       WHERE agent_id=?`
-    ).run(
-      args.tmux_pane_id,
-      args.runtime_ui_pid,
-      args.runtime_tty,
-      args.runtime_verification_mode,
-      args.runtime_bound_at ?? new Date().toISOString(),
-      agent_id
-    )
+    const tx = this.db.transaction(() => {
+      this.db.prepare(
+        `UPDATE agents
+         SET tmux_pane_id=?,
+             runtime_ui_pid=?,
+             runtime_tty=?,
+             runtime_verification_mode=?,
+             runtime_bound_at=?
+         WHERE agent_id=?`
+      ).run(
+        args.tmux_pane_id,
+        args.runtime_ui_pid,
+        args.runtime_tty,
+        args.runtime_verification_mode,
+        args.runtime_bound_at ?? new Date().toISOString(),
+        agent_id
+      )
+      const row = this.db.prepare(
+        `SELECT device FROM agents WHERE agent_id=?`
+      ).get(agent_id) as { device: string } | undefined
+      if (row) this.clearPaneBinding(row.device, args.tmux_pane_id, agent_id)
+    })
+    tx()
   }
 
   list(args: {
@@ -405,6 +540,7 @@ export class AgentsRepo {
          runtime_ui_pid,
          delivery_kind,
          delivery_payload,
+         identity_key,
          last_seen_at
        FROM agents
        WHERE team=?`
@@ -456,6 +592,7 @@ export class AgentsRepo {
          runtime_ui_pid,
          delivery_kind,
          delivery_payload,
+         identity_key,
          last_seen_at
        FROM agents
        WHERE agent_id=?`

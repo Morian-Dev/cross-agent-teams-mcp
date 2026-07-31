@@ -25,7 +25,7 @@ describe('dispatchPoke', () => {
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
       {
-        agent_type: 'claude-code',
+        agent_id: 'target', device: 'local', runtime_ui_pid: null, agent_type: 'claude-code',
         delivery: { kind: 'claude-channel', channel_session_id: 'csid-bob' },
         tmux_pane_id: '%99',
       },
@@ -42,7 +42,7 @@ describe('dispatchPoke', () => {
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
       {
-        agent_type: 'claude-code',
+        agent_id: 'target', device: 'local', runtime_ui_pid: null, agent_type: 'claude-code',
         delivery: { kind: 'claude-channel', channel_session_id: 'csid-bob' },
         tmux_pane_id: '%99',
       },
@@ -57,7 +57,7 @@ describe('dispatchPoke', () => {
     const tmux = stubTmux({ ok: true, pane_tail_before: 'x', pane_tail_after: 'y' })
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
-      { agent_type: null, delivery: { kind: 'none' }, tmux_pane_id: '%42' },
+      { agent_id: 'target', device: 'local', runtime_ui_pid: null, agent_type: null, delivery: { kind: 'none' }, tmux_pane_id: '%42' },
       { content: 'hi', meta: {} }
     )
     expect(res).toMatchObject({ ok: true, transport_used: 'tmux-poke' })
@@ -68,7 +68,7 @@ describe('dispatchPoke', () => {
     const tmux = stubTmux({ ok: true, pane_tail_before: '', pane_tail_after: '' })
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
-      { agent_type: null, delivery: { kind: 'none' }, tmux_pane_id: null },
+      { agent_id: 'target', device: 'local', runtime_ui_pid: null, agent_type: null, delivery: { kind: 'none' }, tmux_pane_id: null },
       { content: 'hi', meta: {} }
     )
     expect(res).toEqual({
@@ -84,7 +84,7 @@ describe('dispatchPoke', () => {
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
       {
-        agent_type: 'claude-code',
+        agent_id: 'target', device: 'local', runtime_ui_pid: null, agent_type: 'claude-code',
         delivery: { kind: 'claude-channel', channel_session_id: 'csid-x' },
         tmux_pane_id: null,
       },
@@ -101,7 +101,7 @@ describe('dispatchPoke', () => {
     const tmux = stubTmux({ error: 'pane_dead', detail: 'no pane' })
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
-      { agent_type: null, delivery: { kind: 'none' }, tmux_pane_id: '%42' },
+      { agent_id: 'target', device: 'local', runtime_ui_pid: null, agent_type: null, delivery: { kind: 'none' }, tmux_pane_id: '%42' },
       { content: 'hi', meta: {} }
     )
     expect(res).toMatchObject({ error: 'pane_dead', transport_used: 'tmux-poke' })
@@ -129,7 +129,7 @@ describe('dispatchPoke', () => {
         },
       },
       {
-        agent_type: 'codex',
+        agent_id: 'target', device: 'local', runtime_ui_pid: null, agent_type: 'codex',
         delivery: {
           kind: 'codex-appserver',
           thread_id: '11111111-1111-4111-8111-111111111111',
@@ -168,7 +168,7 @@ describe('dispatchPoke', () => {
         }),
       },
       {
-        agent_type: 'codex',
+        agent_id: 'target', device: 'local', runtime_ui_pid: null, agent_type: 'codex',
         delivery: {
           kind: 'codex-appserver',
           thread_id: '11111111-1111-4111-8111-111111111111',
@@ -185,6 +185,36 @@ describe('dispatchPoke', () => {
       pane_tail_before: '',
       pane_tail_after: '',
     })
+  })
+
+  it('does not fall back to tmux after Codex accepted input but wake confirmation timed out', async () => {
+    const tmux = stubTmux({ ok: true, pane_tail_before: '', pane_tail_after: '' })
+    const res = await dispatchPoke(
+      {
+        tmuxPoke: tmux.fn,
+        codexAppserverDispatch: async () => ({
+          error: 'codex_wake_unconfirmed',
+          detail: 'get_inbox not observed',
+          transport_used: 'codex-appserver',
+        }),
+      },
+      {
+        agent_id: 'target', device: 'local', runtime_ui_pid: null, agent_type: 'codex',
+        delivery: {
+          kind: 'codex-appserver',
+          thread_id: '11111111-1111-4111-8111-111111111111',
+          ws_url: 'wss://example.test/ws',
+        },
+        tmux_pane_id: '%42',
+      },
+      { content: 'hi', meta: {} }
+    )
+
+    expect(res).toMatchObject({
+      error: 'codex_wake_unconfirmed',
+      transport_used: 'codex-appserver',
+    })
+    expect(tmux.calls).toHaveLength(0)
   })
 
   it('routes opencode-server to the opencode dispatcher', async () => {
@@ -209,7 +239,7 @@ describe('dispatchPoke', () => {
         },
       },
       {
-        agent_type: 'opencode',
+        agent_id: 'target', device: 'local', runtime_ui_pid: null, agent_type: 'opencode',
         delivery: {
           kind: 'opencode-server',
           session_id: 'ses_abc',
@@ -248,7 +278,7 @@ describe('dispatchPoke', () => {
         }),
       },
       {
-        agent_type: 'opencode',
+        agent_id: 'target', device: 'local', runtime_ui_pid: null, agent_type: 'opencode',
         delivery: {
           kind: 'opencode-server',
           session_id: 'ses_abc',
@@ -272,7 +302,7 @@ describe('dispatchPoke', () => {
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
       {
-        agent_type: 'opencode',
+        agent_id: 'target', device: 'local', runtime_ui_pid: null, agent_type: 'opencode',
         delivery: { kind: 'none' },
         tmux_pane_id: '%77',
       },
@@ -287,7 +317,7 @@ describe('dispatchPoke', () => {
     const res = await dispatchPoke(
       { channelWakeFanout: fanout, tmuxPoke: tmux.fn },
       {
-        agent_type: 'opencode',
+        agent_id: 'target', device: 'local', runtime_ui_pid: null, agent_type: 'opencode',
         delivery: { kind: 'none' },
         tmux_pane_id: null,
       },

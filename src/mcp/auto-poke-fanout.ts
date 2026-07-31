@@ -1,9 +1,19 @@
 import { runQuietGuard } from './poke-guard.js'
 import { isTmuxAvailable } from '../daemon/tmux-cli.js'
 import { scheduleRetry as defaultScheduleRetry, type RetryAgentLookup, type RetryContext } from './poke-retry.js'
+import { scheduleKimiRetry as defaultScheduleKimiRetry, type KimiRetryContext } from './kimi-poke-retry.js'
 import type { DeliverySpec } from '../lib/delivery-spec.js'
+import type { DeliverySkipReason } from './delivery-status.js'
+import { memoizePaneSnapshot, type PaneSnapshotLoader } from './pane-host-verify.js'
 
-export type AutoPokeSkipReason = 'no_pane' | 'guard_failed' | 'tmux_unavailable' | 'self'
+export type AutoPokeSkipReason =
+  | 'no_pane'
+  | 'guard_failed'
+  | 'tmux_unavailable'
+  | 'self'
+  | 'kimi_session_busy'
+  | 'kimi_pending_interaction'
+  | 'pane_reassigned'
 
 export interface AutoPokeArgs {
   team: string
@@ -12,6 +22,7 @@ export interface AutoPokeArgs {
   paneId: string | null
   body: string
   skipGuard?: boolean
+  paneSnapshot?: PaneSnapshotLoader
 }
 
 export type AutoPokeFn = (args: AutoPokeArgs) => Promise<{ ok: true } | { ok: false; reason?: AutoPokeSkipReason }>
@@ -25,6 +36,7 @@ export interface AutoPokeRecipient {
 export interface FanoutDeps {
   poke?: AutoPokeFn
   tmuxAvailable?: () => Promise<boolean>
+  paneSnapshot?: PaneSnapshotLoader
 }
 
 export interface RetryScheduleCtx {
@@ -32,7 +44,16 @@ export interface RetryScheduleCtx {
   sentAt: string
   lookupAgentFn: (agentId: string) => RetryAgentLookup | undefined
   scheduleRetryFn?: (ctx: RetryContext) => void
-  updateStatusFn?: RetryContext['updateStatusFn']
+  scheduleKimiRetryFn?: (ctx: KimiRetryContext) => void
+  // Widened over RetryContext's own union so the same callback can serve both
+  // the tmux and the kimi scheduler.
+  updateStatusFn?: (args: {
+    agentId: string
+    wake_status: 'delivered' | 'retrying' | 'skipped' | 'failed'
+    skip_reason?: DeliverySkipReason | null
+    retry_attempts?: number
+    delivered_at?: string | null
+  }) => void
 }
 
 export interface FanoutResult {
@@ -57,6 +78,9 @@ export async function fanoutAutoPoke(args: {
 }): Promise<FanoutResult> {
   const pokeFn = args.deps.poke
   const tmuxAvail = args.deps.tmuxAvailable ?? isTmuxAvailable
+  // One lazily-taken pane snapshot for the whole round; recipients that never
+  // reach a tmux dispatch never trigger the underlying tmux query.
+  const paneSnapshot = args.deps.paneSnapshot ?? memoizePaneSnapshot()
 
   const results = await Promise.all(args.recipients.map(async (r) => {
     try {
@@ -78,7 +102,8 @@ export async function fanoutAutoPoke(args: {
         fromAgentId: args.fromAgentId,
         targetAgentId: r.agent_id,
         paneId: r.tmux_pane_id,
-        body: args.body
+        body: args.body,
+        paneSnapshot
       })
       if (out.ok) return { agent_id: r.agent_id, poked: true, reason: undefined, paneId: r.tmux_pane_id }
       return {
@@ -95,7 +120,31 @@ export async function fanoutAutoPoke(args: {
   let retryScheduledCount = 0
   if (args.retry && pokeFn) {
     const scheduleFn = args.retry.scheduleRetryFn ?? defaultScheduleRetry
+    const scheduleKimiFn = args.retry.scheduleKimiRetryFn ?? defaultScheduleKimiRetry
     for (const res of results) {
+      // kimi deferrals never have a pane, so they cannot use the tmux
+      // scheduler. kimi_pending_interaction is deliberately absent here: it
+      // waits on a human approval and cannot clear on a timer.
+      if (!res.poked && res.reason === 'kimi_session_busy') {
+        scheduleKimiFn({
+          agentId: res.agent_id,
+          messageId: args.retry.messageId,
+          attemptFn: async () => {
+            const out = await pokeFn({
+              team: args.team,
+              fromAgentId: args.fromAgentId,
+              targetAgentId: res.agent_id,
+              paneId: res.paneId,
+              body: args.body
+            })
+            if (out.ok) return { ok: true }
+            return { ok: false, reason: out.reason ?? 'unknown' }
+          },
+          updateStatusFn: args.retry.updateStatusFn
+        })
+        retryScheduledCount += 1
+        continue
+      }
       if (!res.poked && res.reason === 'guard_failed' && res.paneId) {
         scheduleFn({
           agentId: res.agent_id,
@@ -106,7 +155,10 @@ export async function fanoutAutoPoke(args: {
           sentAt: args.retry.sentAt,
           paneId: res.paneId,
           paneGuardFn: runQuietGuard,
-          pokeFn: async (pokeArgs) => { await pokeFn({ ...pokeArgs, skipGuard: true }) },
+          // Retry ticks take a fresh snapshot: this round's is long stale by
+          // then. An explicitly injected loader still wins.
+          pokeFn: async (pokeArgs) =>
+            pokeFn({ ...pokeArgs, skipGuard: true, paneSnapshot: args.deps.paneSnapshot }),
           lookupAgentFn: args.retry.lookupAgentFn,
           updateStatusFn: args.retry.updateStatusFn
         })

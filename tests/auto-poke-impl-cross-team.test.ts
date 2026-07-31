@@ -19,6 +19,7 @@ vi.mock('../src/daemon/tmux-cli.js', async (importOriginal) => {
 })
 
 import { createAutoPokeImpl } from '../src/mcp/tools.js'
+import { fakePaneSnapshot } from './helpers/pane-snapshot.js'
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'atm-autopoke-xteam-'))
 
@@ -47,7 +48,8 @@ describe('createAutoPokeImpl cross-team', () => {
       fromAgentId: 'A',
       targetAgentId: 'B',
       paneId: '%pB',
-      body: 'anything (body stays in mailbox; poke injects hint only)'
+      body: 'anything (body stays in mailbox; poke injects hint only)',
+      paneSnapshot: fakePaneSnapshot([{ pane_id: '%pB' }])
     })
     expect(res).toEqual({ ok: true })
   })

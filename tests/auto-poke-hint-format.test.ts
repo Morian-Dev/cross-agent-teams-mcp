@@ -61,6 +61,17 @@ function setup(opts?: { paneState?: Record<string, 'idle' | 'active'> }): Setup 
   }
 }
 
+// The mailbox spec's prompt format, restated here independently of the
+// implementation so a drift in buildAutoPokeHint fails rather than follows:
+//   新邮件 from {sender_identifier} → {target_name}@{target_team}, 请调 get_inbox 查看
+function expectedHint(
+  sender: string,
+  target?: { name: string; team: string }
+): string {
+  const to = target === undefined ? '' : ` → ${target.name}@${target.team}`
+  return `新邮件 from ${sender}${to}, 请调 get_inbox 查看`
+}
+
 describe('auto-poke hint format', () => {
   const cleanups: Array<() => void> = []
   beforeEach(() => {
@@ -91,7 +102,10 @@ describe('auto-poke hint format', () => {
     expect(pMock).toHaveBeenCalledTimes(1)
     const call = pMock.mock.calls[0]
     const input = call[1] as { target_agent_id: string; prompt: string }
-    expect(input.prompt).toBe(`新邮件 from lead-opus (${aId}), 请调 get_inbox 查看`)
+    // sender is name + full agent_id; target is the recipient's own name@team
+    expect(input.prompt).toBe(
+      expectedHint(`lead-opus (${aId})`, { name: 'worker-kimi', team: 'default' })
+    )
     expect(input.prompt).not.toContain('bug #42')
     expect(input.prompt).not.toContain('please investigate')
   })
@@ -115,12 +129,25 @@ describe('auto-poke hint format', () => {
     const pMock = vi.mocked(pokeMock)
     // broadcast delivers to every other agent in team (B, C)
     expect(pMock).toHaveBeenCalledTimes(2)
-    for (const call of pMock.mock.calls) {
+    // Each recipient is named individually: a fan-out that reused one target
+    // row (or the sender's) for every hint is exactly the failure this segment
+    // exists to make visible, so assert the other recipient never appears.
+    const byTarget = new Map(pMock.mock.calls.map((call) => {
       const input = call[1] as { target_agent_id: string; prompt: string }
-      expect(input.prompt).toBe(`新邮件 from lead-opus (${aId}), 请调 get_inbox 查看`)
-      expect(input.prompt).not.toContain('API_KEY')
-      expect(input.prompt).not.toContain('sk-xyz')
-      expect(input.prompt).not.toContain('sensitive')
+      return [input.target_agent_id, input.prompt]
+    }))
+    expect(byTarget.get(bId)).toBe(
+      expectedHint(`lead-opus (${aId})`, { name: 'worker-kimi', team: 'default' })
+    )
+    expect(byTarget.get(bId)).not.toContain('worker-gpt')
+    expect(byTarget.get(cId)).toBe(
+      expectedHint(`lead-opus (${aId})`, { name: 'worker-gpt', team: 'default' })
+    )
+    expect(byTarget.get(cId)).not.toContain('worker-kimi')
+    for (const prompt of byTarget.values()) {
+      expect(prompt).not.toContain('API_KEY')
+      expect(prompt).not.toContain('sk-xyz')
+      expect(prompt).not.toContain('sensitive')
     }
   })
 
@@ -165,7 +192,11 @@ describe('auto-poke hint format', () => {
     const pMock = vi.mocked(pokeMock)
     expect(pMock).toHaveBeenCalledTimes(1)
     const input = pMock.mock.calls[0][1] as { target_agent_id: string; prompt: string }
-    expect(input.prompt).toBe(`新邮件 from lead-opus (${aId}), 请调 get_inbox 查看`)
+    // A retry tick resolves the target afresh; it must not fall back to the
+    // captured body nor drop the target segment.
+    expect(input.prompt).toBe(
+      expectedHint(`lead-opus (${aId})`, { name: 'worker-kimi', team: 'default' })
+    )
     expect(input.prompt).not.toContain('secret body')
 
     vi.useRealTimers()
@@ -187,20 +218,96 @@ describe('auto-poke hint format', () => {
     const pMock = vi.mocked(pokeMock)
     expect(pMock).toHaveBeenCalledTimes(1)
     const input = pMock.mock.calls[0][1] as { target_agent_id: string; prompt: string }
-    expect(input.prompt).toBe('新邮件 from abc12345, 请调 get_inbox 查看')
+    // The sender fallback is independent of the target segment: a nameless
+    // sender still names its recipient.
+    expect(input.prompt).toBe(
+      expectedHint('abc12345', { name: 'worker-kimi', team: 'default' })
+    )
+    expect(input.prompt).not.toContain(aId)
     expect(input.prompt).not.toContain('payload body')
   })
 
-  it('buildAutoPokeHint: returns name (agent_id) when name non-empty', () => {
-    const hint = buildAutoPokeHint({ name: 'lead-opus' }, 'aaaaaaaa-1111-2222-3333-444444444444')
-    expect(hint).toBe('新邮件 from lead-opus (aaaaaaaa-1111-2222-3333-444444444444), 请调 get_inbox 查看')
+  it('buildAutoPokeHint: sender is "name (agent_id)" when the name is non-empty', () => {
+    const hint = buildAutoPokeHint(
+      { name: 'lead-opus' },
+      'aaaaaaaa-1111-2222-3333-444444444444',
+      { name: 'worker-kimi', team: 'core' }
+    )
+    expect(hint).toBe('新邮件 from lead-opus (aaaaaaaa-1111-2222-3333-444444444444) → worker-kimi@core, 请调 get_inbox 查看')
     expect(hint.length).toBeLessThanOrEqual(200)
     expect(hint).toContain('get_inbox')
   })
 
-  it('buildAutoPokeHint: falls back to agent_id[:8] when row is undefined or name empty/null', () => {
-    expect(buildAutoPokeHint(undefined, 'abc12345-dead-beef-0000-111122223333')).toBe('新邮件 from abc12345, 请调 get_inbox 查看')
-    expect(buildAutoPokeHint({ name: null }, 'zzzzzzzz-dead-beef-0000-111122223333')).toBe('新邮件 from zzzzzzzz, 请调 get_inbox 查看')
-    expect(buildAutoPokeHint({ name: '' }, 'yyyyyyyy-dead-beef-0000-111122223333')).toBe('新邮件 from yyyyyyyy, 请调 get_inbox 查看')
+  it('buildAutoPokeHint: sender falls back to agent_id[:8] when the row is missing or nameless', () => {
+    expect(buildAutoPokeHint(undefined, 'abc12345-dead-beef-0000-111122223333', { name: 'b', team: 't' }))
+      .toBe('新邮件 from abc12345 → b@t, 请调 get_inbox 查看')
+    expect(buildAutoPokeHint({ name: null }, 'zzzzzzzz-dead-beef-0000-111122223333', { name: 'b', team: 't' }))
+      .toBe('新邮件 from zzzzzzzz → b@t, 请调 get_inbox 查看')
+    expect(buildAutoPokeHint({ name: '' }, 'yyyyyyyy-dead-beef-0000-111122223333', { name: 'b', team: 't' }))
+      .toBe('新邮件 from yyyyyyyy → b@t, 请调 get_inbox 查看')
+  })
+
+  it('buildAutoPokeHint: the target segment names the target\'s own team, cross team included', () => {
+    const from = 'aaaaaaaa-1111-2222-3333-444444444444'
+    // Same team and cross team render identically — the segment always carries
+    // the TARGET's team, and the sender's team is never part of the hint.
+    expect(buildAutoPokeHint({ name: 'lead-opus' }, from, { name: 'b', team: 'svc' }))
+      .toBe(`新邮件 from lead-opus (${from}) → b@svc, 请调 get_inbox 查看`)
+    expect(buildAutoPokeHint({ name: 'lead-alpha' }, from, { name: 'bob', team: 'beta' }))
+      .toBe(`新邮件 from lead-alpha (${from}) → bob@beta, 请调 get_inbox 查看`)
+  })
+
+  it('buildAutoPokeHint: an unresolvable target drops the separator too, with no placeholder', () => {
+    const from = 'abc12345-dead-beef-0000-111122223333'
+    const bare = '新邮件 from abc12345, 请调 get_inbox 查看'
+    for (const target of [undefined, { name: null, team: 'svc' }, { name: 'b', team: '' }, { name: '', team: 'svc' }]) {
+      const hint = buildAutoPokeHint(undefined, from, target)
+      expect(hint).toBe(bare)
+      expect(hint).not.toContain('→')
+      expect(hint).not.toContain('@')
+      expect(hint).not.toContain('undefined')
+      expect(hint).not.toContain('null')
+    }
+  })
+
+  it('buildAutoPokeHint: keeps the target segment while it fits in 200 characters', () => {
+    const hint = buildAutoPokeHint(
+      { name: 'n'.repeat(40) },
+      'aaaaaaaa-1111-2222-3333-444444444444',
+      { name: 't'.repeat(30), team: 'm'.repeat(30) }
+    )
+    expect(hint).toContain(' → ')
+    expect(hint.length).toBeLessThanOrEqual(200)
+  })
+
+  it('buildAutoPokeHint: drops the target segment rather than exceed 200 characters', () => {
+    const hint = buildAutoPokeHint(
+      { name: 'n'.repeat(64) },
+      'aaaaaaaa-1111-2222-3333-444444444444',
+      { name: 't'.repeat(64), team: 'm'.repeat(64) }
+    )
+    expect(hint.length).toBeLessThanOrEqual(200)
+    expect(hint).not.toContain(' → ')
+  })
+
+  it('buildAutoPokeHint: falls back to agent_id[:8] when the sender name alone busts the cap', () => {
+    // `name` has no schema length limit, so dropping only the target segment
+    // does not bound the hint — the sender's display name has to go too.
+    const from = 'aaaaaaaa-1111-2222-3333-444444444444'
+    const hint = buildAutoPokeHint(
+      { name: 'n'.repeat(500) },
+      from,
+      { name: 'b', team: 't' }
+    )
+    expect(hint.length).toBeLessThanOrEqual(200)
+    expect(hint).toBe(`新邮件 from ${from.slice(0, 8)}, 请调 get_inbox 查看`)
+    expect(hint).not.toContain('nnnn')
+  })
+
+  it('buildAutoPokeHint: omitting the target argument renders the bare sender-only form', () => {
+    expect(buildAutoPokeHint({ name: 'lead-opus' }, 'aaaaaaaa-1111-2222-3333-444444444444'))
+      .toBe('新邮件 from lead-opus (aaaaaaaa-1111-2222-3333-444444444444), 请调 get_inbox 查看')
+    expect(buildAutoPokeHint(undefined, 'abc12345-dead-beef-0000-111122223333'))
+      .toBe('新邮件 from abc12345, 请调 get_inbox 查看')
   })
 })

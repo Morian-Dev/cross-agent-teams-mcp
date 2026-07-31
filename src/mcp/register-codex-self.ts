@@ -1,4 +1,7 @@
-import { RegisterAgentService } from './register-agent.js'
+import {
+  RegisterAgentService,
+  type IdentityKeyConflict,
+} from './register-agent.js'
 import {
   JsonRpcSocketClient,
   defaultWebSocketFactory,
@@ -25,6 +28,7 @@ export interface RegisterCodexSelfInput {
   cwd?: string
   tty?: string
   title_contains?: string
+  identity_key?: string
 }
 
 type UnsupportedClientDetail = {
@@ -66,6 +70,7 @@ export type RegisterCodexSelfResult =
       error: 'codex_endpoint_config_invalid'
       detail: { env: 'CROSS_AGENT_TEAMS_CODEX_WS_URLS'; reason: string }
     }
+  | IdentityKeyConflict
 
 export interface RegisterCodexSelfDeps {
   env?: NodeJS.ProcessEnv
@@ -418,6 +423,7 @@ export class RegisterCodexSelfService {
       team: input.team,
       project_dir: input.project_dir,
       tmux_pane_id: trimToUndefined(input.tmux_pane_id),
+      identity_key: input.identity_key,
       delivery: {
         kind: 'codex-appserver',
         thread_id: threadId,

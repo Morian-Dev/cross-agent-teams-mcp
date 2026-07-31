@@ -32,7 +32,7 @@ describe('detectTmuxPane', () => {
 
   it('finds the codex pane by tty process plus cwd', async () => {
     mockExecFile({
-      "tmux list-panes -a -F #{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_active}\t#{pane_tty}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_title}":
+      "tmux list-panes -a -F #{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_active}\t#{pane_tty}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_title}\t#{pane_pid}":
         [
           '%1863\ts1\t0\t2\t0\t/dev/ttys015\t/Users/me/project\tzsh\tproject',
           '%1902\ts1\t0\t3\t1\t/dev/ttys026\t/Users/me/project\tcodex-aarch64-a\tproject',
@@ -61,7 +61,7 @@ describe('detectTmuxPane', () => {
 
   it('ignores Codex helper panes when detecting the visible Codex pane', async () => {
     mockExecFile({
-      "tmux list-panes -a -F #{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_active}\t#{pane_tty}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_title}":
+      "tmux list-panes -a -F #{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_active}\t#{pane_tty}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_title}\t#{pane_pid}":
         [
           '%1972\ts1\t0\t1\t1\t/dev/ttys026\t/Users/me/project\tcodex-aarch64-a\tproject',
           '%1993\ts1\t0\t2\t0\t/dev/ttys065\t/Users/me/project\tzsh\tproject',
@@ -97,7 +97,7 @@ describe('detectTmuxPane', () => {
 
   it('finds the claude code pane from tty processes even when pane_current_command is version-like', async () => {
     mockExecFile({
-      "tmux list-panes -a -F #{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_active}\t#{pane_tty}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_title}":
+      "tmux list-panes -a -F #{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_active}\t#{pane_tty}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_title}\t#{pane_pid}":
         '%2\ts1\t0\t0\t1\t/dev/ttys002\t/Users/me/agent-of-empires\t2.1.114\t✳ Claude Code\n',
       'ps -t ttys002 -o pid=,ppid=,stat=,command=':
         '45418 95545 S+   claude --resume a00d0fdf-684c-43aa-8549-7b1fc58d12c1 --dangerously-skip-permissions\n',
@@ -120,7 +120,7 @@ describe('detectTmuxPane', () => {
 
   it('returns ambiguous_match when two opencode panes tie on score', async () => {
     mockExecFile({
-      "tmux list-panes -a -F #{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_active}\t#{pane_tty}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_title}":
+      "tmux list-panes -a -F #{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_active}\t#{pane_tty}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_title}\t#{pane_pid}":
         [
           '%10\ts1\t0\t0\t0\t/dev/ttys010\t/Users/me/a\topencode\ta',
           '%11\ts1\t0\t1\t0\t/dev/ttys011\t/Users/me/b\topencode\tb',

@@ -8,7 +8,7 @@ Define the shared delivery contract used to persist, expose, and dispatch agent 
 
 The system SHALL define a type `DeliverySpec` as a discriminated union on a literal `kind` field.  `DeliverySpec` is the single type used to represent an agent's poke delivery channel in memory, on the wire (MCP tool params / responses), and as the logical contract persisted in the `agents` table.
 
-The `kind` field SHALL be one of: `'none'`, `'claude-channel'`, `'codex-appserver'`, `'opencode-server'`.  The full set is closed; new kinds require a new change proposal.
+The `kind` field SHALL be one of: `'none'`, `'claude-channel'`, `'codex-appserver'`, `'opencode-server'`, `'kimi-server'`.  The full set is closed; new kinds require a new change proposal.
 
 Kind-specific shape:
 
@@ -16,6 +16,7 @@ Kind-specific shape:
 - `{ kind: 'claude-channel'; channel_session_id: string }` — payload is a single opaque identifier produced by a `cross-agent-teams-channel` proxy's `subscribe_channel_wake` call.  `channel_session_id` MUST be a trimmed non-empty string.
 - `{ kind: 'codex-appserver'; thread_id: string; ws_url: string; auth_token_ref?: string }` — payload identifies a Codex `app-server` thread and the websocket to reach it.  `thread_id` MUST be a UUID string.  `ws_url` MUST be a `ws://` or `wss://` URL.  `auth_token_ref`, when present, MUST be a non-empty string denoting a reference, not an inline secret.
 - `{ kind: 'opencode-server'; session_id: string; base_url: string; auth_token_ref?: string }` — payload identifies an opencode HTTP server session and the base URL to reach it.  `session_id` MUST be a trimmed non-empty string starting with `ses`.  `base_url` MUST be an `http://` or `https://` URL.  `auth_token_ref`, when present, MUST be a non-empty string denoting a reference, not an inline secret.
+- `{ kind: 'kimi-server'; session_id: string; base_url: string; auth_token_ref?: string }` — payload identifies a Kimi Code server session and the base URL to reach it.  `session_id` MUST be a trimmed non-empty string.  `base_url` MUST be an `http://` or `https://` URL.  `auth_token_ref`, when present, MUST be a non-empty string denoting a reference, not an inline secret.
 
 #### Scenario: kind 'none' has no payload
 
@@ -41,6 +42,12 @@ Kind-specific shape:
 - **WHEN** its `kind` is `'opencode-server'`
 - **THEN** it has fields `session_id: string` (trimmed non-empty, starting with `ses`), `base_url: string` (http:// or https://), and optionally `auth_token_ref: string`
 
+#### Scenario: kind 'kimi-server' carries session_id and base_url
+
+- **GIVEN** a `DeliverySpec` value
+- **WHEN** its `kind` is `'kimi-server'`
+- **THEN** it has fields `session_id: string` (trimmed non-empty), `base_url: string` (http:// or https://), and optionally `auth_token_ref: string`
+
 ### Requirement: DeliverySpec persistence maps to two columns
 
 The `agents` table SHALL persist `DeliverySpec` as two columns: `delivery_kind TEXT NOT NULL DEFAULT 'none'` and `delivery_payload TEXT NULL`, a JSON string.  The mapping is:
@@ -51,11 +58,12 @@ The `agents` table SHALL persist `DeliverySpec` as two columns: `delivery_kind T
 Reading a row SHALL reconstruct `DeliverySpec` by taking `delivery_kind` as `kind`. Read-side validation is symmetric to write-side validation:
 
 - If `kind === 'none'`, the result is `{kind: 'none'}`.
-- If `kind` is not one of the supported kinds (`'none'`, `'claude-channel'`, `'codex-appserver'`, `'opencode-server'`), reading SHALL fail with `corrupt_delivery_payload`.
+- If `kind` is not one of the supported kinds (`'none'`, `'claude-channel'`, `'codex-appserver'`, `'opencode-server'`, `'kimi-server'`), reading SHALL fail with `corrupt_delivery_payload`.
 - Otherwise, `delivery_payload` SHALL be parsed as JSON. If the JSON parse fails, reading SHALL fail with `corrupt_delivery_payload`.
 - For `kind === 'claude-channel'`, the parsed payload SHALL contain a non-empty string `channel_session_id`. Missing or empty fails with `corrupt_delivery_payload`.
 - For `kind === 'codex-appserver'`, the parsed payload SHALL contain non-empty strings `thread_id` and `ws_url`. If `auth_token_ref` is present it SHALL be a non-empty string. Any violation fails with `corrupt_delivery_payload`.
 - For `kind === 'opencode-server'`, the parsed payload SHALL contain a non-empty string `session_id` (starting with `ses`) and a non-empty string `base_url`. If `auth_token_ref` is present it SHALL be a non-empty string. Any violation fails with `corrupt_delivery_payload`.
+- For `kind === 'kimi-server'`, the parsed payload SHALL contain a non-empty string `session_id` and a non-empty string `base_url`. If `auth_token_ref` is present it SHALL be a non-empty string. Any violation fails with `corrupt_delivery_payload`.
 
 #### Scenario: Writing kind 'none' sets payload to NULL
 
@@ -153,6 +161,36 @@ Reading a row SHALL reconstruct `DeliverySpec` by taking `delivery_kind` as `kin
 - **WHEN** the row is read as a `DeliverySpec`
 - **THEN** reading fails with `corrupt_delivery_payload`
 
+#### Scenario: Writing kind 'kimi-server' serializes session_id and base_url into payload
+
+- **GIVEN** a `DeliverySpec` `{kind: 'kimi-server', session_id: 'session_abc', base_url: 'http://127.0.0.1:58627'}`
+- **WHEN** written to the `agents` row
+- **THEN** `delivery_kind='kimi-server'` and `delivery_payload` is the JSON string `'{"session_id":"session_abc","base_url":"http://127.0.0.1:58627"}'`
+
+#### Scenario: Reading back a kind 'kimi-server' row reconstructs the spec
+
+- **GIVEN** an `agents` row with `delivery_kind='kimi-server'` and `delivery_payload='{"session_id":"session_abc","base_url":"http://127.0.0.1:58627"}'`
+- **WHEN** the row is read as a `DeliverySpec`
+- **THEN** the result is `{kind: 'kimi-server', session_id: 'session_abc', base_url: 'http://127.0.0.1:58627'}`
+
+#### Scenario: Reading a kimi-server row preserves optional auth_token_ref
+
+- **GIVEN** an `agents` row with `delivery_kind='kimi-server'` and `delivery_payload='{"session_id":"session_abc","base_url":"http://127.0.0.1:58627","auth_token_ref":"KIMI_SERVER_TOKEN"}'`
+- **WHEN** the row is read as a `DeliverySpec`
+- **THEN** the result is `{kind: 'kimi-server', session_id: 'session_abc', base_url: 'http://127.0.0.1:58627', auth_token_ref: 'KIMI_SERVER_TOKEN'}`
+
+#### Scenario: Reading a kimi-server row missing session_id fails fast
+
+- **GIVEN** an `agents` row with `delivery_kind='kimi-server'` and `delivery_payload='{"base_url":"http://127.0.0.1:58627"}'`
+- **WHEN** the row is read as a `DeliverySpec`
+- **THEN** reading fails with `corrupt_delivery_payload`
+
+#### Scenario: Reading a kimi-server row missing base_url fails fast
+
+- **GIVEN** an `agents` row with `delivery_kind='kimi-server'` and `delivery_payload='{"session_id":"session_abc"}'`
+- **WHEN** the row is read as a `DeliverySpec`
+- **THEN** reading fails with `corrupt_delivery_payload`
+
 ### Requirement: DeliverySpec validation rejects unknown kinds at write time
 
 Write paths, including `register_agent`, `bind_channel`, and any future MCP tool that accepts a `delivery` field, SHALL validate `DeliverySpec` and reject any `kind` outside the supported write surface.
@@ -163,6 +201,7 @@ The write validator SHALL accept:
 - `{kind: 'claude-channel', channel_session_id: ...}`
 - `{kind: 'codex-appserver', thread_id: <UUID>, ws_url: <ws:// or wss:// URL>, auth_token_ref?: <trimmed non-empty string>}`
 - `{kind: 'opencode-server', session_id: <trimmed non-empty string starting with 'ses'>, base_url: <http:// or https:// URL>, auth_token_ref?: <trimmed non-empty string>}`
+- `{kind: 'kimi-server', session_id: <trimmed non-empty string>, base_url: <http:// or https:// URL>, auth_token_ref?: <trimmed non-empty string>}`
 
 The validator SHALL reject invalid inputs with `{ error: 'invalid_delivery', reason: <machine-readable reason> }`.
 
@@ -195,6 +234,11 @@ Supported `reason` values in this change are:
 
 - **WHEN** a write path receives `delivery={kind: 'opencode-server', session_id: 'ses_abc', base_url: 'http://127.0.0.1:18888', auth_token_ref: 'OPENCODE_SERVER_PASSWORD'}`
 - **THEN** it returns `{ ok: { kind: 'opencode-server', session_id: 'ses_abc', base_url: 'http://127.0.0.1:18888', auth_token_ref: 'OPENCODE_SERVER_PASSWORD' } }`
+
+#### Scenario: Write validator accepts kind 'kimi-server'
+
+- **WHEN** a write path receives `delivery={kind: 'kimi-server', session_id: 'session_abc', base_url: 'http://127.0.0.1:58627', auth_token_ref: 'KIMI_SERVER_TOKEN'}`
+- **THEN** it returns `{ ok: { kind: 'kimi-server', session_id: 'session_abc', base_url: 'http://127.0.0.1:58627', auth_token_ref: 'KIMI_SERVER_TOKEN' } }`
 
 #### Scenario: Write validator rejects unknown kind
 
@@ -246,6 +290,21 @@ Supported `reason` values in this change are:
 - **WHEN** a write path receives `delivery={kind: 'opencode-server', session_id: 'ses_abc', base_url: 'http://127.0.0.1:18888', auth_token_ref: '   '}`
 - **THEN** it returns `{error: 'invalid_delivery', reason: 'invalid_auth_token_ref'}`
 
+#### Scenario: Write validator rejects kind 'kimi-server' with empty session_id
+
+- **WHEN** a write path receives `delivery={kind: 'kimi-server', session_id: '', base_url: 'http://127.0.0.1:58627'}`
+- **THEN** it returns `{error: 'invalid_delivery', reason: 'invalid_session_id'}`
+
+#### Scenario: Write validator rejects kind 'kimi-server' with invalid base_url
+
+- **WHEN** a write path receives `delivery={kind: 'kimi-server', session_id: 'session_abc', base_url: 'ws://127.0.0.1:58627'}`
+- **THEN** it returns `{error: 'invalid_delivery', reason: 'invalid_base_url'}`
+
+#### Scenario: Write validator rejects kind 'kimi-server' with blank auth_token_ref
+
+- **WHEN** a write path receives `delivery={kind: 'kimi-server', session_id: 'session_abc', base_url: 'http://127.0.0.1:58627', auth_token_ref: '   '}`
+- **THEN** it returns `{error: 'invalid_delivery', reason: 'invalid_auth_token_ref'}`
+
 ### Requirement: Poke dispatch routes by delivery.kind
 
 The daemon's poke dispatcher SHALL select the backend transport based on the target agent's `delivery.kind` value, with the following routing:
@@ -254,6 +313,7 @@ The daemon's poke dispatcher SHALL select the backend transport based on the tar
 - `kind === 'none'` → fall back to tmux injection if `tmux_pane_id` is set; otherwise fail with `no_transport_available`.
 - `kind === 'codex-appserver'` → deliver via the Codex websocket dispatcher defined in `codex-appserver-transport/spec.md`; this route SHALL NOT fall back to tmux automatically.
 - `kind === 'opencode-server'` → deliver via the opencode HTTP dispatcher defined in `opencode-server-transport/spec.md`; this route SHALL NOT fall back to tmux automatically.
+- `kind === 'kimi-server'` → deliver via the kimi HTTP dispatcher defined in `kimi-server-transport/spec.md`; this route SHALL NOT fall back to tmux automatically.
 
 #### Scenario: Route kind 'claude-channel' to ChannelWakeFanout
 
@@ -299,6 +359,20 @@ The daemon's poke dispatcher SHALL select the backend transport based on the tar
 - **AND** the opencode dispatcher fails with `{ error: 'opencode_connect_failed', detail: 'ECONNREFUSED' }`
 - **WHEN** the daemon dispatches a poke to this agent
 - **THEN** the daemon returns `{ error: 'opencode_connect_failed', detail: 'ECONNREFUSED' }`
+- **AND** it does NOT attempt tmux injection automatically
+
+#### Scenario: Route kind 'kimi-server' to kimi dispatcher
+
+- **GIVEN** target agent has `delivery={kind: 'kimi-server', session_id: 'session_abc', base_url: 'http://127.0.0.1:58627'}`
+- **WHEN** the daemon dispatches a poke to this agent
+- **THEN** it invokes the kimi dispatcher with that `session_id` and `base_url`
+
+#### Scenario: kimi dispatcher failure is returned without tmux fallback
+
+- **GIVEN** target agent has `delivery={kind: 'kimi-server', session_id: 'session_abc', base_url: 'http://127.0.0.1:58627'}`
+- **AND** the kimi dispatcher fails with `{ error: 'kimi_connect_failed', detail: 'ECONNREFUSED' }`
+- **WHEN** the daemon dispatches a poke to this agent
+- **THEN** the daemon returns `{ error: 'kimi_connect_failed', detail: 'ECONNREFUSED' }`
 - **AND** it does NOT attempt tmux injection automatically
 
 ### Requirement: Legacy channel_session_id access derives from delivery

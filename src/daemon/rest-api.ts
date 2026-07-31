@@ -7,6 +7,7 @@ import { SendMessageService, type SendInput } from '../mcp/send-message.js'
 import { GetInboxService } from '../mcp/get-inbox.js'
 import { createAutoPokeImpl } from '../mcp/tools.js'
 import { listAgentsForTeam } from '../mcp/list-agents.js'
+import { removeAgentRow } from '../mcp/unregister-self.js'
 import { wrapStorage } from './errors.js'
 import type { ChannelWakeFanout } from './channel-wake-fanout.js'
 import type { SessionOriginInfo } from './network-origin.js'
@@ -156,6 +157,26 @@ async function handleAgents(ctx: RestCtx, req: FastifyRequest, reply: FastifyRep
   return reply.send(result)
 }
 
+// Addressed by agent_id, not (team, name): rows carrying a device label other
+// than the daemon's localDevice are legitimate removal targets and would be
+// unreachable under the identity resolution the other routes use. Liveness is
+// deliberately not consulted — `online` falls back to a multi-day last_seen_at
+// window for runtimes without a pid or pane, so gating on it would block the
+// rows most in need of cleanup.
+async function handleDeleteAgent(ctx: RestCtx, req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const { agent_id } = req.params as { agent_id: string }
+  const result = await wrapStorage(() => removeAgentRow(ctx.db, ctx.agents, agent_id))
+  if (isErrorResult(result)) {
+    return reply.code(result.error === 'storage_unavailable' ? 503 : 404).send({ error: result.error })
+  }
+  return reply.send({
+    deleted: true,
+    agent_id: result.agent_id,
+    team: result.team,
+    name: result.name,
+  })
+}
+
 export function mountRestApi(
   app: FastifyInstance,
   db: Database.Database,
@@ -167,7 +188,7 @@ export function mountRestApi(
   // Constructed exactly like the send_message tool in src/mcp/tools.ts so a REST
   // send pokes recipients identically (channel-wake / tmux / codex-appserver /
   // opencode-server are all resolved inside poke() from the target's delivery row).
-  const autoPokeImpl = createAutoPokeImpl(db, agents, deps.channelWakeFanout)
+  const autoPokeImpl = createAutoPokeImpl(db, agents, deps.channelWakeFanout, localDevice)
   const sendSvc = new SendMessageService(db, agents, events, { poke: autoPokeImpl })
   const inboxSvc = new GetInboxService(db, agents)
   const ctx: RestCtx = { db, localDevice, agents, sendSvc, inboxSvc }
@@ -180,4 +201,5 @@ export function mountRestApi(
   app.post('/api/send', (req, reply) => handleSend(ctx, req, reply))
   app.get('/api/inbox', (req, reply) => handleInbox(ctx, req, reply))
   app.get('/api/agents', (req, reply) => handleAgents(ctx, req, reply))
+  app.delete('/api/agents/:agent_id', (req, reply) => handleDeleteAgent(ctx, req, reply))
 }

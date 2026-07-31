@@ -10,10 +10,25 @@ import {
   dispatchOpencodeServerPoke,
   type OpencodeServerDispatchResult,
 } from './opencode-server-dispatch.js'
+import {
+  dispatchKimiServerPokeGated,
+  type KimiServerDispatchResult,
+} from './kimi-server-dispatch.js'
+import type { PaneHostVerdict } from './pane-host-verify.js'
 
 export interface DispatchDeps {
   channelWakeFanout?: ChannelWakeFanout
-  tmuxPoke: (args: { pane_id: string; content: string; skipGuard?: boolean }) => Promise<TmuxPokeResult>
+  tmuxPoke: (args: {
+    pane_id: string
+    content: string
+    skipGuard?: boolean
+    confirmOwnership?: () => boolean
+  }) => Promise<TmuxPokeResult>
+  /** Synchronous current-ownership read, re-run by tmuxPoke just before writing. */
+  confirmPaneOwnership?: (args: { row: TargetRow; paneId: string }) => boolean
+  // Single gate for every tmux fallback below; omitted only by legacy callers
+  // that supply no pane snapshot (tests, in-process fixtures).
+  verifyPaneHost?: (args: { row: TargetRow; paneId: string }) => Promise<PaneHostVerdict>
   codexAppserverDispatch?: (args: {
     delivery: Extract<DeliverySpec, { kind: 'codex-appserver' }>
     content: string
@@ -22,6 +37,10 @@ export interface DispatchDeps {
     delivery: Extract<DeliverySpec, { kind: 'opencode-server' }>
     content: string
   }) => Promise<OpencodeServerDispatchResult>
+  kimiServerDispatch?: (args: {
+    delivery: Extract<DeliverySpec, { kind: 'kimi-server' }>
+    content: string
+  }) => Promise<KimiServerDispatchResult>
 }
 
 export type TmuxPokeResult =
@@ -29,9 +48,12 @@ export type TmuxPokeResult =
   | { error: string; detail?: unknown }
 
 export interface TargetRow {
+  agent_id: string
   agent_type: AgentType | null
+  device: string
   delivery: DeliverySpec
   tmux_pane_id: string | null
+  runtime_ui_pid: number | null
 }
 
 export interface DispatchInput {
@@ -64,9 +86,14 @@ export type DispatchResult =
       session_id: string
     }
   | {
+      ok: true
+      transport_used: 'kimi-server'
+      session_id: string
+    }
+  | {
       error: string
       detail?: unknown
-      transport_used?: 'tmux-poke' | 'codex-appserver' | 'opencode-server'
+      transport_used?: 'tmux-poke' | 'codex-appserver' | 'opencode-server' | 'kimi-server'
     }
 
 export async function dispatchPoke(
@@ -78,6 +105,7 @@ export async function dispatchPoke(
   if (agentType === 'claude-code') return dispatchClaude(deps, target, input)
   if (agentType === 'codex') return dispatchCodex(deps, target, input)
   if (agentType === 'opencode') return dispatchOpencode(deps, target, input)
+  if (agentType === 'kimi-code') return dispatchKimi(deps, target, input)
   return dispatchUnknown(deps, target, input)
 }
 
@@ -86,16 +114,34 @@ function resolveAgentType(target: TargetRow): AgentType | null {
   if (target.delivery.kind === 'claude-channel') return 'claude-code'
   if (target.delivery.kind === 'codex-appserver') return 'codex'
   if (target.delivery.kind === 'opencode-server') return 'opencode'
+  if (target.delivery.kind === 'kimi-server') return 'kimi-code'
   return null
 }
 
 async function dispatchTmux(
   deps: DispatchDeps,
+  target: TargetRow,
   paneId: string,
   content: string,
   skipGuard?: boolean
 ): Promise<DispatchResult> {
-  const tmuxResult = await deps.tmuxPoke({ pane_id: paneId, content, skipGuard })
+  if (deps.verifyPaneHost) {
+    const verdict = await deps.verifyPaneHost({ row: target, paneId })
+    if (!verdict.ok) {
+      // Unknown ownership is never a licence to inject: an unqueryable tmux is
+      // reported as unavailable, which is also what the paste would hit.
+      const error = verdict.reason === 'undecidable' ? 'tmux_unavailable' : verdict.reason
+      return { error, transport_used: 'tmux-poke' }
+    }
+  }
+  const tmuxResult = await deps.tmuxPoke({
+    pane_id: paneId,
+    content,
+    skipGuard,
+    confirmOwnership: deps.confirmPaneOwnership
+      ? () => deps.confirmPaneOwnership!({ row: target, paneId })
+      : undefined,
+  })
   if ('ok' in tmuxResult && tmuxResult.ok) {
     return {
       ok: true,
@@ -136,7 +182,7 @@ async function dispatchClaude(
     }
   }
 
-  if (paneId) return dispatchTmux(deps, paneId, input.content, input.skipGuard)
+  if (paneId) return dispatchTmux(deps, target, paneId, input.content, input.skipGuard)
   return {
     error: 'no_transport_available',
     detail: {
@@ -158,10 +204,17 @@ async function dispatchCodex(
       content: input.content,
     })
     if ('ok' in result && result.ok) return result
-    if (paneId) return dispatchTmux(deps, paneId, input.content, input.skipGuard)
+    if (
+      'error' in result &&
+      (result.error === 'codex_turn_start_unconfirmed' ||
+        result.error === 'codex_wake_unconfirmed')
+    ) {
+      return result
+    }
+    if (paneId) return dispatchTmux(deps, target, paneId, input.content, input.skipGuard)
     return result
   }
-  if (paneId) return dispatchTmux(deps, paneId, input.content, input.skipGuard)
+  if (paneId) return dispatchTmux(deps, target, paneId, input.content, input.skipGuard)
   return {
     error: 'no_transport_available',
     detail: {
@@ -187,11 +240,37 @@ async function dispatchOpencode(
   // (legacy `agent_type='opencode'` callers that did not pass base_url used
   // the tmux runtime-bind path; this branch preserves that behavior).
   const paneId = target.tmux_pane_id
-  if (paneId) return dispatchTmux(deps, paneId, input.content, input.skipGuard)
+  if (paneId) return dispatchTmux(deps, target, paneId, input.content, input.skipGuard)
   return {
     error: 'no_transport_available',
     detail: {
       opencode_bound: false,
+      tmux_pane_set: false,
+    },
+  }
+}
+
+async function dispatchKimi(
+  deps: DispatchDeps,
+  target: TargetRow,
+  input: DispatchInput
+): Promise<DispatchResult> {
+  if (target.delivery.kind === 'kimi-server') {
+    const result = await (deps.kimiServerDispatch ?? dispatchKimiServerPokeGated)({
+      delivery: target.delivery,
+      content: input.content,
+    })
+    return result
+  }
+  // kimi-code agent without a kimi-server delivery falls back to tmux
+  // (mirrors the legacy opencode branch: only an explicit kimi-server
+  // delivery pins the HTTP transport and forbids tmux fallback).
+  const paneId = target.tmux_pane_id
+  if (paneId) return dispatchTmux(deps, target, paneId, input.content, input.skipGuard)
+  return {
+    error: 'no_transport_available',
+    detail: {
+      kimi_bound: false,
       tmux_pane_set: false,
     },
   }
@@ -203,7 +282,7 @@ async function dispatchUnknown(
   input: DispatchInput
 ): Promise<DispatchResult> {
   const paneId = target.tmux_pane_id
-  if (paneId) return dispatchTmux(deps, paneId, input.content, input.skipGuard)
+  if (paneId) return dispatchTmux(deps, target, paneId, input.content, input.skipGuard)
   return {
     error: 'no_transport_available',
     detail: {

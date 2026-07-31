@@ -3,6 +3,7 @@ node_modules/
 vendor/
 .pnp/
 .pnp.js
+.pnpm-store/
 
 # Build outputs
 dist/
@@ -107,6 +108,7 @@ coverage/
 .agents/
 .codex/
 .gemini/
+.kimi-code/
 .mcp.json
 skillsmgr-deploy.json
 

@@ -6,8 +6,10 @@ import {
 } from '../lib/delivery-spec.js'
 import type { AgentType } from '../lib/agent-type.js'
 import { deriveDefaultTeam } from '../lib/default-team.js'
-import { AgentsRepo } from '../storage/agents-repo.js'
+import { canonicalKimiBaseUrl } from './kimi-session-state.js'
+import { AgentsRepo, type IdentityKeyMatch } from '../storage/agents-repo.js'
 import type { SessionOriginInfo } from '../daemon/network-origin.js'
+import { isAlive } from '../daemon/pid.js'
 
 export { deriveDefaultTeam } from '../lib/default-team.js'
 
@@ -25,6 +27,12 @@ export interface RegisterInput {
   delivery?: unknown
   claude_ui_pid?: number
   runtime_ui_pid?: number
+  identity_key?: string
+}
+
+export type IdentityKeyConflict = {
+  error: 'identity_key_conflict'
+  detail: { team: string; name: string }
 }
 
 export type RegisterResult =
@@ -38,6 +46,41 @@ export type RegisterResult =
   | { error: 'invalid_device_label' }
   | { error: 'invalid_name_label' }
   | { error: 'invalid_team_label' }
+  | IdentityKeyConflict
+
+export type IdentityKeyPlan =
+  | { kind: 'bind' }
+  | { kind: 'migrate'; from_agent_id: string }
+  | IdentityKeyConflict
+
+/**
+ * Decide what registering under `target` does to an identity key that some row
+ * may already hold. The rename case is the reason a holder on another row is
+ * not simply an error: the identity index is `(device, team, name)`, so a
+ * rename inserts a new row and the key has to move off the abandoned one.
+ * Only a holder whose pane is still running is a real conflict.
+ */
+export function planIdentityKeyBinding(args: {
+  holder: IdentityKeyMatch | undefined
+  target: { team: string; name: string }
+  ui_pid?: number
+  isProcessAlive?: (pid: number) => boolean
+}): IdentityKeyPlan {
+  const holder = args.holder
+  if (holder === undefined) return { kind: 'bind' }
+  if (holder.team === args.target.team && holder.name === args.target.name) {
+    return { kind: 'bind' }
+  }
+  const alive = args.isProcessAlive ?? isAlive
+  const pid = holder.runtime_ui_pid
+  if (pid !== null && pid > 0 && pid !== args.ui_pid && alive(pid)) {
+    return {
+      error: 'identity_key_conflict',
+      detail: { team: holder.team, name: holder.name },
+    }
+  }
+  return { kind: 'migrate', from_agent_id: holder.agent_id }
+}
 
 function identityKey(device: string, team: string, name: string): string {
   return `${device}\u0000${team}\u0000${name}`
@@ -47,10 +90,16 @@ function sharedRuntimeKey(
   agentType: AgentType | undefined,
   delivery: DeliverySpec | undefined
 ): string | undefined {
-  if (agentType !== 'codex' || delivery?.kind !== 'codex-appserver') {
-    return undefined
+  if (agentType === 'codex' && delivery?.kind === 'codex-appserver') {
+    return delivery.thread_id
   }
-  return delivery.thread_id
+  if (agentType === 'kimi-code' && delivery?.kind === 'kimi-server') {
+    // kimi session ids are only unique per server: two connections share a
+    // runtime identity only when BOTH the canonical base_url and the
+    // session_id match; same session_id on another endpoint still takes over.
+    return `${canonicalKimiBaseUrl(delivery.base_url)}\u0000${delivery.session_id}`
+  }
+  return undefined
 }
 
 export function validateNameLabel(name: string): { ok: string } | { error: 'invalid_name_label' } {
@@ -121,6 +170,7 @@ export interface RegisterAgentDeps {
 }
 
 export class RegisterAgentService {
+  private readonly db: Database.Database
   private readonly repo: AgentsRepo
   private connections = new Map<
     string,
@@ -129,16 +179,30 @@ export class RegisterAgentService {
   private readonly deps: RegisterAgentDeps
 
   constructor(db: Database.Database, deps: RegisterAgentDeps = {}) {
+    this.db = db
     this.repo = new AgentsRepo(db)
     this.deps = deps
   }
 
   register(input: RegisterInput): RegisterResult {
-    const validated =
+    const rawValidated =
       input.delivery === undefined
         ? undefined
         : validateDeliveryForWrite(input.delivery)
-    if (validated && 'error' in validated) return validated
+    if (rawValidated && 'error' in rawValidated) return rawValidated
+    // Canonicalize at the persistence boundary, not only in the MCP tool
+    // layer: the share key and the reconnect lookup compare canonical URLs,
+    // so service-direct callers must persist the same form.
+    const validated = rawValidated === undefined
+      ? undefined
+      : rawValidated.ok.kind === 'kimi-server'
+        ? {
+            ok: {
+              ...rawValidated.ok,
+              base_url: canonicalKimiBaseUrl(rawValidated.ok.base_url),
+            },
+          }
+        : rawValidated
 
     const role = input.role ?? 'default'
     if (input.claude_ui_pid !== undefined && role !== '__channel_proxy__') {
@@ -161,6 +225,22 @@ export class RegisterAgentService {
       team: input.team,
       project_dir: input.project_dir,
     })
+    // Resolved before any connection binding so a conflict leaves both the
+    // registry and the in-memory session map untouched.
+    const identityKeyPlan = input.identity_key === undefined
+      ? undefined
+      : planIdentityKeyBinding({
+          holder: this.repo.findByIdentityKey(
+            input.identity_key,
+            resolvedDevice.ok
+          )[0],
+          target: { team, name: input.name },
+          ui_pid: input.runtime_ui_pid,
+        })
+    if (identityKeyPlan !== undefined && 'error' in identityKeyPlan) {
+      return identityKeyPlan
+    }
+
     const key = identityKey(resolvedDevice.ok, team, input.name)
     const runtimeKey = sharedRuntimeKey(input.agent_type, validated?.ok)
     this.bindConnection({
@@ -171,20 +251,29 @@ export class RegisterAgentService {
       team,
       name: input.name,
     })
-    return this.repo.register({
-      agent_type: input.agent_type,
-      agent_type_name: input.agent_type_name,
-      device: resolvedDevice.ok,
-      model: input.model,
-      name: input.name,
-      role,
-      team,
-      tmux_pane_id: input.tmux_pane_id,
-      delivery: validated?.ok,
-      claude_ui_pid: input.claude_ui_pid,
-      runtime_ui_pid: input.runtime_ui_pid,
-      remote_addr: resolvedDevice.remote_addr,
+    // One transaction: the old row must not lose the key unless the new row
+    // gets it, and the unique index forbids both holding it at once.
+    const write = this.db.transaction(() => {
+      if (identityKeyPlan?.kind === 'migrate') {
+        this.repo.clearIdentityKey(identityKeyPlan.from_agent_id)
+      }
+      return this.repo.register({
+        agent_type: input.agent_type,
+        agent_type_name: input.agent_type_name,
+        device: resolvedDevice.ok,
+        model: input.model,
+        name: input.name,
+        role,
+        team,
+        tmux_pane_id: input.tmux_pane_id,
+        delivery: validated?.ok,
+        claude_ui_pid: input.claude_ui_pid,
+        runtime_ui_pid: input.runtime_ui_pid,
+        remote_addr: resolvedDevice.remote_addr,
+        identity_key: input.identity_key,
+      })
     })
+    return write()
   }
 
   releaseConnection(_agent_id: string, connection_id: string): void {

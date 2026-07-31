@@ -24,10 +24,15 @@ import { RegisterCodexSelfService } from './register-codex-self.js'
 import { RegisterOpencodeSelfService } from './register-opencode-self.js'
 import {
   resolveCodexReconnect,
+  resolveIdentityKeyReconnect,
+  resolveKimiReconnect,
   resolveOpencodeReconnect,
   resolveReconnect,
+  validateKimiSession,
+  type ReconnectCandidate,
   type ReconnectResolution,
 } from './reconnect.js'
+import { canonicalKimiBaseUrl, kimiBaseUrlIssue } from '../lib/kimi-url.js'
 import { UnregisterSelfService } from './unregister-self.js'
 import { listAgentsForTeam } from './list-agents.js'
 import { detectTmuxPane } from '../daemon/tmux-pane-detect.js'
@@ -55,7 +60,7 @@ const deliverySchema = z.object({
   kind: z.string(),
 }).passthrough()
 
-const agentTypeSchema = z.enum(['codex', 'claude-code', 'opencode', 'custom'])
+const agentTypeSchema = z.enum(['codex', 'claude-code', 'opencode', 'kimi-code', 'custom'])
 
 const detectTmuxPaneSchema = z.object({
   agent: z.enum(['codex', 'claude-code', 'opencode', 'custom']),
@@ -113,8 +118,8 @@ const SEND_MESSAGE_DESC = [
   'REPLY RULE: when replying to a message returned by get_inbox, treat its `from_device` as authoritative — if it differs from your own device, you MUST send to `from_name + ":" + from_device` (bare `from_name` would resolve on YOUR device and miss the actual sender). Same-device replies can use the bare name. The safe fallback for unknown device is send_message_by_id({to_agent_id: from_agent_id, ...}).',
   'For multi-recipient use broadcast (same-team) or broadcast_to_role (same-team, by role).',
   '除非用户明确指定 to_team, 不要跨 team 沟通 (explicitly set to_team only when user asks).',
-  'Reports poked, poke_skip_reasons (no_pane, guard_failed, tmux_unavailable, self); on guard_failed daemon retries at 30s/180s/600s (retry_scheduled, retry_delays_s); stops early on poked.',
-  'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender>, 请调 get_inbox 查看), NOT the body — read bodies via get_inbox.',
+  'Reports poked, poke_skip_reasons (no_pane, guard_failed, tmux_unavailable, pane_reassigned, self, kimi_session_busy, kimi_pending_interaction); on guard_failed and kimi_session_busy daemon retries at 30s/180s/600s (retry_scheduled, retry_delays_s); stops early on poked.  kimi_session_busy / kimi_pending_interaction mean the kimi session was mid-turn or waiting on a human approval so the wake-up was NOT injected — the mailbox row is written regardless and the recipient sees it on its next get_inbox; kimi_pending_interaction is never retried.  pane_reassigned means the recorded tmux pane is no longer hosted by the target (another agent took it over, or the target process is gone), so nothing was injected; it is never retried and the mailbox row is still written.',
+  'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender> → <recipient_name>@<recipient_team>, 请调 get_inbox 查看), NOT the body — read bodies via get_inbox.  The → segment names who the wake-up was addressed to, so a pane that receives one but finds an empty get_inbox can tell at a glance it was not the intended recipient.',
   'Delivery is NOT filtered by online/idle; direct and fan-out deliveries write mailbox rows for offline targets. The list_agents `online` flag reflects process liveness.',
   'DO NOT pre-verify the recipient via list_agents before calling send_message — this rule applies to BOTH same-team and cross-team sends (list_agents is caller-team scoped and CANNOT see cross-team agents, so a cross-team pre-check always falsely reports "missing"; for same-team sends the pre-check is pure waste).',
   'On miss send_message returns unknown_recipient cleanly with no side effects, so the correct pattern is "try send, then handle unknown_recipient" — never "list_agents first, then send".'
@@ -124,23 +129,24 @@ const SEND_MESSAGE_BY_ID_DESC = [
   'Private 1→1 message to another agent by agent_id (UUID).  Use this when you already hold the target\'s agent_id; prefer send_message (by name) otherwise.',
   'Same-team only: the recipient must belong to the caller\'s team.  For cross-team sends use send_message with to_team.',
   'By default auto-poke=true with quiet-guard (auto_poke:false opts out), and need_reply=true.  Set need_reply:false for FYI/no-response-needed messages.',
-  'Reports poked, poke_skip_reasons (no_pane, guard_failed, tmux_unavailable, self); on guard_failed daemon retries at 30s/180s/600s (retry_scheduled, retry_delays_s); stops early on poked.',
-  'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender>, 请调 get_inbox 查看), NOT the body — read bodies via get_inbox.',
+  'Reports poked, poke_skip_reasons (no_pane, guard_failed, tmux_unavailable, pane_reassigned, self, kimi_session_busy, kimi_pending_interaction); on guard_failed and kimi_session_busy daemon retries at 30s/180s/600s (retry_scheduled, retry_delays_s); stops early on poked.  kimi_session_busy / kimi_pending_interaction mean the kimi session was mid-turn or waiting on a human approval so the wake-up was NOT injected — the mailbox row is written regardless and the recipient sees it on its next get_inbox; kimi_pending_interaction is never retried.  pane_reassigned means the recorded tmux pane is no longer hosted by the target (another agent took it over, or the target process is gone), so nothing was injected; it is never retried and the mailbox row is still written.',
+  'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender> → <recipient_name>@<recipient_team>, 请调 get_inbox 查看), NOT the body — read bodies via get_inbox.  The → segment names who the wake-up was addressed to, so a pane that receives one but finds an empty get_inbox can tell at a glance it was not the intended recipient.',
   'Delivery is NOT filtered by online/idle — offline targets still receive the mailbox row.'
 ].join(' ')
 
 const BROADCAST_DESC = [
   'Same-team broadcast to every other agent in the caller team across all devices; delivers to every team member except the sender.',
-  'Auto-poke default true (quiet-guard + 30s/180s/600s retry; reports poked, poke_skip_reasons, retry_scheduled, retry_delays_s).  auto_poke:false opts out.',
+  'Auto-poke default true (quiet-guard on tmux targets, busy-gate on kimi targets; both retry at 30s/180s/600s — reports poked, poke_skip_reasons, retry_scheduled, retry_delays_s).  auto_poke:false opts out.  See send_message for what each poke_skip_reasons value means, incl. pane_reassigned (the recipient no longer hosts its recorded tmux pane, so no wake-up was injected; never retried, mailbox row still written).',
   'For role filter use broadcast_to_role.  For cross-team 1→1 use send_message({to_team}).',
-  'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender>, 请调 get_inbox 查看) — never the body.  Read via get_inbox.',
+  'Auto-poke injects only a SHORT wake-up hint (新邮件 from <sender> → <recipient_name>@<recipient_team>, 请调 get_inbox 查看) — never the body.  Read via get_inbox.',
   'Delivery is NOT filtered by online/idle; offline targets still receive mailbox rows. The list_agents `online` flag reflects process liveness.'
 ].join(' ')
 
 const BROADCAST_TO_ROLE_DESC = [
   'Same-team broadcast filtered by role across all devices; delivers to every matching team member.  Strictly same-team — no cross-team variant.',
   'For cross-team private 1→1 use send_message({to_team}).',
-  'Auto-poke default true with quiet-guard + 30s/180s/600s retry (auto_poke:false opts out); injects only a SHORT wake-up hint, not the message body.  Recipients read via get_inbox.',
+  'Auto-poke default true with quiet-guard on tmux targets / busy-gate on kimi targets, both retrying at 30s/180s/600s (auto_poke:false opts out); injects only a SHORT wake-up hint, not the message body.  Recipients read via get_inbox.',
+  'See send_message for what each poke_skip_reasons value means, incl. pane_reassigned (the recipient no longer hosts its recorded tmux pane, so no wake-up was injected; never retried, mailbox row still written).',
   'Returns unknown_recipient when no same-team agent matches to_role.'
 ].join(' ')
 
@@ -149,10 +155,25 @@ const RECONNECT_DESC = [
     'your own (team, name), such as after a context clear.',
   'Invoke this when the user asks to "reconnect xats", "re-register xats", ' +
     '"重连 xats", or "重新注册 xats".',
-  'Pass exactly one identity key: Claude Code passes `ui_pid=$PPID`; ' +
+  'BRANCH 1 (check this first): if `printenv XATS_IDENTITY_KEY` is ' +
+    'non-empty, call `reconnect({identity_key: <that value>, ui_pid: ' +
+    '$PPID})` — or `reconnect({identity_key: <that value>, thread_id: ' +
+    '$CODEX_THREAD_ID})` from codex — before considering the two branches ' +
+    'below. `identity_key` is the only lookup that survives a pane restart, ' +
+    'and it does NOT belong to the exactly-one group below: it resolves the ' +
+    'identity while the accompanying `ui_pid` / `thread_id` refreshes the ' +
+    'live runtime in the same call. This branch must come first because a ' +
+    'restarted pane both holds a key and no longer remembers its ' +
+    '(team, name), so the later branches would capture the case and fail. ' +
+    'On a `need_register` result, ask the user for (team, name) as usual ' +
+    'and pass the same `identity_key` on that `register_agent` call.',
+  'Otherwise pass exactly one runtime lookup key: Claude Code passes `ui_pid=$PPID`; ' +
     'Codex CLI and Mac Codex App pass ' +
     '`thread_id=$CODEX_THREAD_ID`; opencode passes ' +
-    '`base_url=$OPENCODE_XATS_BASE_URL` (and optionally `session_id`).',
+    '`base_url=$OPENCODE_XATS_BASE_URL` (and optionally `session_id`); ' +
+    'kimi-code passes `agent_type="kimi-code"`, ' +
+    '`base_url=$KIMI_XATS_BASE_URL`, plus a REQUIRED ' +
+    '`session_id=$KIMI_XATS_SESSION_ID`.',
   'Claude Code lookup uses local `runtime_ui_pid` and reuses the existing ' +
     'channel and pane binding paths.',
   'For Codex CLI and Mac Codex App, `CODEX_THREAD_ID` is the stable ' +
@@ -185,6 +206,23 @@ const RECONNECT_DESC = [
     'candidates mix ref and no-ref rows — in either case `detail.refs` lists ' +
     'only the known non-empty refs (possibly a single element in the mixed ' +
     'case); supply `auth_token_ref` explicitly to resolve.',
+  'kimi-code lookup uses the local `kimi-server` delivery ' +
+    '(base_url, session_id) pair. Pass `agent_type="kimi-code"` — it is the ' +
+    'runtime discriminator for the base_url arm; without it a kimi reconnect ' +
+    'is routed by local row residency and, when no rows match, falls to the ' +
+    'opencode probe with opencode-flavored errors instead of ' +
+    '`need_register`. `session_id` is REQUIRED for the kimi ' +
+    'path — the daemon never auto-resolves a kimi session by ' +
+    'recency, because several kimi sessions routinely share a workDir and ' +
+    'binding the wrong one misdelivers pokes while reporting success. The ' +
+    'daemon revalidates via GET <base_url>/api/v1/sessions/<session_id> with ' +
+    'the poke dispatcher\'s bearer resolution (stored auth_token_ref, else ' +
+    'the kimi token file) before reusing the identity; a missing/archived ' +
+    'session or failed probe returns `session_not_found` and no row is ' +
+    'mutated. On success the connection shares with live engine connections ' +
+    'of the same session instead of taking over. In the common case the ' +
+    'whole recovery is restarting the TUI: the launcher re-exports ' +
+    'KIMI_XATS_BASE_URL / KIMI_XATS_SESSION_ID.',
   'On a single match: returns { ok, agent_id, name, team, last_seen_at } ' +
     'plus the runtime-specific delivery fields.',
   'On zero matches: returns { need_register, reason } — reconnect does NOT ' +
@@ -225,33 +263,73 @@ function defaultClaudeSelfModel(
   return 'claude-code'
 }
 
+export const HINT_MAX_CHARS = 200
+
 export function buildAutoPokeHint(
   row: { name?: string | null } | undefined,
-  fromAgentId: string
+  fromAgentId: string,
+  target?: { name?: string | null; team?: string | null } | undefined
 ): string {
   const dn = row?.name
   const sender = typeof dn === 'string' && dn.length > 0
     ? `${dn} (${fromAgentId})`
     : fromAgentId.slice(0, 8)
-  return `新邮件 from ${sender}, 请调 get_inbox 查看`
+  const targetName = target?.name
+  const targetTeam = target?.team
+  const to = typeof targetName === 'string' && targetName.length > 0
+    && typeof targetTeam === 'string' && targetTeam.length > 0
+    ? ` → ${targetName}@${targetTeam}`
+    : ''
+  const render = (who: string, segment: string): string =>
+    `新邮件 from ${who}${segment}, 请调 get_inbox 查看`
+  // Neither name carries a schema length cap, so the hint sheds the target
+  // segment first and then the sender's display name, in that order, rather
+  // than letting either push it past HINT_MAX_CHARS.
+  for (const candidate of [render(sender, to), render(sender, ''), render(fromAgentId.slice(0, 8), '')]) {
+    if (candidate.length <= HINT_MAX_CHARS) return candidate
+  }
+  return render(fromAgentId.slice(0, 8), '')
 }
 
 export function createAutoPokeImpl(
   db: Database.Database,
   _agents: AgentsRepo,
-  channelWakeFanout?: ChannelWakeFanout
+  channelWakeFanout?: ChannelWakeFanout,
+  localDevice?: string
 ): import('./auto-poke-fanout.js').AutoPokeFn {
   return async (args) => {
     const row = db
       .prepare('SELECT name FROM agents WHERE agent_id=?')
       .get(args.fromAgentId) as { name: string | null } | undefined
-    const hint = buildAutoPokeHint(row, args.fromAgentId)
+    const target = db
+      .prepare('SELECT name, team FROM agents WHERE agent_id=?')
+      .get(args.targetAgentId) as { name: string | null; team: string } | undefined
+    const hint = buildAutoPokeHint(row, args.fromAgentId, target)
     const res = await poke(
-      { db, callerAgentId: args.fromAgentId, allowCrossTeam: true, channelWakeFanout },
+      {
+        db,
+        callerAgentId: args.fromAgentId,
+        allowCrossTeam: true,
+        channelWakeFanout,
+        localDevice,
+        paneSnapshot: args.paneSnapshot,
+      },
       { target_agent_id: args.targetAgentId, prompt: hint, skipGuard: args.skipGuard }
     )
     if ('ok' in res && res.ok) return { ok: true }
     const err = (res as { error?: string }).error
+    if (err === 'codex_turn_start_unconfirmed' || err === 'codex_wake_unconfirmed') {
+      // The app-server accepted the turn input. Confirmation uncertainty must
+      // not trigger tmux fallback or retry duplicate delivery.
+      return { ok: true }
+    }
+    // kimi deferrals are "not injected yet", not delivery failures: they route
+    // to the kimi retry gradient, and pending_interaction to nothing at all.
+    if (err === 'kimi_session_busy') return { ok: false, reason: 'kimi_session_busy' }
+    if (err === 'kimi_pending_interaction') {
+      return { ok: false, reason: 'kimi_pending_interaction' }
+    }
+    if (err === 'pane_reassigned') return { ok: false, reason: 'pane_reassigned' }
     if (err === 'tmux_unavailable') return { ok: false, reason: 'tmux_unavailable' }
     if (err === 'tmux_pane_not_set') return { ok: false, reason: 'no_pane' }
     if (err === 'no_transport_available') return { ok: false, reason: 'no_pane' }
@@ -285,6 +363,8 @@ function inferRuntimeAgentKind(
   clientInfo: SessionClientInfo | undefined
 ): DetectAgentKind | undefined {
   if (args.agent_type === 'custom') return undefined
+  // kimi-code has no tmux runtime-bind matcher; its delivery is HTTP-only.
+  if (args.agent_type === 'kimi-code') return undefined
   if (args.agent_type) return args.agent_type
   if (args.delivery?.kind === 'codex-appserver') return 'codex'
 
@@ -323,7 +403,7 @@ export function registerBusinessTools(
   const registerOpencodeSelfSvc = new RegisterOpencodeSelfService(registerSvc)
   const unregisterSelfSvc = new UnregisterSelfService(db, agents)
 
-  const autoPokeImpl = createAutoPokeImpl(db, agents, channelWakeFanout)
+  const autoPokeImpl = createAutoPokeImpl(db, agents, channelWakeFanout, context?.localDevice)
 
   const sendSvc = new SendMessageService(db, agents, events, { poke: autoPokeImpl })
   const broadcastSvc = new BroadcastService(db, agents, { poke: autoPokeImpl })
@@ -450,7 +530,12 @@ export function registerBusinessTools(
     ws_url: z.string().optional(),
     auth_token_ref: z.string().min(1).optional(),
     base_url: z.string().min(1).refine(v => v.trim().length > 0, { message: 'base_url must not be empty' }).optional(),
-    session_id: z.string().min(1).refine(v => v.trim().length > 0, { message: 'session_id must not be empty' }).optional(),
+    session_id: z.string().trim().min(1, { message: 'session_id must not be empty' }).optional(),
+    identity_key: z.string().min(1).refine(v => v.trim().length > 0, {
+      message: 'identity_key must not be empty',
+    }).optional().describe(
+      'Opaque per-pane value from `$XATS_IDENTITY_KEY`, minted by the launcher. Pass it on EVERY registration, including the first one — it is what lets this identity be recovered after the pane is restarted. Applies to every agent_type.'
+    ),
     claude_ui_pid: z.number().int().positive().optional().describe(
       "Internal field for the cross-agent-teams-mcp channel proxy.  Stores the proxy's parent Claude Code UI pid (`process.ppid`) so that Claude Code hosts registering in the same lineage can auto-bind their claude-channel delivery.  Only valid when role='__channel_proxy__'; rejected otherwise."
     ),
@@ -475,12 +560,13 @@ export function registerBusinessTools(
     if (
       value.auth_token_ref !== undefined &&
       value.agent_type !== 'codex' &&
-      value.agent_type !== 'opencode'
+      value.agent_type !== 'opencode' &&
+      value.agent_type !== 'kimi-code'
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['agent_type'],
-        message: 'agent_type=codex or agent_type=opencode is required when auth_token_ref is provided',
+        message: 'agent_type=codex, agent_type=opencode, or agent_type=kimi-code is required when auth_token_ref is provided',
       })
     }
     if (value.channel_session_id !== undefined && value.agent_type !== 'claude-code') {
@@ -547,18 +633,55 @@ export function registerBusinessTools(
         }
       }
     }
-    if (value.base_url !== undefined && value.agent_type !== 'opencode') {
+    if (value.agent_type === 'kimi-code') {
+      if (value.base_url === undefined || value.base_url.trim().length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['base_url'],
+          message:
+            'base_url is required when agent_type="kimi-code". '
+            + 'Read it from $KIMI_XATS_BASE_URL (set by the xats-kimi launcher).',
+        })
+      } else {
+        const issue = kimiBaseUrlIssue(value.base_url)
+        if (issue === 'unparseable' || issue === 'not_http') {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['base_url'],
+            message: 'base_url must be a parseable http:// or https:// URL when agent_type="kimi-code".',
+          })
+        } else if (issue !== undefined) {
+          // Kimi endpoints are built by appending /api/v1/... to base_url;
+          // a query/hash/userinfo component would corrupt every request URL.
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['base_url'],
+            message: 'base_url must not carry a query, fragment, or userinfo when agent_type="kimi-code".',
+          })
+        }
+      }
+      if (value.session_id === undefined || value.session_id.trim().length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['session_id'],
+          message:
+            'session_id is required when agent_type="kimi-code" (the daemon does NOT auto-resolve it). '
+            + 'Read it from $KIMI_XATS_SESSION_ID (exported by the xats-kimi launcher, which pre-creates the session via the kimi server REST API).',
+        })
+      }
+    }
+    if (value.base_url !== undefined && value.agent_type !== 'opencode' && value.agent_type !== 'kimi-code') {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['agent_type'],
-        message: 'agent_type=opencode is required when base_url is provided',
+        message: 'agent_type=opencode or agent_type=kimi-code is required when base_url is provided',
       })
     }
-    if (value.session_id !== undefined && value.agent_type !== 'opencode') {
+    if (value.session_id !== undefined && value.agent_type !== 'opencode' && value.agent_type !== 'kimi-code') {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['agent_type'],
-        message: 'agent_type=opencode is required when session_id is provided',
+        message: 'agent_type=opencode or agent_type=kimi-code is required when session_id is provided',
       })
     }
   })
@@ -581,6 +704,7 @@ export function registerBusinessTools(
       base_url?: string
       session_id?: string
       claude_ui_pid?: number
+      identity_key?: string
       delivery?: { kind: string; [key: string]: unknown }
     }
   ): Promise<unknown> {
@@ -621,6 +745,7 @@ export function registerBusinessTools(
         base_url: args.base_url,
         session_id: args.session_id,
         auth_token_ref: args.auth_token_ref,
+        identity_key: args.identity_key,
       })
       if ('agent_id' in opencodeRes) {
         if (onRegisterSuccess) {
@@ -630,6 +755,51 @@ export function registerBusinessTools(
         }
       }
       return opencodeRes
+    }
+    // kimi-code HTTP branch: register via the kimi-server delivery path.
+    // No register-time health check (start-xats may launch the kimi server
+    // later; reachability failures surface at poke time as kimi_connect_failed).
+    if (
+      args.agent_type === 'kimi-code' &&
+      args.base_url !== undefined &&
+      args.session_id !== undefined
+    ) {
+      // Canonical at the write boundary: the share key and the reconnect
+      // lookup both compare canonical URLs, so equivalent spellings of the
+      // same endpoint must persist identically.
+      const kimiBaseUrl = canonicalKimiBaseUrl(args.base_url)
+      const kimiRes = registerSvc.register({
+        connection_id: connectionId,
+        agent_type: 'kimi-code',
+        model: args.model,
+        device: args.device,
+        name: args.name,
+        role: args.role,
+        team: args.team,
+        project_dir: args.project_dir,
+        identity_key: args.identity_key,
+        delivery: {
+          kind: 'kimi-server',
+          session_id: args.session_id,
+          base_url: kimiBaseUrl,
+          ...(args.auth_token_ref === undefined
+            ? {}
+            : { auth_token_ref: args.auth_token_ref }),
+        },
+      })
+      if ('agent_id' in kimiRes) {
+        if (onRegisterSuccess) {
+          try { onRegisterSuccess(kimiRes.agent_id, kimiRes.team) } catch { /* best-effort */ }
+        } else if (fanout) {
+          try { fanout.rebind(kimiRes.agent_id, kimiRes.team) } catch { /* best-effort */ }
+        }
+        return {
+          ...kimiRes,
+          session_id: args.session_id,
+          base_url: kimiBaseUrl,
+        }
+      }
+      return kimiRes
     }
     if (
       args.agent_type === 'claude-code' &&
@@ -679,6 +849,7 @@ export function registerBusinessTools(
             thread_id: args.thread_id,
             ws_url: args.ws_url,
             auth_token_ref: args.auth_token_ref,
+            identity_key: args.identity_key,
           })
         : registerSvc.register({
             connection_id: connectionId,
@@ -694,6 +865,7 @@ export function registerBusinessTools(
             claude_ui_pid: args.claude_ui_pid,
             runtime_ui_pid:
               args.agent_type === 'claude-code' ? args.ui_pid : undefined,
+            identity_key: args.identity_key,
           })
     if ('thread_id' in res && 'agent_id' in res) {
       nativeDeliveryBound = true
@@ -824,13 +996,16 @@ export function registerBusinessTools(
       description: [
         'Register this session as an agent in a team. This is the unified registration entry point.',
         'DETECTION (run these probes BEFORE choosing `agent_type=`, in order; first match wins):',
-        '1. `printenv OPENCODE_XATS_BASE_URL` non-empty → `agent_type="opencode"`; pass that value as `base_url`. Do NOT pass `session_id` — the daemon auto-resolves it as the most recently updated session on that base_url. The env var is set ONLY by the `free-xats-opencode` launcher, so its presence is itself the runtime assertion that the caller is opencode.',
-        '2. `printenv CODEX_THREAD_ID` non-empty (Codex CLI or Mac Codex App) → `agent_type="codex"`; pass that value as `thread_id` (REQUIRED for codex per the schema). For Codex CLI, do NOT pass `ui_pid` because the launcher\'s `pre_register_codex_pane` flow handles tmux binding and an explicit pid disables that path. Mac Codex App has no tmux launcher flow; omit `ui_pid` because an App or app-server pid is not conversation-scoped, and reconnect identity is `thread_id` only.',
-        '3. `printenv CLAUDECODE` non-empty OR `printenv CLAUDE_CODE_ENTRYPOINT` non-empty → `agent_type="claude-code"`; pass `$PPID` as `ui_pid` to enable channel auto-bind.',
-        '4. None of the above → `agent_type="custom"` with `agent_type_name="<the harness you are running under, e.g. cursor, opencode, ...>"` (`agent_type_name` is required when `agent_type="custom"`). Detect the harness name from your runtime environment if you can — e.g. `printenv CURSOR_TRACE_ID` non-empty means cursor — but do NOT guess from system-wide signals like "binary X exists on PATH": such probes detect what the user has installed, not what runtime you are inside, and pick the wrong agent type. When unsure, prefer `agent_type_name="unknown"` over a wrong guess.',
+        '1. `printenv KIMI_XATS_BASE_URL` non-empty → `agent_type="kimi-code"`; pass that value as `base_url`, and pass `session_id` from `printenv KIMI_XATS_SESSION_ID`. The `xats-kimi` launcher pre-creates the session via the kimi server REST API and exports BOTH variables, so the session id is exact — do NOT derive it from `~/.kimi-code/session_index.jsonl` (its last `workDir`-matching entry can belong to a DIFFERENT kimi session in the same directory; pokes bound that way are delivered to the wrong session). `session_id` is REQUIRED for kimi-code — the daemon does NOT auto-resolve it. These env vars are set ONLY by the `xats-kimi` launcher, so their presence is itself the runtime assertion that the caller is kimi-code.',
+        '2. `printenv OPENCODE_XATS_BASE_URL` non-empty → `agent_type="opencode"`; pass that value as `base_url`. Do NOT pass `session_id` — the daemon auto-resolves it as the most recently updated session on that base_url. The env var is set ONLY by the `free-xats-opencode` launcher, so its presence is itself the runtime assertion that the caller is opencode.',
+        '3. `printenv CODEX_THREAD_ID` non-empty (Codex CLI or Mac Codex App) → `agent_type="codex"`; pass that value as `thread_id` (REQUIRED for codex per the schema). For Codex CLI, do NOT pass `ui_pid` because the launcher\'s `pre_register_codex_pane` flow handles tmux binding and an explicit pid disables that path. Mac Codex App has no tmux launcher flow; omit `ui_pid` because an App or app-server pid is not conversation-scoped, and reconnect identity is `thread_id` only.',
+        '4. `printenv CLAUDECODE` non-empty OR `printenv CLAUDE_CODE_ENTRYPOINT` non-empty → `agent_type="claude-code"`; pass `$PPID` as `ui_pid` to enable channel auto-bind.',
+        '5. None of the above → `agent_type="custom"` with `agent_type_name="<the harness you are running under, e.g. cursor, opencode, ...>"` (`agent_type_name` is required when `agent_type="custom"`). Detect the harness name from your runtime environment if you can — e.g. `printenv CURSOR_TRACE_ID` non-empty means cursor — but do NOT guess from system-wide signals like "binary X exists on PATH": such probes detect what the user has installed, not what runtime you are inside, and pick the wrong agent type. When unsure, prefer `agent_type_name="unknown"` over a wrong guess.',
         'Calling this tool again with the same `(device, team, name)` identity reuses the existing `agent_id` and refreshes `tmux_pane_id` and `model`; no duplicate row is created.',
+        'IDENTITY KEY (not part of the DETECTION sequence above — it says nothing about which runtime you are, and applies to every `agent_type`): run `printenv XATS_IDENTITY_KEY`; when it is non-empty, pass that value as `identity_key` on EVERY `register_agent` call, including the very first one. The key is the launcher-minted, restart-stable handle that later lets `reconnect({identity_key})` recover this identity after the pane is restarted — a restart changes `ui_pid`, `thread_id`, and the session id, so no other lookup can. Omitting it on the first registration silently disables recovery for this pane: nothing fails, every later recovery just returns `need_register`. When the key is already held by another live pane the call is rejected with `identity_key_conflict` naming that pane\'s team and name, and no row is written.',
         'Use `agent_type="custom"` for unsupported agent harnesses; provide `agent_type_name` for observability.',
         'opencode sessions: pass `agent_type="opencode"` and `base_url` (from `$OPENCODE_XATS_BASE_URL`, set by the `free-xats-opencode` launcher). Omit `session_id` — the daemon auto-resolves it via `<base_url>/session` (most recently updated). `auth_token_ref` is optional; set only when `OPENCODE_SERVER_PASSWORD` is configured on the opencode server. The schema REQUIRES `base_url` (parseable `http://` or `https://` URL) when `agent_type="opencode"`; missing/malformed `base_url` is rejected before any HTTP probe runs.',
+        'kimi-code sessions: pass `agent_type="kimi-code"`, `base_url` (from `$KIMI_XATS_BASE_URL`, set by the `xats-kimi` launcher), and `session_id` (REQUIRED — from `$KIMI_XATS_SESSION_ID`, which the launcher exports after pre-creating the session via the kimi server REST API; the daemon does NOT auto-resolve it and does NOT health-check the server at register time. Do NOT fall back to `~/.kimi-code/session_index.jsonl` guessing: with several kimi sessions in one directory its last `workDir` match can be a different session, and pokes then wake that wrong session while reporting delivered). `auth_token_ref` is optional; when omitted the daemon reads the bearer token from `~/.kimi-code/server.token` at poke time. The schema REQUIRES `base_url` (parseable `http://` or `https://` URL) and a non-empty `session_id` when `agent_type="kimi-code"`; missing/malformed values are rejected before any row is written.',
         'Claude Code sessions: pass `agent_type="claude-code"` and PREFERRED: pass only `ui_pid` (from `$PPID`) so the daemon auto-binds channel delivery — do not pass `channel_session_id` explicitly. When BOTH `ui_pid` AND `channel_session_id` are supplied, the daemon runs a consistency check against the caller `ui_pid`\'s live channel proxy; if the proxy\'s csid does not match the supplied `channel_session_id`, the call is rejected with `channel_session_id_ui_pid_mismatch` before any agent row is written. To re-establish a prior identity on a fresh/resumed session where you no longer remember your (team, name) (changed csid, unchanged $PPID), prefer `reconnect({ ui_pid })` over the bind_channel→register fallback; `bind_channel` only rebinds a session already bound to your agent. If instead you still remember your (team, name) after a restart + resume (changed $PPID), call register_agent directly with that remembered (team, name) and the current $PPID rather than reconnect.',
         'Codex CLI and Mac Codex App sessions: pass `agent_type="codex"` and `thread_id` (from `$CODEX_THREAD_ID`) to register Codex app-server delivery. The schema REQUIRES `thread_id` when `agent_type="codex"`; missing or empty `thread_id` is rejected before any handshake runs. Codex CLI launcher callers without `thread_id` should use `pre_register_codex_pane`; Mac Codex App does not use that tmux launcher path. Endpoint precedence is explicit `ws_url`, legacy `CROSS_AGENT_TEAMS_CODEX_WS_URL`, JSON array `CROSS_AGENT_TEAMS_CODEX_WS_URLS`, then `ws://127.0.0.1:8799`. With multiple configured endpoints, the daemon probes `thread_id` and registers only a unique match. `model` defaults to `gpt` when omitted. For `agent_type="claude-code"` callers, `model` defaults to a Claude-specific value derived from MCP session client info when omitted.',
         '`model` is OPTIONAL for any agent_type: omit it when you do not have an authoritative model identifier; the daemon stores NULL in that case. Pass an explicit `model` only when you have a stable identifier you would like surfaced via `list_agents`.',
@@ -862,6 +1037,7 @@ export function registerBusinessTools(
       base_url?: string
       session_id?: string
       claude_ui_pid?: number
+      identity_key?: string
       delivery?: { kind: string; [key: string]: unknown }
     }) => {
       return run(async () => executeRegister(registerAgentArgsSchema.parse(args)))
@@ -869,6 +1045,11 @@ export function registerBusinessTools(
   )
 
   const reconnectInputSchema = z.object({
+    identity_key: z.string().min(1).refine(v => v.trim().length > 0, {
+      message: 'identity_key must not be empty',
+    }).optional().describe(
+      'Launcher-minted per-pane key from `$XATS_IDENTITY_KEY`. The only lookup that survives a pane restart. Combine it with `ui_pid` (claude-code) or `thread_id` (codex) in the same call: the key resolves the identity, the other value rebinds the live runtime.'
+    ),
     ui_pid: z.number().int().positive().optional().describe(
       'Claude UI process id (`$PPID` inside Claude Code).'
     ),
@@ -889,12 +1070,15 @@ export function registerBusinessTools(
     }, {
       message: 'base_url must be a parseable http:// or https:// URL',
     }).optional().describe(
-      'opencode server base URL (`$OPENCODE_XATS_BASE_URL`).'
+      'opencode or kimi server base URL (`$OPENCODE_XATS_BASE_URL` / `$KIMI_XATS_BASE_URL`).'
     ),
-    session_id: z.string().min(1).refine(v => v.startsWith('ses'), {
-      message: 'session_id must start with "ses"',
+    session_id: z.string().trim().min(1, {
+      message: 'session_id must not be blank',
     }).optional().describe(
-      'opencode session id. If omitted, the daemon resolves the most recently updated session from <base_url>/session before reverse-look-up.'
+      'opencode or kimi session id. For opencode it may be omitted: the daemon resolves the most recently updated session from <base_url>/session before reverse-look-up (opencode ids must start with "ses"). For kimi-code it is REQUIRED (`$KIMI_XATS_SESSION_ID`) and only needs to be non-blank — registration never enforced a prefix, so reconnect must not either; kimi sessions are never auto-resolved.'
+    ),
+    agent_type: z.enum(['opencode', 'kimi-code']).optional().describe(
+      'Runtime discriminator for the base_url arm. REQUIRED as "kimi-code" for kimi recovery: without it a kimi reconnect on a registry with no matching rows is routed to the opencode probe and returns opencode-flavored errors instead of need_register. Optional for opencode.'
     ),
   }).strict()
 
@@ -902,10 +1086,23 @@ export function registerBusinessTools(
     const keyCount = Number(value.ui_pid !== undefined)
       + Number(value.thread_id !== undefined)
       + Number(value.base_url !== undefined)
-    if (keyCount !== 1) {
+    // identity_key answers "which identity", the other three answer "which
+    // live runtime", so it does not join their exclusion group — it only
+    // relaxes the count to at-most-one.
+    if (value.identity_key === undefined ? keyCount !== 1 : keyCount > 1) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'provide exactly one of ui_pid, thread_id, or base_url',
+        message: value.identity_key === undefined
+          ? 'provide exactly one of ui_pid, thread_id, or base_url'
+          : 'identity_key combines with at most one of ui_pid or thread_id',
+      })
+    }
+    // The base_url arms resolve identity from a revalidated live session,
+    // which is a second identity lookup competing with the key.
+    if (value.identity_key !== undefined && value.base_url !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'identity_key cannot be combined with base_url',
       })
     }
     if (value.thread_id === undefined && value.ws_url !== undefined) {
@@ -928,6 +1125,44 @@ export function registerBusinessTools(
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'auth_token_ref requires thread_id or base_url',
+      })
+    }
+    if (value.agent_type !== undefined && value.base_url === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'agent_type requires base_url',
+      })
+    }
+    if (value.agent_type === 'kimi-code' && value.session_id === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'session_id is required when agent_type="kimi-code"',
+      })
+    }
+    if (value.agent_type === 'kimi-code' && value.base_url !== undefined) {
+      const issue = kimiBaseUrlIssue(value.base_url)
+      if (issue === 'query_or_fragment' || issue === 'userinfo') {
+        // Same boundary rule as registration: kimi endpoint URLs are built
+        // by appending /api/v1/... to base_url. Unparseable/non-http URLs
+        // are already rejected by the base_url field schema.
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'base_url must not carry a query, fragment, or userinfo when agent_type="kimi-code"',
+        })
+      }
+    }
+    // The "ses" prefix is an opencode contract; kimi registration only
+    // requires a non-empty id, so an explicit kimi reconnect must accept
+    // whatever was registrable. Legacy calls without agent_type keep the
+    // historical opencode-arm validation.
+    if (
+      value.session_id !== undefined
+      && value.agent_type !== 'kimi-code'
+      && !value.session_id.startsWith('ses')
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'session_id must start with "ses"',
       })
     }
   })
@@ -958,7 +1193,13 @@ export function registerBusinessTools(
       context?.localDevice ?? 'local'
     )
     if (resolution.kind !== 'single') return unresolvedReconnect(resolution)
-    const match = resolution.match
+    return completeClaudeReconnect(resolution.match, ui_pid)
+  }
+
+  async function completeClaudeReconnect(
+    match: ReconnectCandidate,
+    ui_pid: number
+  ): Promise<unknown> {
     const res = await executeRegister({
       agent_type: 'claude-code',
       name: match.name,
@@ -996,7 +1237,13 @@ export function registerBusinessTools(
       context?.localDevice ?? 'local'
     )
     if (resolution.kind !== 'single') return unresolvedReconnect(resolution)
-    const match = resolution.match
+    return completeCodexReconnect(resolution.match, args)
+  }
+
+  async function completeCodexReconnect(
+    match: ReconnectCandidate,
+    args: { thread_id: string; ws_url?: string; auth_token_ref?: string }
+  ): Promise<unknown> {
     const res = await executeRegister({
       agent_type: 'codex',
       name: match.name,
@@ -1023,6 +1270,57 @@ export function registerBusinessTools(
       team: envelope.team,
       thread_id: envelope.thread_id,
       ws_url: envelope.ws_url,
+      last_seen_at: match.last_seen_at,
+    }
+  }
+
+  /**
+   * Identity comes from the key; the accompanying `ui_pid` / `thread_id` only
+   * rebinds the live runtime. With neither, the stored agent_type is replayed
+   * so re-registering does not blank it.
+   */
+  async function executeIdentityKeyReconnect(args: {
+    identity_key: string
+    ui_pid?: number
+    thread_id?: string
+    ws_url?: string
+    auth_token_ref?: string
+  }): Promise<unknown> {
+    const resolution = resolveIdentityKeyReconnect(
+      agents,
+      args.identity_key,
+      context?.localDevice ?? 'local'
+    )
+    if (resolution.kind !== 'single') return unresolvedReconnect(resolution)
+    const match = resolution.match
+    if (args.ui_pid !== undefined) {
+      return completeClaudeReconnect(match, args.ui_pid)
+    }
+    if (args.thread_id !== undefined) {
+      return completeCodexReconnect(match, {
+        thread_id: args.thread_id,
+        ws_url: args.ws_url,
+        auth_token_ref: args.auth_token_ref,
+      })
+    }
+    const stored = agents.findById(match.agent_id)
+    const res = await executeRegister({
+      agent_type: stored?.agent_type ?? undefined,
+      agent_type_name: stored?.agent_type_name ?? undefined,
+      name: match.name,
+      team: match.team,
+      device: match.device,
+      role: match.role,
+    })
+    if (typeof res !== 'object' || res === null || !('agent_id' in res)) {
+      return res
+    }
+    const envelope = res as { agent_id: string; team: string }
+    return {
+      ok: true,
+      agent_id: envelope.agent_id,
+      name: match.name,
+      team: envelope.team,
       last_seen_at: match.last_seen_at,
     }
   }
@@ -1123,14 +1421,108 @@ export function registerBusinessTools(
     }
   }
 
+  function readStoredKimiAuth(agent_id: string): string | undefined {
+    const existing = agents.findById(agent_id)
+    if (
+      existing
+      && existing.delivery.kind === 'kimi-server'
+      && existing.delivery.auth_token_ref
+    ) {
+      return existing.delivery.auth_token_ref
+    }
+    return undefined
+  }
+
+  // The base_url arm is shared between opencode and kimi. A kimi recovery
+  // requires an explicit session_id (never resolved by recency), and applies
+  // when local kimi-server rows claim the pair — or the base_url hosts only
+  // kimi rows, so a stale session_id still gets the kimi need_register answer.
+  function kimiReconnectApplies(
+    base_url: string,
+    session_id: string,
+    localDevice: string
+  ): boolean {
+    // kimi rows persist canonical base_urls; the opencode lookup keeps the
+    // caller's spelling (opencode rows are not canonicalized).
+    const kimiUrl = canonicalKimiBaseUrl(base_url)
+    if (agents.findByKimiSession(kimiUrl, session_id, localDevice).length > 0) {
+      return true
+    }
+    return agents.findByKimiBaseUrl(kimiUrl, localDevice).length > 0
+      && agents.findByOpencodeBaseUrl(base_url, localDevice).length === 0
+  }
+
+  async function executeKimiReconnect(args: {
+    base_url: string
+    session_id: string
+    auth_token_ref?: string
+  }): Promise<unknown> {
+    const localDevice = context?.localDevice ?? 'local'
+    // Same canonicalizer as registration: equivalent URL spellings must find
+    // the row that registration persisted.
+    const base_url = canonicalKimiBaseUrl(args.base_url)
+    const resolution = resolveKimiReconnect(
+      agents, base_url, args.session_id, localDevice
+    )
+    if (resolution.kind !== 'single') return unresolvedReconnect(resolution)
+    const match = resolution.match
+
+    const authTokenRef = args.auth_token_ref ?? readStoredKimiAuth(match.agent_id)
+    const probe = await validateKimiSession({
+      base_url,
+      session_id: args.session_id,
+      auth_token_ref: authTokenRef,
+    })
+    if ('error' in probe) return probe
+
+    // Registers with agent_type=kimi-code and the validated kimi-server
+    // delivery, so the connection rebinds under the kimi runtime key
+    // (base_url + session_id) and SHARES with live engine connections of
+    // that session.
+    const res = await executeRegister({
+      agent_type: 'kimi-code',
+      name: match.name,
+      team: match.team,
+      device: match.device,
+      role: match.role,
+      base_url,
+      session_id: args.session_id,
+      auth_token_ref: authTokenRef,
+    })
+    if (typeof res !== 'object' || res === null || !('agent_id' in res)) return res
+    const envelope = res as { agent_id: string; team: string }
+    return {
+      ok: true,
+      agent_id: envelope.agent_id,
+      name: match.name,
+      team: envelope.team,
+      session_id: args.session_id,
+      base_url,
+      last_seen_at: match.last_seen_at,
+    }
+  }
+
   async function executeReconnect(args: {
+    identity_key?: string
     ui_pid?: number
     thread_id?: string
     ws_url?: string
     auth_token_ref?: string
     base_url?: string
     session_id?: string
+    agent_type?: 'opencode' | 'kimi-code'
   }): Promise<unknown> {
+    // The key wins over any accompanying runtime lookup: after a restart the
+    // new pid may already belong to an unrelated row.
+    if (args.identity_key !== undefined) {
+      return executeIdentityKeyReconnect({
+        identity_key: args.identity_key,
+        ui_pid: args.ui_pid,
+        thread_id: args.thread_id,
+        ws_url: args.ws_url,
+        auth_token_ref: args.auth_token_ref,
+      })
+    }
     if (args.ui_pid !== undefined) {
       return executeClaudeReconnect(args.ui_pid)
     }
@@ -1138,6 +1530,38 @@ export function registerBusinessTools(
       return executeCodexReconnect({
         thread_id: args.thread_id,
         ws_url: args.ws_url,
+        auth_token_ref: args.auth_token_ref,
+      })
+    }
+    // Explicit runtime discriminator wins: it keeps a kimi reconnect on an
+    // empty/mixed registry deterministic (need_register, never an opencode
+    // probe). The row-residency heuristic below survives only as a safety
+    // net for base_url callers that predate agent_type.
+    if (args.agent_type === 'kimi-code') {
+      return executeKimiReconnect({
+        base_url: args.base_url!,
+        session_id: args.session_id!,
+        auth_token_ref: args.auth_token_ref,
+      })
+    }
+    if (args.agent_type === 'opencode') {
+      return executeOpencodeReconnect({
+        base_url: args.base_url!,
+        session_id: args.session_id,
+        auth_token_ref: args.auth_token_ref,
+      })
+    }
+    if (
+      args.session_id !== undefined &&
+      kimiReconnectApplies(
+        args.base_url!,
+        args.session_id,
+        context?.localDevice ?? 'local'
+      )
+    ) {
+      return executeKimiReconnect({
+        base_url: args.base_url!,
+        session_id: args.session_id,
         auth_token_ref: args.auth_token_ref,
       })
     }
@@ -1156,12 +1580,14 @@ export function registerBusinessTools(
       inputSchema: reconnectInputSchema,
     },
     async (args: {
+      identity_key?: string
       ui_pid?: number
       thread_id?: string
       ws_url?: string
       auth_token_ref?: string
       base_url?: string
       session_id?: string
+      agent_type?: 'opencode' | 'kimi-code'
     }) => {
       return run(async () => executeReconnect(reconnectArgsSchema.parse(args)))
     }

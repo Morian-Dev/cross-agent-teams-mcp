@@ -8,6 +8,8 @@ import { openDb } from '../src/storage/db.js'
 import { applySchema } from '../src/storage/schema.js'
 import { insertAgent } from './helpers/insert-agent.js'
 import { poke } from '../src/mcp/poke.js'
+import { fakePaneSnapshot } from './helpers/pane-snapshot.js'
+import { resolveLocalDeviceLabel } from '../src/daemon/local-device.js'
 
 const bindRuntimeIdentityMock = vi.fn()
 const detectTmuxPaneMock = vi.fn()
@@ -27,6 +29,10 @@ vi.mock('../src/daemon/tmux-cli.js', () => ({
   pasteBuffer: async () => undefined,
   sendEnter: async () => undefined,
 }))
+
+// Host verification needs a live pid whose pane_pid matches, so the fixture
+// binds this test process rather than a synthetic pid.
+const UI_PID = process.pid
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'atm-opencode-tmux-'))
 
@@ -51,7 +57,7 @@ describe('opencode harness via custom + agent_type_name (tmux fallback path)', (
       tmux_pane_id: '%77',
       verification_mode: 'verified_pid_tty_pane',
       tty: 'ttys077',
-      ui_pid: 31415,
+      ui_pid: UI_PID,
     })
 
     const { startServer } = await import('../src/daemon/server.js')
@@ -74,7 +80,7 @@ describe('opencode harness via custom + agent_type_name (tmux fallback path)', (
         model: 'opencode-default',
         role: 'worker',
         name: 'alice',
-        ui_pid: 31415,
+        ui_pid: UI_PID,
       },
     })
     const obj = await parseTool(resp)
@@ -87,7 +93,7 @@ describe('opencode harness via custom + agent_type_name (tmux fallback path)', (
       name: 'bind_runtime_identity',
       arguments: {
         agent: 'opencode',
-        ui_pid: 31415,
+        ui_pid: UI_PID,
       },
     })
     const bindObj = await parseTool(bindResp)
@@ -95,7 +101,7 @@ describe('opencode harness via custom + agent_type_name (tmux fallback path)', (
     expect(bindRuntimeIdentityMock).toHaveBeenCalledWith({
       callerAgentId: expect.any(String),
       agent: 'opencode',
-      ui_pid: 31415,
+      ui_pid: UI_PID,
     })
 
     const db = openDb(dbPath)
@@ -112,7 +118,7 @@ describe('opencode harness via custom + agent_type_name (tmux fallback path)', (
       agent_type: 'custom',
       agent_type_name: 'opencode',
       tmux_pane_id: '%77',
-      runtime_ui_pid: 31415,
+      runtime_ui_pid: UI_PID,
     })
 
     const callerAgentId = insertAgent(db, {
@@ -124,7 +130,12 @@ describe('opencode harness via custom + agent_type_name (tmux fallback path)', (
     })
 
     const pokeResult = await poke(
-      { db, callerAgentId },
+      {
+        db,
+        callerAgentId,
+        localDevice: resolveLocalDeviceLabel(),
+        paneSnapshot: fakePaneSnapshot([{ pane_id: '%77', pane_pid: UI_PID }]),
+      },
       { target_agent_id: String(obj.agent_id), prompt: 'wake up' }
     )
 
