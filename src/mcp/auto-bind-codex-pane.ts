@@ -73,9 +73,9 @@ function parsePid(line: string): number | undefined {
 }
 
 function isCodexRemoteProcess(line: string): boolean {
-  if (!/codex/i.test(line)) return false
+  if (!/(?:codex|chatgpt)/i.test(line)) return false
   if (/codex\s+app-server/i.test(line)) return false
-  return /codex(?:-aarch64-a)?\s+.*--remote/i.test(line) || /codex(?:-aarch64-a)?\s+--remote/i.test(line)
+  return /(?:codex(?:-aarch64-a)?|ChatGPT)\s+.*--remote/i.test(line) || /(?:codex(?:-aarch64-a)?|ChatGPT)\s+--remote/i.test(line)
 }
 
 function argvContainsUuid(line: string, uuid: string): boolean {

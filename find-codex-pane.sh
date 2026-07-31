@@ -14,7 +14,7 @@ Options:
   -h, --help       Show this help message.
 
 Default match regex:
-  (^|[[:space:]/])(codex|codex-aarch64-a)( |$)
+  (^|[[:space:]/])(ChatGPT|codex|codex-aarch64-a)( |$)
 
 Notes:
   - This script ignores "codex app-server".
@@ -35,7 +35,7 @@ normalize_tty() {
   printf '%s\n' "$raw"
 }
 
-SEARCH_PATTERN='(^|[[:space:]/])(codex|codex-aarch64-a)( |$)'
+SEARCH_PATTERN='(^|[[:space:]/])(ChatGPT|codex|codex-aarch64-a)( |$)'
 TARGET_PID=''
 TARGET_TTY=''
 PANE_ONLY=0
