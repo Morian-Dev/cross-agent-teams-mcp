@@ -174,6 +174,12 @@ async function dispatchClaude(
       input
     )
     if (result.ok) {
+      // Channel notification delivered to the MCP session, but Claude Code may
+      // not process it while idle. Also fire a tmux poke to wake up the terminal
+      // so the agent actually picks up the notification.
+      if (paneId) {
+        await dispatchTmux(deps, target, paneId, input.content, input.skipGuard)
+      }
       return {
         ok: true,
         transport_used: 'claude-channel',
