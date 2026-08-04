@@ -45,17 +45,16 @@ create_tmux_grid() {
 
   for i in "${!AGENTS[@]}"; do
     local entry="${AGENTS[$i]}"
-    # entry is either "name" (new) or "name:flag" (resume)
     local name="${entry%%:*}"
     local flag="${entry#*:}"
     [ "$flag" = "$name" ] && flag=""
 
     case $i in
-      0) ;; # first: top-left
-      1) tmux -L "${SOCKET}" split-window -h -t dashboard:0 ;;
-      2) tmux -L "${SOCKET}" split-window -v -t dashboard:0.0 ;;
-      3) tmux -L "${SOCKET}" split-window -v -t dashboard:0.1 ;;
-      *) tmux -L "${SOCKET}" split-window -t dashboard:0 ;;
+      0) ;; # architect: top-left (already exists)
+      1) tmux -L "${SOCKET}" split-window -h -t dashboard:0 ;;            # developer: top-right
+      2) tmux -L "${SOCKET}" split-window -v -t dashboard:0.0 ;;          # tester: bottom-left
+      3) tmux -L "${SOCKET}" split-window -v -t dashboard:0.1 ;;          # reviewer: bottom-right
+      *) tmux -L "${SOCKET}" split-window -t dashboard:0 ;;               # 5+: auto-tile
     esac
     tmux -L "${SOCKET}" send-keys -t dashboard:0.$i \
       "stty susp undef; exec claude ${flag}" Enter
