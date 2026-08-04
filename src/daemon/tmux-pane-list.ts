@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { resolveTmuxSocket } from './tmux-cli.js'
 
 export interface TmuxPaneRow {
   pane_id: string
@@ -60,9 +61,11 @@ export async function listTmuxPaneRows(
   execLike: typeof execFile = execFile
 ): Promise<TmuxPaneRow[]> {
   const exec = promisify(execLike)
+  const socketArgs = await resolveTmuxSocket()
   const { stdout } = await exec(
     'tmux',
     [
+      ...socketArgs,
       'list-panes',
       '-a',
       '-F',
