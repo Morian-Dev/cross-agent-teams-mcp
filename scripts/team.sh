@@ -45,18 +45,26 @@ cmd_start() {
     return
   fi
 
-  # 3. Create new tmux 2x2 grid
-  AGENTS=("architect" "developer" "tester" "reviewer")
-  echo "Creating team ${TEAM}..."
+  # 3. Create new tmux grid
+  # Default team: architect + 3 workers. Override: team.sh start <dir> <team> <agent1> ...
+  shift 2  # consume project-dir and team-name, rest are agent names
+  if [ $# -gt 0 ]; then
+    AGENTS=("$@")
+  else
+    AGENTS=("architect" "developer" "tester" "reviewer")
+  fi
+
+  echo "Creating team ${TEAM} with ${#AGENTS[@]} agents: ${AGENTS[*]}..."
   tmux -L "${SOCKET}" new-session -d -s dashboard -c "${PROJECT_DIR}"
 
   for i in "${!AGENTS[@]}"; do
     name="${AGENTS[$i]}"
     case $i in
-      0) ;; # architect: top-left
+      0) ;; # first: top-left, already exists
       1) tmux -L "${SOCKET}" split-window -h -t dashboard:0 ;;
       2) tmux -L "${SOCKET}" split-window -v -t dashboard:0.0 ;;
       3) tmux -L "${SOCKET}" split-window -v -t dashboard:0.1 ;;
+      *) tmux -L "${SOCKET}" split-window -t dashboard:0 ;;  # 5+: tiled
     esac
     pane=$i
     tmux -L "${SOCKET}" send-keys -t dashboard:0.$pane \
@@ -73,10 +81,9 @@ cmd_start() {
   echo "Attach:  tmux -L ${SOCKET} attach -t dashboard"
   echo ""
   echo "In each pane, register:"
-  echo "  [architect]  Register to xats as architect on team ${TEAM}"
-  echo "  [developer]  Register to xats as developer on team ${TEAM}"
-  echo "  [tester]     Register to xats as tester on team ${TEAM}"
-  echo "  [reviewer]   Register to xats as reviewer on team ${TEAM}"
+  for name in "${AGENTS[@]}"; do
+    echo "  [${name}]  Register to xats as ${name} on team ${TEAM}"
+  done
 }
 
 cmd_stop() {
@@ -112,7 +119,9 @@ case "${1:-}" in
   status)  cmd_status ;;
   *)
     echo "Usage: team.sh {start|stop|status}"
-    echo "  start <project-dir> [team-name]  Start daemon + 4-agent team"
+    echo "  start <project-dir> [team-name] [agent1 agent2 ...]"
+    echo "        Default: architect developer tester reviewer"
+    echo "        Custom:  team.sh start ~/proj myteam architect coder qa"
     echo "  stop                             Stop daemon"
     echo "  status                           Show daemon + tmux status"
     exit 1
