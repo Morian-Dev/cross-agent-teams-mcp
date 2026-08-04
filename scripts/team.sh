@@ -101,7 +101,7 @@ cmd_resume() {
     return
   fi
 
-  # Detect which agents were previously registered
+  # Detect previously registered agents from xats database
   local AGENTS=()
   local db="${HOME}/.cross-agent-teams-mcp/data.db"
   if [ -f "$db" ]; then
@@ -109,10 +109,17 @@ cmd_resume() {
       [ -n "$name" ] && AGENTS+=("${name}:--session-id ${name}-${TEAM}")
     done < <(sqlite3 "$db" "SELECT DISTINCT name FROM agents WHERE team='${TEAM}' AND role != '__channel_proxy__' ORDER BY name" 2>/dev/null || true)
   fi
-  [ ${#AGENTS[@]} -eq 0 ] && AGENTS=("architect:--session-id architect-${TEAM}" "developer:--session-id developer-${TEAM}" "tester:--session-id tester-${TEAM}" "reviewer:--session-id reviewer-${TEAM}")
+
+  if [ ${#AGENTS[@]} -eq 0 ]; then
+    echo "  ${RED}✗${NC} No agents found for team ${TEAM}."
+    echo "  Use 'team.sh new' to create a new team first."
+    exit 1
+  fi
 
   echo "Resuming team ${TEAM} with ${#AGENTS[@]} agents..."
   create_tmux_grid "$SOCKET" "$PROJECT_DIR" "${AGENTS[@]}"
+
+  print_ready "$SOCKET" "$TEAM" "${AGENTS[@]}"
 
   print_ready "$SOCKET" "$TEAM" "${AGENTS[@]}"
 }
