@@ -85,7 +85,19 @@ cmd_status() {
   fi
   echo ""
   echo "tmux sessions:"
-  tmux ls 2>/dev/null || echo "  none"
+  found=0
+  for dir in /private/tmp/tmux-501 /private/tmp/tmux-*; do
+    for sock in "$dir"/*; do
+      [ -S "$sock" ] || continue
+      tmux -S "$sock" list-sessions -F '#{session_name} #{session_attached}' 2>/dev/null | while IFS=' ' read -r name attached; do
+        [ -z "$name" ] && continue
+        [ "$attached" = "1" ] && mark=" (attached)" || mark=""
+        echo "  ${name}${mark}"
+      done
+      found=1
+    done
+  done
+  [ "$found" = "0" ] && echo "  none"
 }
 
 case "${1:-}" in
