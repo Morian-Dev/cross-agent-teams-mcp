@@ -60,7 +60,7 @@ cmd_start() {
     esac
     pane=$i
     tmux -L "${SOCKET}" send-keys -t dashboard:0.$pane \
-      "stty susp undef; exec claude" Enter
+      "stty susp undef; exec claude --session-id ${name}-${TEAM}" Enter
     tmux -L "${SOCKET}" select-pane -t dashboard:0.$pane -T "${name}"
   done
 
