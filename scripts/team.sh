@@ -122,19 +122,10 @@ cmd_resume() {
     [ -z "$name" ] && continue
     local sid=""
 
-    # Extract session ID: try running process PID first, then session file lookup
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      # Session files are named by PID (e.g. 60773.json), use PID as session-id
-      sid="$pid"
-    fi
-
-    # Fallback: search ~/.claude/sessions/ for matching cwd
-    if [ -z "$sid" ]; then
-      local session_dir="${HOME}/.claude/sessions"
-      if [ -d "$session_dir" ]; then
-        sid=$(grep -l "\"cwd\":\"${PROJECT_DIR}\"" "$session_dir"/*.json 2>/dev/null | \
-          tail -1 | xargs basename 2>/dev/null | sed 's/\.json$//')
-      fi
+    # Extract session UUID: session files are ~/.claude/sessions/<runtime_ui_pid>.json
+    local session_file="${HOME}/.claude/sessions/${pid}.json"
+    if [ -n "$pid" ] && [ -f "$session_file" ]; then
+      sid=$(python3 -c "import json; print(json.load(open('${session_file}')).get('sessionId',''))" 2>/dev/null || true)
     fi
 
     # Fallback: stable session ID
