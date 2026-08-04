@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3'
 
 export interface CleanupOpts {
   maxAgeDays?: number
-  /** Channel proxy TTL in hours — proxies are short-lived, default 1h. */
+  /** Channel proxy TTL in hours — proxies are short-lived, default 24h. */
   proxyMaxAgeHours?: number
   now?: Date
 }
@@ -16,7 +16,7 @@ export interface CleanupOpts {
 export function runCleanup(db: Database.Database, opts: CleanupOpts = {}): { deleted: number } {
   const now = opts.now ?? new Date()
   const maxAgeDays = opts.maxAgeDays ?? 30
-  const proxyMaxAgeHours = opts.proxyMaxAgeHours ?? 1
+  const proxyMaxAgeHours = opts.proxyMaxAgeHours ?? 24
   const ageCutoff = new Date(now.getTime() - maxAgeDays * 86400 * 1000).toISOString()
   const proxyCutoff = new Date(now.getTime() - proxyMaxAgeHours * 3600 * 1000).toISOString()
 
