@@ -43,23 +43,30 @@ create_tmux_grid() {
   shift 2
   local AGENTS=("$@")
 
-  tmux -L "${SOCKET}" new-session -d -s dashboard -c "${PROJECT_DIR}"
+  # Build command for agent 0 (used by new-session)
+  local entry0="${AGENTS[0]}"
+  local name0="${entry0%%:*}"
+  local flag0="${entry0#*:}"
+  [ "$flag0" = "$name0" ] && flag0=""
+  local cmd0="stty susp undef; exec claude ${flag0}"
+  tmux -L "${SOCKET}" new-session -d -s dashboard -c "${PROJECT_DIR}" "$cmd0"
+  tmux -L "${SOCKET}" set-option -t dashboard remain-on-exit on
+  tmux -L "${SOCKET}" select-pane -t dashboard:0.0 -T "${name0}"
 
   for i in "${!AGENTS[@]}"; do
+    [ "$i" -eq 0 ] && continue  # already created
     local entry="${AGENTS[$i]}"
     local name="${entry%%:*}"
     local flag="${entry#*:}"
     [ "$flag" = "$name" ] && flag=""
+    local cmd="stty susp undef; exec claude ${flag}"
 
     case $i in
-      0) ;; # architect: top-left (already exists)
-      1) tmux -L "${SOCKET}" split-window -h -t dashboard:0 ;;            # developer: top-right
-      2) tmux -L "${SOCKET}" split-window -v -t dashboard:0.0 ;;          # tester: bottom-left
-      3) tmux -L "${SOCKET}" split-window -v -t dashboard:0.1 ;;          # reviewer: bottom-right
-      *) tmux -L "${SOCKET}" split-window -t dashboard:0 ;;               # 5+: auto-tile
+      1) tmux -L "${SOCKET}" split-window -h -t dashboard:0 "$cmd" ;;     # developer: top-right
+      2) tmux -L "${SOCKET}" split-window -v -t dashboard:0.0 "$cmd" ;;   # tester: bottom-left
+      3) tmux -L "${SOCKET}" split-window -v -t dashboard:0.1 "$cmd" ;;   # reviewer: bottom-right
+      *) tmux -L "${SOCKET}" split-window -t dashboard:0 "$cmd" ;;        # 5+: auto-tile
     esac
-    tmux -L "${SOCKET}" send-keys -t dashboard:0.$i \
-      "stty susp undef; exec claude ${flag}" Enter
     tmux -L "${SOCKET}" select-pane -t dashboard:0.$i -T "${name}"
   done
 
