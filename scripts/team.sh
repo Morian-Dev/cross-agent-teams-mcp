@@ -21,7 +21,6 @@ cmd_start() {
   PROJECT_DIR="${1:?Usage: team.sh start <project-dir> [team-name]}"
   TEAM="${2:-$(basename "$PROJECT_DIR")}"
   SOCKET="auto-${TEAM}"
-  AGENTS=("architect" "developer" "tester" "reviewer")
 
   # 1. Start daemon
   if daemon_running; then
@@ -38,7 +37,16 @@ cmd_start() {
     fi
   fi
 
-  # 2. Create tmux 2x2 grid
+  # 2. Check if dashboard already exists
+  if tmux -L "${SOCKET}" has-session -t dashboard 2>/dev/null; then
+    echo ""
+    echo "Team ${TEAM} already exists."
+    echo "Attach:  tmux -L ${SOCKET} attach -t dashboard"
+    return
+  fi
+
+  # 3. Create new tmux 2x2 grid
+  AGENTS=("architect" "developer" "tester" "reviewer")
   echo "Creating team ${TEAM}..."
   tmux -L "${SOCKET}" new-session -d -s dashboard -c "${PROJECT_DIR}"
 
