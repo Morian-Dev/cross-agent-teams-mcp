@@ -21,8 +21,8 @@ if [ -d "$REPO_DIR" ]; then
   cd "$REPO_DIR" && git pull --ff-only 2>/dev/null || true
 else
   echo "  Cloning cross-agent-teams-mcp..."
-  git clone git@github.com:your-org/cross-agent-teams-mcp.git "$REPO_DIR" 2>/dev/null || \
-    git clone https://github.com/your-org/cross-agent-teams-mcp.git "$REPO_DIR"
+  git clone git@github.com:Morian-Dev/cross-agent-teams-mcp.git "$REPO_DIR" 2>/dev/null || \
+    git clone https://github.com/Morian-Dev/cross-agent-teams-mcp.git "$REPO_DIR"
 fi
 
 cd "$REPO_DIR"
