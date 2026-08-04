@@ -1,12 +1,14 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # team.sh — 起 agent 团队 + daemon 管理
-# Usage:
-#   team.sh new    <project-dir> [team-name] [agent1 agent2 ...]  新建对话
-#   team.sh resume <project-dir> [team-name]                      恢复对话
-#   team.sh stop                                                   停 daemon
-#   team.sh status                                                 查看状态
+# Usage:  bash team.sh {new|resume|stop|status} ...
+# 必须用 bash 运行，sh 不支持数组语法。
 
 set -e
+
+# 如果被 sh 调用，自动切到 bash
+if [ -z "${BASH_VERSION:-}" ]; then
+  exec bash "$0" "$@"
+fi
 
 XATS_DIR="${HOME}/go/src/cross-agent-teams-mcp"
 DAEMON_PORT=9100
