@@ -1,11 +1,10 @@
 #!/bin/bash
-# setup.sh — 新电脑一键安装 xats + AoE
+# setup.sh — 新电脑一键安装 xats + AoE（克隆 + 编译）
 # Usage: ./setup.sh
 
 set -e
 
 GREEN='\033[0;32m'
-RED='\033[0;31m'
 NC='\033[0m'
 
 XATS_DIR="${HOME}/go/src/cross-agent-teams-mcp"
@@ -44,48 +43,7 @@ else
     cargo install --git "https://github.com/${GIT_USER}/agent-of-empires.git" 2>&1 | tail -3
 fi
 
-# --- 4. Launchd daemon ---
-PLIST="${HOME}/Library/LaunchAgents/com.cross-agent-teams.daemon.plist"
-mkdir -p "$(dirname "$PLIST")"
-cat > "$PLIST" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.cross-agent-teams.daemon</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>$(which node)</string>
-        <string>${XATS_DIR}/dist/cli.js</string>
-        <string>daemon</string>
-        <string>--port</string>
-        <string>9100</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>/tmp/xats-daemon.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/xats-daemon.err</string>
-</dict>
-</plist>
-PLIST
-launchctl load "$PLIST" 2>/dev/null || true
-echo "  ${GREEN}✓${NC} launchd installed (auto-start on login)"
-
-# --- 5. Verify ---
-sleep 2
-if curl -s http://127.0.0.1:9100/health > /dev/null 2>&1; then
-  echo "  ${GREEN}✓${NC} daemon running on port 9100"
-else
-  echo "  ${RED}✗${NC} daemon not responding — wait a moment or run: launchctl load ${PLIST}"
-fi
-
 echo ""
 echo "=== Setup complete ==="
 echo ""
-echo "Start a team:  ${XATS_DIR}/scripts/xats-team.sh <project-dir> <team-name>"
-echo ""
+echo "Start a team:  ${XATS_DIR}/scripts/team.sh <project-dir> <team-name>"
