@@ -122,18 +122,18 @@ cmd_resume() {
     [ -z "$name" ] && continue
     local sid=""
 
-    # Try to extract session-id from running Claude Code process
+    # Extract session ID: try running process PID first, then session file lookup
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      sid=$(ps -p "$pid" -o args= 2>/dev/null | grep -o '\--session-id [^ ]*' | awk '{print $2}')
+      # Session files are named by PID (e.g. 60773.json), use PID as session-id
+      sid="$pid"
     fi
 
-    # Fallback: search for session file in ~/.claude/sessions/
+    # Fallback: search ~/.claude/sessions/ for matching cwd
     if [ -z "$sid" ]; then
       local session_dir="${HOME}/.claude/sessions"
       if [ -d "$session_dir" ]; then
-        # Find the most recent session file for this project
         sid=$(grep -l "\"cwd\":\"${PROJECT_DIR}\"" "$session_dir"/*.json 2>/dev/null | \
-          head -1 | xargs basename 2>/dev/null | sed 's/\.json$//')
+          tail -1 | xargs basename 2>/dev/null | sed 's/\.json$//')
       fi
     fi
 
