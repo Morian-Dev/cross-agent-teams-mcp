@@ -120,7 +120,9 @@ cmd_resume() {
 
   while IFS= read -r name; do
     [ -z "$name" ] && continue
-    AGENTS+=("${name}:--session-id ${name}-${TEAM}")
+    # Generate deterministic UUID v5 from name+team
+    local uuid=$(python3 -c "import uuid; print(uuid.uuid5(uuid.NAMESPACE_DNS, '${name}-${TEAM}'))" 2>/dev/null || echo "${name}-${TEAM}")
+    AGENTS+=("${name}:--session-id ${uuid}")
   done <<EOF
 $(sqlite3 "$db" "SELECT DISTINCT name FROM agents WHERE team='${TEAM}' AND role != '__channel_proxy__' ORDER BY name" 2>/dev/null || true)
 EOF
