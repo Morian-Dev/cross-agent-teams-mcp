@@ -53,8 +53,7 @@ create_tmux_grid() {
   tmux -L "${SOCKET}" new-session -d -s dashboard -c "${PROJECT_DIR}" "$cmd0"
   tmux -L "${SOCKET}" set-option -t dashboard remain-on-exit on
   tmux -L "${SOCKET}" select-pane -t dashboard:0.0 -T "${name0}"
-  sleep 1  # wait for Claude Code to lock its session before creating next pane
-
+  
   for i in "${!AGENTS[@]}"; do
     [ "$i" -eq 0 ] && continue  # already created
     local entry="${AGENTS[$i]}"
@@ -70,8 +69,7 @@ create_tmux_grid() {
       *) tmux -L "${SOCKET}" split-window -t dashboard:0 "$cmd" ;;        # 5+: auto-tile
     esac
     tmux -L "${SOCKET}" select-pane -t dashboard:0.$i -T "${name}"
-    sleep 1  # wait for Claude Code to lock its session
-  done
+      done
 
   tmux -L "${SOCKET}" select-layout -t dashboard:0 tiled
   tmux -L "${SOCKET}" set-option -t dashboard:0 synchronize-panes off
@@ -120,22 +118,11 @@ cmd_resume() {
     exit 1
   fi
 
-  while IFS='|' read -r name pid; do
+  while IFS= read -r name; do
     [ -z "$name" ] && continue
-    local sid=""
-
-    # Extract session UUID: session files are ~/.claude/sessions/<runtime_ui_pid>.json
-    local session_file="${HOME}/.claude/sessions/${pid}.json"
-    if [ -n "$pid" ] && [ -f "$session_file" ]; then
-      sid=$(python3 -c "import json; print(json.load(open('${session_file}')).get('sessionId',''))" 2>/dev/null || true)
-    fi
-
-    # Fallback: stable session ID
-    [ -z "$sid" ] && sid="${name}-${TEAM}"
-
-    AGENTS+=("${name}:--session-id ${sid}")
+    AGENTS+=("${name}:--session-id ${name}-${TEAM}")
   done <<EOF
-$(sqlite3 "$db" "SELECT name, runtime_ui_pid FROM agents WHERE team='${TEAM}' AND role != '__channel_proxy__' ORDER BY name" 2>/dev/null || true)
+$(sqlite3 "$db" "SELECT DISTINCT name FROM agents WHERE team='${TEAM}' AND role != '__channel_proxy__' ORDER BY name" 2>/dev/null || true)
 EOF
 
   if [ ${#AGENTS[@]} -eq 0 ]; then
