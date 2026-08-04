@@ -49,7 +49,7 @@ create_tmux_grid() {
   local name0="${entry0%%:*}"
   local flag0="${entry0#*:}"
   [ "$flag0" = "$name0" ] && flag0=""
-  local cmd0="stty susp undef; exec ${CLAUDE_BIN} ${flag0}"
+  local cmd0="exec ${CLAUDE_BIN} ${flag0}"
   tmux -L "${SOCKET}" new-session -d -s dashboard -c "${PROJECT_DIR}" "$cmd0"
   tmux -L "${SOCKET}" set-option -t dashboard remain-on-exit on
   tmux -L "${SOCKET}" select-pane -t dashboard:0.0 -T "${name0}"
@@ -60,7 +60,7 @@ create_tmux_grid() {
     local name="${entry%%:*}"
     local flag="${entry#*:}"
     [ "$flag" = "$name" ] && flag=""
-    local cmd="stty susp undef; exec ${CLAUDE_BIN} ${flag}"
+    local cmd="exec ${CLAUDE_BIN} ${flag}"
 
     case $i in
       1) tmux -L "${SOCKET}" split-window -h -t dashboard:0 "$cmd" ;;     # developer: top-right
