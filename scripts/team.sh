@@ -132,8 +132,9 @@ cmd_resume() {
     [ -z "$sid" ] && sid="${name}-${TEAM}"
 
     AGENTS+=("${name}:--session-id ${sid}")
-  done < <(sqlite3 "$db" \
-    "SELECT name, runtime_ui_pid FROM agents WHERE team='${TEAM}' AND role != '__channel_proxy__' ORDER BY name" 2>/dev/null || true)
+  done <<EOF
+$(sqlite3 "$db" "SELECT name, runtime_ui_pid FROM agents WHERE team='${TEAM}' AND role != '__channel_proxy__' ORDER BY name" 2>/dev/null || true)
+EOF
 
   if [ ${#AGENTS[@]} -eq 0 ]; then
     echo "  ${RED}✗${NC} No agents found for team ${TEAM}."
