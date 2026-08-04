@@ -9,6 +9,8 @@ import { acquirePidFile } from './daemon/pid.js'
 import { selectPort } from './daemon/port.js'
 import { resolveLocalDeviceLabel } from './daemon/local-device.js'
 import { isLoopbackHost } from './daemon/network-origin.js'
+import { openDb } from './storage/db.js'
+import { pokeReconnectOnStartup } from './daemon/reconnect-on-startup.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
@@ -85,6 +87,10 @@ async function runDaemon(): Promise<void> {
   })
   const companionSuffix = companion ? ` (+ 127.0.0.1:${started.port} loopback companion)` : ''
   console.log(`listening on ${started.host}:${started.port}${companionSuffix} device=${args.localDevice}`)
+
+  // After a restart, poke local agents to reconnect. Best-effort, non-blocking.
+  const db = openDb(args.dbPath)
+  void pokeReconnectOnStartup(db, args.localDevice).catch(() => {})
 }
 
 function resolveDaemonPort(explicit: string | undefined): number | undefined {
