@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { DetectAgentKind } from './tmux-pane-detect.js'
 import { normalizeTty, readPidInfo } from './pid-tty.js'
+import { resolveTmuxSocket } from './tmux-cli.js'
 
 const TMUX_LIST_TIMEOUT_MS = 3_000
 const PS_LIST_TIMEOUT_MS = 3_000
@@ -61,9 +62,10 @@ function commandPattern(args: BindRuntimeIdentityInput): RegExp | null {
 
 async function listPanes(execLike: typeof execFile): Promise<PaneRow[]> {
   const exec = promisify(execLike)
+  const socketArgs = await resolveTmuxSocket()
   const { stdout } = await exec(
     'tmux',
-    ['list-panes', '-a', '-F', '#{pane_id}\t#{pane_tty}'],
+    [...socketArgs, 'list-panes', '-a', '-F', '#{pane_id}\t#{pane_tty}'],
     { timeout: TMUX_LIST_TIMEOUT_MS }
   )
   return stdout

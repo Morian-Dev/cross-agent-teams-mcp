@@ -906,6 +906,28 @@ export function registerBusinessTools(
           nativeDeliveryBound = true
         }
       }
+      // Reverse auto-bind: when a __channel_proxy__ reconnects after a daemon
+      // restart, update the associated agent's delivery config so pokes reach
+      // the new channel_session_id without requiring the agent to re-register.
+      if (
+        args.role === '__channel_proxy__' &&
+        args.claude_ui_pid !== undefined &&
+        args.delivery?.kind === 'claude-channel' &&
+        args.delivery?.channel_session_id !== undefined &&
+        autoBindChannelSvc
+      ) {
+        try {
+          const localDevice = context?.localDevice ?? 'local'
+          const matches = agents.findByRuntimeUiPid(args.claude_ui_pid, localDevice)
+          for (const match of matches) {
+            autoBindChannelSvc.updateDelivery({
+              callerAgentId: match.agent_id,
+              ui_pid: args.claude_ui_pid,
+              device: localDevice,
+            })
+          }
+        } catch { /* best-effort — reverse bind must not fail the registration */ }
+      }
       const autoBound = await autoBindRuntimeIdentity(args, res.agent_id)
       const envelope = autoBoundChannelCsid !== undefined
         ? { ...res, channel_session_id: autoBoundChannelCsid }

@@ -71,6 +71,30 @@ export class AutoBindChannelService {
     if (!found.ok) return found
     const csid = found.channel_session_id
     if (!this.fanout.has(csid)) return { ok: false, reason: 'sink_not_live' }
+    return this.persistDelivery(csid, input.callerAgentId)
+  }
+
+  /**
+   * Like run() but skips the fanout-liveness check. Used during reverse
+   * auto-bind: the channel proxy just registered but hasn't called
+   * subscribe_channel_wake yet, so the fanout doesn't have the csid.
+   * The delivery row is still correct — the fanout will be populated
+   * moments later by subscribe_channel_wake.
+   */
+  updateDelivery(input: AutoBindInput): AutoBindResult {
+    const callerDevice = input.device !== undefined
+      ? { device: input.device }
+      : this.db.prepare(
+          `SELECT device FROM agents WHERE agent_id = ?`
+        ).get(input.callerAgentId) as { device: string } | undefined
+    const device = callerDevice?.device
+    if (!device) return { ok: false, reason: 'no_proxy_row' }
+    const found = this.findLiveProxyCsid({ ui_pid: input.ui_pid, device })
+    if (!found.ok) return found
+    return this.persistDelivery(found.channel_session_id, input.callerAgentId)
+  }
+
+  private persistDelivery(csid: string, agentId: string): AutoBindSuccess {
     this.db
       .prepare(
         `UPDATE agents
@@ -78,7 +102,7 @@ export class AutoBindChannelService {
              delivery_payload = json_object('channel_session_id', ?)
          WHERE agent_id = ?`
       )
-      .run(csid, input.callerAgentId)
+      .run(csid, agentId)
     return { ok: true, channel_session_id: csid }
   }
 
