@@ -53,6 +53,7 @@ create_tmux_grid() {
   tmux -L "${SOCKET}" new-session -d -s dashboard -c "${PROJECT_DIR}" "$cmd0"
   tmux -L "${SOCKET}" set-option -t dashboard remain-on-exit on
   tmux -L "${SOCKET}" select-pane -t dashboard:0.0 -T "${name0}"
+  sleep 1  # wait for Claude Code to lock its session before creating next pane
 
   for i in "${!AGENTS[@]}"; do
     [ "$i" -eq 0 ] && continue  # already created
@@ -69,6 +70,7 @@ create_tmux_grid() {
       *) tmux -L "${SOCKET}" split-window -t dashboard:0 "$cmd" ;;        # 5+: auto-tile
     esac
     tmux -L "${SOCKET}" select-pane -t dashboard:0.$i -T "${name}"
+    sleep 1  # wait for Claude Code to lock its session
   done
 
   tmux -L "${SOCKET}" select-layout -t dashboard:0 tiled
