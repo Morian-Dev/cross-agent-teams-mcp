@@ -101,14 +101,39 @@ cmd_resume() {
     return
   fi
 
-  # Detect previously registered agents from xats database
+  # Detect agents from xats database
   local AGENTS=()
   local db="${HOME}/.cross-agent-teams-mcp/data.db"
-  if [ -f "$db" ]; then
-    while IFS= read -r name; do
-      [ -n "$name" ] && AGENTS+=("${name}:--session-id ${name}-${TEAM}")
-    done < <(sqlite3 "$db" "SELECT DISTINCT name FROM agents WHERE team='${TEAM}' AND role != '__channel_proxy__' ORDER BY name" 2>/dev/null || true)
+  if [ ! -f "$db" ]; then
+    echo "  ${RED}✗${NC} No xats database found. Use 'team.sh new' first."
+    exit 1
   fi
+
+  while IFS='|' read -r name pid; do
+    [ -z "$name" ] && continue
+    local sid=""
+
+    # Try to extract session-id from running Claude Code process
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      sid=$(ps -p "$pid" -o args= 2>/dev/null | grep -o '\--session-id [^ ]*' | awk '{print $2}')
+    fi
+
+    # Fallback: search for session file in ~/.claude/sessions/
+    if [ -z "$sid" ]; then
+      local session_dir="${HOME}/.claude/sessions"
+      if [ -d "$session_dir" ]; then
+        # Find the most recent session file for this project
+        sid=$(grep -l "\"cwd\":\"${PROJECT_DIR}\"" "$session_dir"/*.json 2>/dev/null | \
+          head -1 | xargs basename 2>/dev/null | sed 's/\.json$//')
+      fi
+    fi
+
+    # Fallback: stable session ID
+    [ -z "$sid" ] && sid="${name}-${TEAM}"
+
+    AGENTS+=("${name}:--session-id ${sid}")
+  done < <(sqlite3 "$db" \
+    "SELECT name, runtime_ui_pid FROM agents WHERE team='${TEAM}' AND role != '__channel_proxy__' ORDER BY name" 2>/dev/null || true)
 
   if [ ${#AGENTS[@]} -eq 0 ]; then
     echo "  ${RED}✗${NC} No agents found for team ${TEAM}."
